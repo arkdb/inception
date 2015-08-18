@@ -2463,6 +2463,7 @@ void subselect_single_select_engine::cleanup()
   DBUG_VOID_RETURN;
 }
 
+// const st_select_lex*  subselect_single_select_engine::get_st_select_lex() const { return select_lex; }
 
 void subselect_union_engine::cleanup()
 {

@@ -340,7 +340,7 @@ extern ulong connection_errors_max_connection;
 extern ulong connection_errors_peer_addr;
 extern ulong log_warnings;
 
-#define ISQL_OPTION_COUNT 10
+#define ISQL_OPTION_COUNT 11
 
 
 /*

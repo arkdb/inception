@@ -1043,6 +1043,7 @@ THD::THD(bool enable_plugins)
   have_begin = FALSE;
   sql_cache = NULL;
   thd_sinfo = (sinfo_space_t*)my_malloc(sizeof(sinfo_space_t), MYF(0));
+  thd_sinfo->optype = INCEPTION_TYPE_LOCAL; 
   memset(thd_sinfo, 0, sizeof(sinfo_space_t));
   have_error_before = FALSE;
   parse_error = FALSE;
