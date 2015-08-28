@@ -1,0 +1,917 @@
+------------------------------------------------------------
+revno: 4805
+committer: Marc Alff <marc.alff@oracle.com>
+branch nick: mysql-5.6.10-release-backport
+timestamp: Tue 2013-01-22 17:34:23 +0100
+message:
+  Bug#16196158 - RACE CONDITION IN TABLE PERFORMANCE_SCHEMA.THREADS
+  
+  Manual backport from mysql-5.6 (5.6.11) to mysql-5.6.10-release (5.6.10)
+------------------------------------------------------------
+revno: 4804
+committer: Georgi Kodinov <georgi.kodinov@oracle.com>
+branch nick: mysql-5.6.10-release
+timestamp: Tue 2013-01-15 17:37:35 +0200
+message:
+  merge of bug #16103348 to the 5.6.10 release.
+------------------------------------------------------------
+revno: 4803
+committer: Balasubramanian Kandasamy <balasubramanian.kandasamy@oracle.com>
+branch nick: mysql-5.6.10-release
+timestamp: Fri 2013-01-11 11:23:04 +0100
+message:
+  Removed Conflicts: mysql-libs mysql-libs-advanced from spec file to fix upgrade fix
+------------------------------------------------------------
+revno: 4802
+committer: Marko M?kel? <marko.makela@oracle.com>
+branch nick: mysql-5.6.10-release
+timestamp: Thu 2013-01-10 11:48:56 +0200
+message:
+  Bug#16095573 Table is lost during 'ALTER TABLE' command (5.6.10 work-around)
+  
+  In 5.6.10, we prohibit DROP FOREIGN KEY with any of the operations that
+  involve rebuilding the table (WL#6255).
+  The real fix is in Bug#15989081 INNODB ALTER TABLE IS NOT ATOMIC.
+------------------------------------------------------------
+revno: 4801
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Tue 2013-01-08 13:59:16 +0100
+message:
+  Need to repush
+------------------------------------------------------------
+revno: 4800
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Tue 2013-01-08 12:54:37 +0100
+message:
+  Merge 16038656 follow-up from 5.6
+------------------------------------------------------------
+revno: 4799
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Tue 2013-01-08 12:52:19 +0100
+message:
+  Bug#16038656 - INNODB_FT_USER_STOPWORD_TABLE BECOMES CORRUPT,
+                 CAUSES SERVER CRASH
+  Bug#16051857 : REPLICATION FAIL TO START AFTER PROVISIONING SERVER
+                 FROM BACK DATADIR WITH GTIDS
+  Bug#16066243 PB2 FAILURES I_MAIN.BUG15912213 AND I_MAIN.CTYPE_UTF8
+                 FOR MACOSX10.6 FOR 5.1
+  
+    Merged from 5.6 to 5.6.10-release
+------------------------------------------------------------
+revno: 4798
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Tue 2013-01-08 12:50:23 +0100
+message:
+  Bug#16036699 - FTS PARSER CANNOT HANDLE DASH IN TABLE NAME == CRASHES
+  Bug#16046140 BIN/MYSQLD_SAFE: TEST: ARGUMENT EXPECTED
+  
+    Merged from 5.6 to 5.6.10-release
+------------------------------------------------------------
+revno: 4797
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Fri 2012-12-21 13:36:04 +0100
+message:
+  Fix mysql_config_editor test after new copyright year
+------------------------------------------------------------
+revno: 4796
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Fri 2012-12-21 13:07:46 +0100
+message:
+  Followup on collections cmake: added to .bzrignore
+------------------------------------------------------------
+revno: 4795
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Thu 2012-12-20 12:34:11 +0100
+message:
+  Update copyright year
+------------------------------------------------------------
+revno: 4794
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Thu 2012-12-20 12:31:35 +0100
+message:
+  Remove some internal comments from mysql_install_db
+------------------------------------------------------------
+revno: 4793
+committer: Bjorn Munch <bjorn.munch@oracle.com>
+branch nick: rel-5610
+timestamp: Thu 2012-12-20 12:27:26 +0100
+message:
+  A bit more intelligent processing of .in files in mysql-test/collections
+------------------------------------------------------------
+revno: 4792
+tags: clone-5.6.10-build
+committer: Nuno Carvalho <nuno.carvalho@oracle.com>
+branch nick: mysql-5.6-bf
+timestamp: Fri 2012-12-14 15:31:30 +0000
+message:
+  BUG#15956714: REPLICATION DOESN'T WORK IN MYSQL 5.6.80-RC IF STARTED WITH SKIP-INNODB
+  
+  When a slave was started with --skip-innodb and info file repositories
+  (default values), replication was incorrectly stopped. If slave is not
+  doing a migration between info repositories and is using file
+  repositories, replication can work flawless.
+  
+  When server is started with info file repositories and it is not doing a
+  live migration, ignore errors when trying to open table info
+  repositories.
+------------------------------------------------------------
+revno: 4791 [merge]
+committer: Luis Soares <luis.soares@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 15:18:40 +0000
+message:
+  BUG#15992220
+  
+  Automerged bug branch into latest 5.6.
+    ------------------------------------------------------------
+    revno: 4786.1.6
+    committer: Luis Soares <luis.soares@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 15:02:07 +0000
+    message:
+      BUG#15992220
+      
+      Result update for one test case (missed the additional field).
+    ------------------------------------------------------------
+    revno: 4786.1.5
+    committer: Luis Soares <luis.soares@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 13:09:28 +0000
+    message:
+      BUG#15992220
+      
+      More tests cleanup. And added an include/have_gtid.inc to the 
+      test introduced by this patch.
+    ------------------------------------------------------------
+    revno: 4786.1.4
+    committer: Luis Soares <luis.soares@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 12:48:33 +0000
+    message:
+      BUG#15992220
+      
+      Added a simple test showing that the new column on SHOW SLAVE STATUS,
+      actually shows a different value everytime the CHANGE MASTER TO command
+      changes AUTO_POSITION.
+    ------------------------------------------------------------
+    revno: 4786.1.3
+    committer: Luis Soares <luis.soares@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 12:34:28 +0000
+    message:
+      BUG#15992220
+      
+      Addressing review comments. (Test cleanup.)
+    ------------------------------------------------------------
+    revno: 4786.1.2
+    committer: Luis Soares <luis.soares@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 12:08:11 +0000
+    message:
+      BUG#15992220: MAKE IT POSSIBLE TO DETERMINE IF GTID 
+      AUTO-POSITIONING PROTOCOL IS IN USE 
+      
+      When GTIDs were introduced, a new master-slave protocol with 
+      auto-positioning was also introduced. The new protocol is 
+      turned on by: "CHANGE MASTER TO MASTER_AUTO_POSITION = 1"
+      
+      However, but there is currently no way to determine if the 
+      protocol is used or not.
+      
+      This patch extends the fields in SHOW SLAVE STATUS with an
+      additional field: Auto_Position = (0|1), which states whether
+      the new protocol is in use (1) or not (0).
+------------------------------------------------------------
+revno: 4790 [merge]
+committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 18:44:39 +0400
+message:
+  Auto-merge.
+    ------------------------------------------------------------
+    revno: 4788.1.2
+    committer: Ashish Agarwal<ashish.y.agarwal@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 19:41:47 +0530
+    message:
+      Bug#16002890: FIX ERROR LOGGING FOR PLUGINS
+      
+      PROBLEM: my_plugin_log_message() takes a void** argument, 
+               but treats it as a void*.The result is undefined 
+               behaviour.
+      
+      SOLUTION: It takes void** argument and treats it as void**.
+    ------------------------------------------------------------
+    revno: 4788.1.1
+    committer: Pedro Gomes  <pedro.gomes@oracle.com>
+    branch nick: mysql-5.6
+    timestamp: Fri 2012-12-14 12:51:29 +0000
+    message:
+      Bug#15985893: GTID SKIPPED EVENTS ON MASTER CAUSE SEMI SYNC TIME-OUTS
+      
+      hen using GTIDs and semi sync, whenever a transaction is
+      executed on the master but is not sent to the slave because it
+      already has this id, semi sync will time out.  In fact, semi sync
+      hooks will still trigger a waiting process in the master, but as
+      the transaction never reaches the slave, a reply is never sent.
+      
+      Making the semi sync plug-in call the reportReplyBinlog method
+      whenever a transaction is skipped solves this issue.
+      
+      @semisync_master.cc
+        A new method skipSlaveReply was created  to allow
+        the interruption of the waiting process without a reply.
+      @semisync_master.h
+        New method header and other headers updated
+      @semisync_master_plugin.cc
+        The after send event response now depends on the transaction being 
+        skipped or not
+      @replication.h rpl_handler.h rpl_handler.cc
+        The after_send_event hook now takes new parameters that flag if the
+        event was skipped, what was is position and binlog. 
+      @rpl_master.cc
+        The after_send_event hook is now always invoked taking as new
+        parameters the position and binlog when transactions are skipped.
+------------------------------------------------------------
+revno: 4789
+committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 17:53:26 +0400
+message:
+  Fix for bug #14503584.
+  
+  The library can't currently handle properly calculations involving
+  self-intersecting polygons. We get an assertion when we try.
+  Until proper support for that is implemented we will replace
+  the assertion with an execution error.
+------------------------------------------------------------
+revno: 4788 [merge]
+committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 15:23:52 +0400
+message:
+  Auto-merge.
+    ------------------------------------------------------------
+    revno: 4786.1.1
+    committer: Jon Olav Hauglid <jon.hauglid@oracle.com>
+    branch nick: mysql-5.6-bug15996571
+    timestamp: Fri 2012-12-14 11:16:24 +0100
+    message:
+      Bug#15996571: WARNING RECOMMENDS TO USE A DEPRECATED OR NON-EXISTING OPTION
+      
+      The problem was that if the startup options --log-slow-admin-statements,
+      --log-queries-not-using-indexes or --log-slow-slave-statements were
+      used without specifying --slow-query-log, a warning message referring
+      to the removed "--log_slow_queries" would be given instead of using the 
+      current name "--slow-query-log".
+      
+      This patch fixes the problem by updating the warning message.
+      The patch also fixes similar problems with warning messages given
+      if --general-log-file or --slow-query-log-file are used with 
+      --log-output=table (and not =file).
+------------------------------------------------------------
+revno: 4787 [merge]
+committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 14:30:04 +0400
+message:
+  Manual merge from mysql-5.5.
+    ------------------------------------------------------------
+    revno: 2875.417.95 [merge]
+    committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+    branch nick: mysql-5.5
+    timestamp: Fri 2012-12-14 14:01:43 +0400
+    message:
+      Auto-merge from mysql-5.1.
+        ------------------------------------------------------------
+        revno: 2661.862.50
+        committer: Ramil Kalimullin <ramil.kalimullin@oracle.com>
+        branch nick: mysql-5.1
+        timestamp: Fri 2012-12-14 13:55:30 +0400
+        message:
+          Fix for BUG#15948580 UPDATE_XML() CRASHES THE SERVER.
+          
+          Problem: tag's buffer overflow leads to a problem.
+          Fix: bound check added.
+------------------------------------------------------------
+revno: 4786
+committer: Bill Qu <bill.qu@Oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 15:09:26 +0800
+message:
+  Approved by Jimmy and Inaam. rb#1576
+------------------------------------------------------------
+revno: 4785
+committer: Jimmy Yang <jimmy.yang@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 14:47:54 +0800
+message:
+  Fix Bug #15994393 - VALGRIND FAILURE ON MYSQL-5.6 IN FTS SHUTDOWN
+  / FTS_OPTIMIZE_THREAD
+  
+  rb://1717 approved by Sunny Bains
+------------------------------------------------------------
+revno: 4784 [merge]
+committer: Inaam Rana <inaam.rana@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 11:35:34 +0500
+message:
+  merge from 5.5
+    ------------------------------------------------------------
+    revno: 2875.417.94 [merge]
+    committer: Inaam Rana <inaam.rana@oracle.com>
+    branch nick: mysql-5.5
+    timestamp: Fri 2012-12-14 11:29:07 +0500
+    message:
+      merge from 5.1
+        ------------------------------------------------------------
+        revno: 2661.862.49
+        committer: Inaam Rana <inaam.rana@oracle.com>
+        branch nick: mysql-5.1
+        timestamp: Fri 2012-12-14 11:24:57 +0500
+        message:
+          Bug#14329288 IS THE CALL TO IBUF_MERGE_OR_DELETE_FOR_PAGE FROM
+          BUF_PAGE_GET_GEN REDUNDANT?
+          
+          rb://1711
+          approved by: Marko Makela
+          
+          When decompressing a compressed page that had already been accessed
+          in the buffer pool, do not attempt to merge buffered changes.
+------------------------------------------------------------
+revno: 4783
+committer: Inaam Rana <inaam.rana@oracle.com>
+branch nick: mysql-5.6
+timestamp: Fri 2012-12-14 10:46:05 +0500
+message:
+  Bug#14774779 CRASH RECOVERY FAILED, UNABLE TO COMPRESS A PAGE
+  
+  rb://1721
+  approved by: Marko Makela
+  
+  The bug was introduced by WL6344 in the innodb_log_compressed_pages
+  part. If we don't log compressed pages then we need to do compression
+  during recovery which requires that the uncompressed pages must be
+  deterministically same during recovery but they can differ in garbage
+  bytes potentially causing compression during recovery to fail. This
+  bug will manifest itself only when recovery is done in multiple batches
+  of redo apply.
+  
+  This workaround is to take away innodb_log_compressed_pages option.
+  Note it is not a full revert of WL6344
+------------------------------------------------------------
+revno: 4782
+committer: Mattias Jonsson <mattias.jonsson@oracle.com>
+branch nick: b15961327-56
+timestamp: Thu 2012-12-13 13:38:18 +0100
+message:
+  Bug#15961327: ALTER TABLE...MODIFY...NOT NULL REFUSES TO
+  SILENTLY CONVERT NULL
+  
+  In-Place in InnoDB do not convert from NULL to NOT NULL
+  due to loss of information, it will always give an error
+  for such rows.
+  
+  But ALGORITHM = COPY will do such conversion with only
+  a warning (which in case of strict sql_mode it will turn the
+  warning to an error).
+  
+  So to be consistent, we will only allow INPLACE for
+  NULL -> NOT NULL under strict sql_mode, since that will give
+  an error for both INPLACE and COPY.
+  
+  If not strict mode ha_innodbase::check_if_supported_inplace_alter
+  will return failure, and depending on ALGORITHM it will fall back to
+  COPY or fail.
+  
+  Also notice that ADD PRIMARY KEY () will implicitly add NOT NULL if
+  not already there!
+  
+  Updated tests that uses INPLACE by setting strict sql_mode.
+  
+  Also updated some Swedish error messages.
+  
+  rb 1679 approved by marko.
+------------------------------------------------------------
+revno: 4781 [merge]
+committer: Ravinder Thakur <ravinder.thakur@oracle.com>
+branch nick: 5.6
+timestamp: Thu 2012-12-13 22:36:33 +0530
+message:
+  Null merge from 5.5 to 5.6 for bug#11761752
+    ------------------------------------------------------------
+    revno: 2875.417.93 [merge]
+    committer: Ravinder Thakur <ravinder.thakur@oracle.com>
+    branch nick: 5.5
+    timestamp: Thu 2012-12-13 20:58:09 +0530
+    message:
+      Merging from 5.1 to 5.5 for bug#11761752
+        ------------------------------------------------------------
+        revno: 2661.862.48
+        committer: Ravinder Thakur <ravinder.thakur@oracle.com>
+        branch nick: 5.1
+        timestamp: Thu 2012-12-13 20:33:44 +0530
+        message:
+          bug#11761752: DO NOT ALLOW USE OF ALTERNATE DATA STREAMS ON NTFS FILESYSTEM.
+          
+          File names with colon are being disallowed because of the Alternate Data 
+          Stream (ADS) feature of NTFS that could be misused. ADS allows data to be 
+          written to alternate streams of a normal file. The data in alternate 
+          streams cannot be seen by normal tools on Windows (explorer, cmd.exe). As 
+          a result someone can use this feature to hide large amount of data in 
+          alternate streams and admins will have no easy way of figuring out the 
+          files that are using that disk space. The fix also disallows ADS in the 
+          scenarios where file name is passed as some dynamic variable.
+          
+          An important thing about the fix is that it DOES NOT disallow ADS file 
+          names if they are not dynamic (i.e. if the file is created by using some 
+          option that needs local access to the MySQL server, for example error log
+          file). The reasoning is that if some MySQL option related to files 
+          requires access to the local machine (it is not dynamic), then user can very 
+          well create data in ADS by some other means. This fixes only those scenarios 
+          which can allow users to create data in ADS over the wire.
+          
+          File names with colon are being disallowed only on Windows. UNIX 
+          (Linux in particular) supports NTFS, but it will not be a common 
+          scenario for someone to configure a NTFS file system to store MySQL 
+          data on Linux.
+          
+          Changes in file bug11761752-master.opt are needed due to 
+          bug number 15937938.
+------------------------------------------------------------
+revno: 4780
+committer: Ritheesh Vedire <ritheesh.vedire@oracle.com>
+branch nick: Bug14775893
+timestamp: Thu 2012-12-13 22:16:57 +0530
+message:
+  Bug#14775893: MASTER_POS_WAIT CAN HANG WHEN USING GTIDS
+  Bug#15927032: SEMI SYNC REPLICATION BREAKS WITH CHANGE
+                MASTER_AUTO_POSITION=1
+  
+   When transactions are skipped in a GTID protocol, the
+   coordinates of the binary log (on the master) are not
+   updated properly by the Slave IO (mi) and Slave SQL (rli)
+   threads. This can have several consequences. For example,
+   master_pos_wait() depends on the coordinates of the SQL thread, 
+   and the function can hang forever or return -1 due to
+   improper updation of rli. Other example is, during semi sync
+   replication, the master receives an ACK with wrong coordinates
+   by slave IO which will break semi sync repl.
+  
+   This patch corrects the coordinates of the slave by sending
+   a heart beat event which carries the coordinates of the last
+   skipped transaction during a gtid protocol. This event when 
+   received by the IO thread, is put in to the relay log as an 
+   ignored Rotate Event. The Rotate Event is read by the slave SQL
+   thread to update rli. 
+  
+   Thereby, this patch solves following  problems
+   0) Fixes the *holes* in event coordianates of mi and rli
+   1) master_pos_wait() returns values >=0
+   2) Fixes the problems in semi sync when using with GTIDs 
+------------------------------------------------------------
+revno: 4779
+committer: Manish Kumar<manish.4.kumar@oracle.com>
+branch nick: mysql-5.6_15907706
+timestamp: Thu 2012-12-13 21:55:08 +0530
+message:
+  BUG#15907706 : RPL.RPL_INSERT_ID TEST FAILS ON SOLARIS PLATFORM IN PB2
+  
+  Problem : rpl.rpl_insert_id fails on PB2 everyday and only on solaris
+            platform. The problem was that the thread_stack value available
+            for the test seems to be less when the test executes on the 
+            solaris machines. 
+            On other platforms the default value 196608 for 32 bit machines
+            and 262144 bytes for 64 big machines seems to be enough.
+            But on linux the error reports that the the thread_stack value
+            required is beyond the specified limit on the respective
+            platforms.
+  
+  Fix - The problem is fixed by passing the PB_HOST_SPECIFIC_MYSQLD_ARGS
+        host specific arguments to the slave.
+------------------------------------------------------------
+revno: 4778
+committer: Ravinder Thakur <ravinder.thakur@oracle.com>
+branch nick: 5.6
+timestamp: Thu 2012-12-13 21:04:59 +0530
+message:
+  Merging from 5.5 to 5.6 for bug#11761752
+  
+  In addition to changes from 5.5, the fix for 5.6 contains 
+  additional checks for InnoDB option innodb_buffer_pool_filename. 
+  This option does not exists in 5.5 or 5.1.
+------------------------------------------------------------
+revno: 4777 [merge]
+committer: Marko M?kel? <marko.makela@oracle.com>
+branch nick: mysql-5.6
+timestamp: Thu 2012-12-13 17:14:56 +0200
+message:
+  Merge mysql-5.5 to mysql-5.6.
+    ------------------------------------------------------------
+    revno: 2875.417.92
+    committer: Marko M?kel? <marko.makela@oracle.com>
+    branch nick: mysql-5.5
+    timestamp: Thu 2012-12-13 17:12:21 +0200
+    message:
+      Follow-up fix to Bug#14628410: Remove the Windows InnoDB Plugin specific
+      implementation of innobase_mysql_tmpfile() from MySQL 5.5 onwards.
+------------------------------------------------------------
+revno: 4776
+committer: Libing Song <libing.song@oracle.com>
+branch nick: mysql-5.6
+timestamp: Thu 2012-12-13 22:50:52 +0800
+message:
+  Bug#15980626 POSSIBLE REPLICATION PERFORMANCE DEGRADATION
+               THROUGH RLI->FLUSH_INFO(TRUE)
+  
+  Problem:sync_relay_log_info was being ignored when transactional
+  tables were updated. No matter what number was set, relay log info
+  file was synced upon committing. This was causing the performance
+  degradation.
+  
+  Fix: Sync(or update relay log info table) after each transaction
+  should happen only when both data and relay log info are stored
+  in transactional tables. Only this scenario will guarantee crash
+  safety.
+------------------------------------------------------------
+revno: 4775
+committer: Dmitry Lenev <Dmitry.Lenev@oracle.com>
+branch nick: mysql-5.6-mdl-t-fix
+timestamp: Thu 2012-12-13 17:59:02 +0400
+message:
+  Follow-up for the fix for bug #15954872 "MAKE MDL SUBSYSTEM AND
+  TABLE DEFINITION CACHE ROBUST AGAINST BUGS IN CALLERS".
+  
+  Make mdl-t unit test pass on Solaris and Windows by adjusting
+  patterns used in EXPECT_DEATH macros to take into account
+  different messages about assertion failures on these platforms.
+------------------------------------------------------------
+revno: 4774 [merge]
+committer: Satya Bodapati <satya.bodapati@oracle.com>
+branch nick: mysql-5.6-bug-14628410
+timestamp: Thu 2012-12-13 19:07:39 +0530
+message:
+  Merge fix for Bug#14628410 from mysql-5.5 to mysql-5.6
+    ------------------------------------------------------------
+    revno: 2875.417.91 [merge]
+    committer: Satya Bodapati <satya.bodapati@oracle.com>
+    branch nick: mysql-5.5-bug-14628410
+    timestamp: Thu 2012-12-13 18:56:47 +0530
+    message:
+      Merge fix for Bug#14628410 from mysql-5.1 to mysql-5.5
+        ------------------------------------------------------------
+        revno: 2661.862.47
+        committer: Satya Bodapati <satya.bodapati@oracle.com>
+        branch nick: mysql-5.1-bug-14628410
+        timestamp: Thu 2012-12-13 18:53:16 +0530
+        message:
+          Bug#14628410 - ASSERTION `! IS_SET()' FAILED IN DIAGNOSTICS_AREA::SET_OK_STATUS
+          
+          The error code returned from Merge file/Temp file creation functions are
+          ignored.
+          
+          Use the return codes of the row_merge_file_create() and innobase_mysql_tmpfile()
+          to return the error to caller if file creation fails.
+          
+          Approved by Marko. rb#1618
+------------------------------------------------------------
+revno: 4773
+committer: Alexander Nozdrin <alexander.nozdrin@oracle.com>
+branch nick: 5.6
+timestamp: Thu 2012-12-13 15:02:05 +0400
+message:
+  A patch for Bug#15877062: MYSQL_SQL_STMT_CLOSE READS FREED MEMORY.
+  
+  The problem was that the PS-arena was not properly restored in case of error.
+  
+  The fix is to restore query arena properly.
+------------------------------------------------------------
+revno: 4772
+committer: Jimmy Yang <jimmy.yang@oracle.com>
+branch nick: mysql-5.6
+timestamp: Thu 2012-12-13 18:23:15 +0800
+message:
+  Fix Bug #14771282 - FULLTEXT INDEX NOT BEING PROPERLY MAINTAINED ON INNODB
+  TABLE
+  
+  rb://1698 approved by Sunny Bains
+------------------------------------------------------------
+revno: 4771
+committer: Guilhem Bichot <guilhem.bichot@oracle.com>
+branch nick: 5.6-3
+timestamp: Wed 2012-12-12 12:19:17 +0100
+message:
+  Bug#13897507 - EXPLAIN DOES NOT LIST SUBQUERIES IN EXECUTION ORDER
+  this patch does not change the order of subqueries in EXPLAIN
+  (too difficult to do it now).
+  The execution order of subqueries (which subquery is executed
+  first, etc.) can be determined by looking at "attached_condition"
+  of the table to which this subquery is attached, in the output of
+  EXPLAIN FORMAT =JSON. Because this condition is long to read, and
+  there can be many '()', this patch adds, to any subquery printed
+  in the condition, the number of this subquery (select#) (as is
+  already the case in the warning of EXPLAIN EXTENDED and EXPLAIN
+  FORMAT= JSON, and in the Optimizer trace). This number can then
+  be matched with numbers of query_block's of subqueries.
+  At line 813 of explain_json_none.result we can see that this
+  numbering helps finding what subquery is executed first.
+------------------------------------------------------------
+revno: 4770
+committer: Oystein Grovlen <oystein.grovlen@oracle.com>
+branch nick: mysql-5.6
+timestamp: Thu 2012-12-13 09:22:59 +0100
+message:
+  Bug#15950531 - DBUG_ASSERT(FT_HANDLER); IN ITEM_FUNC_MATCH::GET_COUN
+  
+  If no full text index for the match expression, InnoDB will set
+  error status during initialization, and not create any FTS
+  handler.  The new count(*) optimization hit an assert if there
+  was no handler.
+  
+  Fix: Check for error status before calling
+  Item_func_match::get_count().
+------------------------------------------------------------
+revno: 4769
+committer: Marko M?kel? <marko.makela@oracle.com>
+branch nick: mysql-5.6
+timestamp: Thu 2012-12-13 09:46:15 +0200
+message:
+  Bug#14105491 ADD FOREIGN KEY ON COLUMNS BEING RENAMED DOES NOT WORK CORRECTLY
+  
+  Disable the combination of ADD_FOREIGN_KEY and ALTER_COLUMN_NAME for now.
+  
+  rb#1703 approved by Jimmy Yang
+------------------------------------------------------------
+revno: 4768 [merge]
+committer: Harin Vadodaria <harin.vadodaria@oracle.com>
+branch nick: 56_bug15965288
+timestamp: Thu 2012-12-13 10:21:09 +0530
+message:
+  Bug#15965288: BUFFER OVERFLOW IN YASSL FUNCTION
+                DOPROCESSREPLY()
+  
+  Description: Merge from 5.5 to 5.6 .
+    ------------------------------------------------------------
+    revno: 2875.417.90 [merge]
+    committer: Harin Vadodaria <harin.vadodaria@oracle.com>
+    branch nick: 55_bug15965288
+    timestamp: Thu 2012-12-13 10:19:14 +0530
+    message:
+      Bug#15965288: BUFFER OVERFLOW IN YASSL FUNCTION
+                    DOPROCESSREPLY()
+      
+      Description: Merge from 5.1 to 5.5
+        ------------------------------------------------------------
+        revno: 2661.862.46
+        committer: Harin Vadodaria <harin.vadodaria@oracle.com>
+        branch nick: 51_bug15965288
+        timestamp: Thu 2012-12-13 10:17:26 +0530
+        message:
+          Bug#15965288: BUFFER OVERFLOW IN YASSL FUNCTION
+                        DOPROCESSREPLY()
+          
+          Description: Function DoProcessReply() calls function
+                       decrypt_message() in a while loop without
+                       performing a check on available buffer
+                       space. This can cause buffer overflow and
+                       crash the server. This patch is fix provided
+                       by Sawtooth to resolve the issue.
+------------------------------------------------------------
+revno: 4767
+committer: Sunny Bains <Sunny.Bains@Oracle.Com>
+branch nick: 5.6
+timestamp: Thu 2012-12-13 13:12:11 +1100
+message:
+  Bug#4789249 - LOCKING ASSERT IN FK UPDATE CASCADE CODE, LOCK->TRX->LOCK.WAIT_LOCK == LOCK
+  Bug#14707091 SEGV IN LOCK_DEADLOCK_LOCK_PRINT(), NULL LOCK PTR
+  
+  Joining T1 does a deadlock check due to wait 
+  
+  T1 is selected as victim (but not rolled back), for any number of reasons.
+  
+  We try and resolve more deadlocks 
+    - T2 is selected as a victim and rolled back 
+    - This grants T1 the lock and is no longer the victim.
+  
+  Since T1 was originally selected as a victim, when we go to reset its lock
+  state we trip over the invariant that it must still be in the wait state. 
+  
+  Fix is to check if T1 was granted a lock when T2 was rolled back during
+  additional deadlock checking.
+  
+  Approved by Jimmy Yang rb#1619.
+------------------------------------------------------------
+revno: 4766 [merge]
+committer: Nirbhay Choubey <nirbhay.choubey@oracle.com>
+branch nick: 5.6
+timestamp: Wed 2012-12-12 22:44:50 +0530
+message:
+  Merge of patch for Bug#13639125 from mysql-5.5.
+    ------------------------------------------------------------
+    revno: 2875.417.89
+    committer: Nirbhay Choubey <nirbhay.choubey@oracle.com>
+    branch nick: 5.5
+    timestamp: Wed 2012-12-12 22:31:03 +0530
+    message:
+      Bug#13639125 DELIMITER STRIPS THE NEXT NEW LINE
+                   IN A SQL STATEMENT
+      
+      While processing each lines entered at the prompt,
+      mysql client appends a '\n' to all the lines except
+      for delimiter commands. However the same logic must
+      not apply if 'delimiter' is part of a string or a
+      comment, for which a '\n' should be added.
+      
+      Fixed by adding appropriate checks.
+      
+      Added a test case.
+------------------------------------------------------------
+revno: 4765
+committer: Sven Sandberg <sven.sandberg@oracle.com>
+branch nick: 5.6
+timestamp: Wed 2012-12-12 17:07:02 +0100
+message:
+  BUG#15968413 - IMPROVE GTID_SET::IS_INTERSECTION AND GTID_SET::INTERSECTION PERFORMANCE
+  Problem:
+  1. Gtid_set::is_intersection and Gtid_set::intersection were too
+  slow, because they iterated over all GTIDs instead of over all
+  intervals. So calling one of the functions on a Gtid_set with
+  a single, very big interval like 1-1000000000000 would take too
+  long time.
+  2. Gtid_set::is_subset had a bug: if this and super had different
+  sid_maps, there was a missing bounds check on super's sidno. This
+  could cause read from invalid memory and dereferencing uninitialized
+  pointer if super had fewer sidnos allocated than super's sid_map,
+  and this contains a sidno that super does not contain.
+  Fix:
+  1. Iterate over intervals, not over GTIDs.
+  2. Move the bounds check so it's checked every time.
+  Also:
+  - Rename is_intersection to is_intersection_nonempty.
+  - Refactor and document is_subset, just for clarity.
+  - Simplify loops in is_subset.
+------------------------------------------------------------
+revno: 4764 [merge]
+committer: magnus.blaudd@oracle.com
+branch nick: 5.6
+timestamp: Wed 2012-12-12 15:46:49 +0100
+message:
+  Merge
+    ------------------------------------------------------------
+    revno: 4763.1.1 [merge]
+    committer: magnus.blaudd@oracle.com
+    branch nick: 5.6
+    timestamp: Wed 2012-12-12 15:40:58 +0100
+    message:
+      Merge
+        ------------------------------------------------------------
+        revno: 4627.1.1
+        committer: magnus.blaudd@oracle.com
+        branch nick: 5.6
+        timestamp: Tue 2012-11-20 20:18:59 +0100
+        message:
+          rpl_extra_col_master
+           - fix problem with unpredictable result  because of missing ORDER BY in new testcase
+------------------------------------------------------------
+revno: 4763
+committer: Mayank Prasad <mayank.prasad@oracle.com>
+branch nick: 5.6
+timestamp: Wed 2012-12-12 19:03:54 +0530
+message:
+  Bug#14494893 : INNODB_FILE_PER_TABLE DOES NOT PERMIT ON/OFF AT STARTUP
+  
+  Details :
+   - During server initialization, when boolean values 1/true OR 0/false
+     are given, then they were accpected but if on/off were given then
+     they were being considered wrong.
+  
+  Reason :
+   - During server initialization, while checking for the valid values
+     for boolean parameters, only 1/true AND 0/false were being checked.
+  
+  Solution :
+   - Added code to check for On/Off and if found, make them valid values.
+  
+   Test case innodb_file_per_table_basic.test is already there to check
+   this parameter. So no new test case required. I just added
+   --innodb_file_per_table in master.opt files with value On (Default) 
+   so that at startup this fix could be verified.
+------------------------------------------------------------
+revno: 4762 [merge]
+committer: Ashish Agarwal<ashish.y.agarwal@oracle.com>
+branch nick: bug_14843970
+timestamp: Wed 2012-12-12 17:56:23 +0530
+message:
+  BUG#14843970: VALIDATE_PASSWORD ALLOWS BLANK PASSWORDS
+  
+  PROBLEM: Empty string password is accepted even if
+           validate_password plugin is installed.
+  
+  SOLUTION: Not allowing empty string password when
+            validate_password plugin is installed.
+    ------------------------------------------------------------
+    revno: 4532.1.1
+    committer: Ashish Agarwal<ashish.y.agarwal@oracle.com>
+    branch nick: bug14843970
+    timestamp: Thu 2012-11-08 17:39:33 +0530
+    message:
+      BUG#14843970: VALIDATE_PASSWORD ALLOWS BLANK PASSWORDS
+      
+      PROBLEM: Empty string password is accepted even if
+               validate_password plugin is installed.
+      
+      SOLUTION: Not allowing empty string password when
+                validate_password plugin is installed.
+------------------------------------------------------------
+revno: 4761
+committer: Georgi Kodinov <georgi.kodinov@oracle.com>
+branch nick: wl6587-5.6
+timestamp: Wed 2012-12-12 13:41:12 +0200
+message:
+  Backport of WL#6587 to 5.6 : version 2
+  
+  Proper unix file format used for the tests.
+------------------------------------------------------------
+revno: 4760
+committer: Satya Bodapati <satya.bodapati@oracle.com>
+branch nick: mysql-5.6-bug-15913195
+timestamp: Wed 2012-12-12 15:34:58 +0530
+message:
+  Bug#15913195 - FIL_MAKE_IBBACKUP_OLD_NAME FUNCTION CAN CAUSE BUFFER
+  OVERFLOW
+  
+  Fixed the buffer overflow by passing the right offset of the 
+  buffer to ut_sprintf_timestamp_without_extra_chars()
+  
+  No testcase because this is fixed and tested in meb
+  branches(mysql-5.5-meb and
+  mysql-5.6-meb). It is possible only to test in meb branches because of
+  the
+  UNIV_HOTBACKUP flag
+  
+  Approved by Marko. rb#1620
+------------------------------------------------------------
+revno: 4759 [merge]
+committer: Joerg Bruehe <joerg.bruehe@oracle.com>
+branch nick: mysql-5.6
+timestamp: Wed 2012-12-12 10:54:23 +0100
+message:
+  Automerge
+    ------------------------------------------------------------
+    revno: 4757.1.1 [merge]
+    committer: sayantan.dutta@oracle.com
+    branch nick: mysql-5.6
+    timestamp: Wed 2012-12-12 15:12:50 +0530
+    message:
+      upmerge 14737171 5.5=>5.6
+        ------------------------------------------------------------
+        revno: 2875.417.88 [merge]
+        committer: sayantan.dutta@oracle.com
+        branch nick: mysql-5.5
+        timestamp: Wed 2012-12-12 15:10:47 +0530
+        message:
+          upmerge 14737171 5.1=>5.5
+            ------------------------------------------------------------
+            revno: 2661.862.45
+            committer: sayantan.dutta@oracle.com
+            branch nick: mysql-5.1
+            timestamp: Wed 2012-12-12 15:09:31 +0530
+            message:
+              Bug #14737171:MTR DOES NOT PRESERVE TEST CASE LOGS ON RETRY-FAIL
+------------------------------------------------------------
+revno: 4758 [merge]
+committer: Joerg Bruehe <joerg.bruehe@oracle.com>
+branch nick: mysql-5.6
+timestamp: Wed 2012-12-12 10:48:07 +0100
+message:
+  Merge 5.6.9 into main 5.6
+    ------------------------------------------------------------
+    revno: 4751.1.2
+    committer: Joerg Bruehe <joerg.bruehe@oracle.com>
+    branch nick: merge-5.6
+    timestamp: Wed 2012-12-12 10:44:20 +0100
+    message:
+      ULN RPM spec file: Keep in sync with traditional (names for generic).
+    ------------------------------------------------------------
+    revno: 4751.1.1 [merge]
+    committer: Joerg Bruehe <joerg.bruehe@oracle.com>
+    branch nick: merge-5.6
+    timestamp: Tue 2012-12-11 14:19:16 +0100
+    message:
+      Merge the 5.6.9 build back into main 5.6
+        ------------------------------------------------------------
+        revno: 4575.1.4
+        tags: mysql-5.6.9
+        committer: Bjorn Munch <bjorn.munch@oracle.com>
+        branch nick: rel-569
+        timestamp: Thu 2012-11-22 15:12:33 +0100
+        message:
+          Fix RPM name for generic linux, - not allowed
