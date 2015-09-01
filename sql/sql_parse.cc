@@ -9234,10 +9234,13 @@ static const unsigned int sql_mode_values[]=
 
 int get_sql_mode_from_str(char* mode)
 {
-    unsigned int i;
-    for (i=0;i<sizeof(sql_mode_names)-1;i++)
+    unsigned int i = 0;
+    while (sql_mode_names[i])
+    {
         if (strcmp(mode, sql_mode_names[i])==0)
             return sql_mode_values[i];
+        i++;
+    }
 
     return 0;
 }
