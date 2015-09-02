@@ -340,6 +340,7 @@ struct osc_percent_cache_struct
     char        remaintime[NAME_CHAR_LEN];
     process     *proc;
     volatile int         killed;
+    sql_cache_node_t* sql_cache_node;
     LIST_NODE_T(osc_percent_cache_t) link;
 };
 

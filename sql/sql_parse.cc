@@ -3887,6 +3887,7 @@ int mysql_execute_inception_osc_show(THD* thd)
     field_list.push_back(new Item_empty_string("SQLSHA1", FN_REFLEN));
     field_list.push_back(new Item_return_int("PERCENT", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("REMAINTIME", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("INFOMATION", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -3903,6 +3904,7 @@ int mysql_execute_inception_osc_show(THD* thd)
         protocol->store(osc_percent_node->sqlsha1, system_charset_info);
         protocol->store(osc_percent_node->percent);
         protocol->store(osc_percent_node->remaintime, system_charset_info);
+        protocol->store(str_get(osc_percent_node->sql_cache_node->oscoutput), system_charset_info);
         mysql_mutex_unlock(&osc_mutex);
 
         protocol->write();
@@ -9932,6 +9934,7 @@ int mysql_add_new_percent_cache_node(
     strcpy(osc_percent_node->tablename, sql_cache_node->tablename);
     strcpy(osc_percent_node->remaintime, "");
     strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
+    osc_percent_node->sql_cache_node = sql_cache_node;
     LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
     mysql_mutex_unlock(&osc_mutex);
     DBUG_RETURN(false);
