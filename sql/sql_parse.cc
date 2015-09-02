@@ -4746,7 +4746,9 @@ int mysql_check_column_default(
         }
 
         //检查非法时间值
-        if (default_value->type() == Item::STRING_ITEM && 
+        if ((default_value->type() == Item::INT_ITEM ||
+            default_value->type() == Item::STRING_ITEM ||
+            default_value->type() == Item::DECIMAL_ITEM) &&
            (real_type == MYSQL_TYPE_TIMESTAMP2 || 
             real_type == MYSQL_TYPE_DATETIME ||
             real_type == MYSQL_TYPE_DATETIME2 ||
@@ -4762,8 +4764,9 @@ int mysql_check_column_default(
             itemstr = (Item_string*)default_value;
             String *res = itemstr->val_str(&buffer);
             str_to_datetime(system_charset_info, res->ptr(), res->length(), &ltime, 
-                (MODE_NO_ZERO_DATE& thd->variables.sql_mode)|MODE_NO_ZERO_IN_DATE, &status);
-            if (status.warnings & (MYSQL_TIME_WARN_ZERO_DATE | MYSQL_TIME_WARN_ZERO_IN_DATE))
+                MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE, &status);
+            //这里只要有警告，就是非法值，直接报警
+            if (status.warnings > 0)
             {
                 my_error(ER_INVALID_DEFAULT, MYF(0), field_name);
                 mysql_errmsg_append(thd);
