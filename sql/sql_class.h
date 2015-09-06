@@ -175,6 +175,9 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_OSC_SHOW        5
 #define INCEPTION_COMMAND_OSC_ABORT       6
 
+typedef struct check_rt_struct check_rt_t;
+typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
+
 typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
@@ -299,6 +302,7 @@ struct sql_cache_node_struct
     int         ignore;//for statement ignore, eg. alter ignore table ...
     str_t*      oscoutput;
     volatile int     oscpercent;
+    rt_lst_t*   rt_lst;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -409,13 +413,13 @@ struct table_rt_struct
     LIST_NODE_T(table_rt_t)         link;
 };
 
-typedef struct query_print_rt_struct query_print_rt_t;
-struct query_print_rt_struct 
+typedef struct check_rt_struct check_rt_t;
+struct check_rt_struct 
 {
     void*             select_lex;
     
     LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
-    LIST_NODE_T(query_print_rt_t)                 link;
+    LIST_NODE_T(check_rt_t)                 link;
 };
 
 typedef struct query_print_cache_node_struct query_print_cache_node_t;
@@ -426,7 +430,7 @@ struct query_print_cache_node_struct
     int                                     errlevel;
     str_t*                                  errmsg;
 
-    LIST_BASE_NODE_T(query_print_rt_t)            rt_lst;
+    rt_lst_t                                rt_lst;
     
     LIST_NODE_T(query_print_cache_node_t)         link;
 };
@@ -3207,6 +3211,7 @@ public:
   int             useflag;//use temporary where set names utf8, when analyze next statement, reset it
   int          setnamesflag;//the same to above;
   str_t*        show_result;
+  rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven

@@ -192,6 +192,8 @@ const char *xa_state_names[]={
 #define INC_CHAR_MAX_TO_VARCHAR     16
 
 
+int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
+int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
 int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
 int mysql_execute_commit(THD *thd);
 void mysql_free_all_table_definition(THD*  thd);
@@ -649,6 +651,9 @@ int mysql_cache_one_sql(THD* thd)
     sql_cache_node->errlevel = thd->err_level > INCEPTION_PARSE ? INCEPTION_PARSE : thd->err_level;
     if (sql_cache_node->errlevel == INCEPTION_PARSE)
         thd->thd_sinfo->ignore_warnings = 0;
+
+    sql_cache_node->rt_lst = thd->rt_lst;
+    thd->rt_lst = NULL;
 
     thd->use_osc = FALSE;
 
@@ -2857,6 +2862,7 @@ mysql_check_fields_valid(
 
     while ((item= it++))
     {
+        // mysql_check_item(thd,  item, &thd->lex->select_lex);
         field_node = LIST_GET_FIRST(table_info->field_lst);
         while (field_node != NULL)
         {
@@ -2896,6 +2902,34 @@ mysql_check_fields_valid(
     DBUG_RETURN(0);
 }
 
+int 
+mysql_load_insert_tables(
+    THD *thd,
+    table_info_t* table_info
+)
+{
+    check_rt_t*     rt;
+    table_rt_t*           tablert;
+
+    if (!thd->rt_lst)
+        thd->rt_lst = (rt_lst_t*)my_malloc(sizeof(rt_lst_t), MY_ZEROFILL);
+
+    rt = (check_rt_t*)my_malloc(sizeof(check_rt_t), MY_ZEROFILL);
+    rt->select_lex = &thd->lex->select_lex;
+
+    if (table_info)
+    {
+        tablert = (table_rt_t*)my_malloc(sizeof(table_rt_t), MY_ZEROFILL);
+        tablert->table_info = table_info;
+        if (thd->lex->query_tables->alias)
+            strcpy(tablert->alias, thd->lex->query_tables->alias);
+        LIST_ADD_LAST(link, rt->table_rt_lst, tablert);
+    }
+
+    LIST_ADD_LAST(link, *thd->rt_lst, rt);
+    return 0;
+}
+
 int
 mysql_check_insert_fields(
     THD *thd,
@@ -2928,10 +2962,12 @@ mysql_check_insert_fields(
     }
 
     mysql_check_fields_valid(thd, table_info, fields);
-
+    mysql_load_insert_tables(thd, table_info);
     while ((values = its++))
     {
-        setup_fields(thd, Ref_ptr_array(), *values, MARK_COLUMNS_READ, 0, 0);
+        List_iterator<Item> it(*values);
+        while ((item= it++))
+            mysql_check_item(thd,  item, &thd->lex->select_lex);
 
         count++;
         if ((fields.elements == 0 && LIST_GET_LEN(table_info->field_lst) != values->elements) ||
@@ -2950,7 +2986,9 @@ mysql_check_insert_fields(
             {
                 if (strcasecmp(field_node->field_name, item->full_name()) == 0)
                 {
-                    if (!field_node->nullable && dynamic_cast<Item_null*>(item2) != NULL && item2->is_null())
+                    if (!field_node->nullable && 
+                        dynamic_cast<Item_null*>(item2) != NULL && 
+                        item2->is_null())
                     {
                         my_error(ER_BAD_NULL_ERROR, MYF(0), field_node->field_name, count);
                         mysql_errmsg_append(thd);
@@ -3169,12 +3207,15 @@ int mysql_check_insert_select_ex(THD *thd, table_info_t* table_info)
 
     mysql_check_fields_valid(thd, table_info, fields);
 
-    if (thd->lex->select_lex.with_wild == 0 &&
+    if ((thd->lex->select_lex.with_wild == 0 &&
             ((thd->lex->field_list.elements != thd->lex->current_select->item_list.elements &&
               thd->lex->field_list.elements != 0) ||
              (thd->lex->field_list.elements == 0 &&
               LIST_GET_LEN(table_info->field_lst) !=
-              thd->lex->current_select->item_list.elements)))
+              thd->lex->current_select->item_list.elements))) ||
+            (thd->lex->select_lex.with_wild && 
+            LIST_GET_LEN(table_info->field_lst) != 
+            thd->lex->current_select->item_list.elements))
     {
         my_error(ER_WRONG_VALUE_COUNT_ON_ROW, MYF(0), 1L);
         mysql_errmsg_append(thd);
@@ -3211,10 +3252,7 @@ int mysql_check_insert_select_ex(THD *thd, table_info_t* table_info)
         }
     }
 
-    setup_fields(thd, Ref_ptr_array(), thd->lex->select_lex.item_list,
-                 MARK_COLUMNS_READ, 0, 0);
-    setup_conds(thd, thd->lex->query_tables, thd->lex->select_lex.leaf_tables,
-                &thd->lex->select_lex.where);
+    mysql_check_subselect_item(thd, &thd->lex->select_lex, false);
 
     mysql = thd->get_audit_connection();
     if (mysql && !table_info->new_cache && !table_info->new_column_cache)
@@ -3677,15 +3715,14 @@ int mysql_explain_or_analyze_statement(
     str_t  str;
     str_t*  str_select;
     explain_info_t* explain = NULL;
+    Item* item;
 
     DBUG_ENTER("mysql_explain_or_analyze_statement");
 
-    //如果表或者列有新的，则简单分析其正确性，但不是所有表达式都分析
-    setup_conds(thd, thd->lex->query_tables, thd->lex->select_lex.leaf_tables,
-                &thd->lex->select_lex.where);
-    setup_fields(thd, Ref_ptr_array(), thd->lex->value_list, MARK_COLUMNS_READ, 0, 0);
-    //检查update语句中，set后面的列
-    setup_fields(thd, Ref_ptr_array(), thd->lex->select_lex.item_list, MARK_COLUMNS_READ, 0, 0);
+    mysql_check_subselect_item(thd, &thd->lex->select_lex, false);
+    List_iterator<Item> it(thd->lex->value_list);
+    while ((item= it++))
+        mysql_check_item(thd,  item, &thd->lex->select_lex);
 
     //如果表和列都是已经存在的，则到线上做一次EXPLAIN验证一次
     //并且返回一些可用的信息供分析
@@ -4138,17 +4175,6 @@ int mysql_check_select(THD *thd)
         mysql_errmsg_append(thd);
     }
 
-    /* if (thd->lex->select_lex.select_limit != NULL) */
-    /* { */
-    /*     my_error(ER_WITH_LIMIT_CONDITION, MYF(0)); */
-    /*     mysql_errmsg_append(thd); */
-    /* } */
-
-    // setup_fields(thd, Ref_ptr_array(), thd->lex->select_lex.item_list,
-    //         MARK_COLUMNS_READ, 0, 0);
-    // setup_conds(thd, thd->lex->query_tables, thd->lex->select_lex.leaf_tables,
-    //         &thd->lex->select_lex.where);
-
     if (thd->lex->select_lex.order_list.elements != 0)
     {
         for (order= thd->lex->select_lex.order_list.first ; order; order= order->next)
@@ -4160,20 +4186,6 @@ int mysql_check_select(THD *thd)
             }
         }
     }
-
-    // if (!mysql_check_table_new_cache(thd))
-    // {
-    //     explain_str = (char*)my_malloc(thd->query_length() + 100, MYF(0));
-    //     sprintf(explain_str, "EXPLAIN ");
-    //     sql = thd_query_with_length(thd);
-    //     strcat(explain_str, sql);
-    //     strcat(explain_str, ";");
-    //     if (mysql_get_explain_info(thd, thd->get_audit_connection(),
-    //                 explain_str, &explain, TRUE) != 0)
-    //         goto err1;
-    //
-    //     mysql_anlyze_explain(thd, explain);
-    // }
 
     mysql_free_explain_info(explain);
     my_free(explain_str);
@@ -6016,38 +6028,44 @@ int mysql_print_tables(
     query_print_cache_node_t*   query_node, 
     st_select_lex *select_lex,
     str_t* print_str, 
-    SQL_I_List<TABLE_LIST> * tables
+    TABLE_LIST* tables,
+    char* table_type
 )
 {
     char tablename[FN_LEN];
+    char tabletype[FN_LEN];
     TABLE_LIST* table;
     Item    *join_cond;
     bool have_join_on = false;
-    str_append(print_str, "\"table_ref\":[");
-    for (table= tables->first; table; table= table->next_local)
+    if (tables)
     {
-        str_append(print_str, "{");
-        str_append(print_str, "\"db\":");
-        sprintf(tablename, "\"%s\",", table->db);
-        str_append(print_str, tablename);
+        sprintf(tabletype, "\"%s\":[", table_type);
+        str_append(print_str, tabletype);
+        for (table= tables; table; table= table->next_local)
+        {
+            str_append(print_str, "{");
+            str_append(print_str, "\"db\":");
+            sprintf(tablename, "\"%s\",", table->db);
+            str_append(print_str, tablename);
 
-        str_append(print_str, "\"table\":");
-        sprintf(tablename, "\"%s\"", table->table_name);
-        str_append(print_str, tablename);
-        str_append(print_str, "}");
-        str_append(print_str, ",");
-        join_cond = table->join_cond();
-        if (join_cond)
-            have_join_on=true;
+            str_append(print_str, "\"table\":");
+            sprintf(tablename, "\"%s\"", table->table_name);
+            str_append(print_str, tablename);
+            str_append(print_str, "}");
+            str_append(print_str, ",");
+            join_cond = table->join_cond();
+            if (join_cond)
+                have_join_on=true;
+        }
+        str_truncate(print_str, 1);
+        str_append(print_str, "]");
     }
 
-    str_truncate(print_str, 1);
-    str_append(print_str, "]");
     if (have_join_on)
     {
         str_append(print_str, ",");
         str_append(print_str, "\"join_on\":[");
-        for (table= tables->first; table; table= table->next_local)
+        for (table= tables; table; table= table->next_local)
         {
             join_cond = table->join_cond();
             if (join_cond)
@@ -6069,17 +6087,17 @@ int mysql_print_tables(
 int 
 mysql_load_tables(
     THD* thd, 
-    query_print_cache_node_t*   query_node, 
+    rt_lst_t* rt_lst,
     st_select_lex *select_lex
 )
 {
     SQL_I_List<TABLE_LIST> * tables;
     TABLE_LIST* table;
     table_info_t* tableinfo;
-    query_print_rt_t*     rt;
+    check_rt_t*     rt;
     table_rt_t*           tablert;
 
-    rt = (query_print_rt_t*)my_malloc(sizeof(query_print_rt_t), MY_ZEROFILL);
+    rt = (check_rt_t*)my_malloc(sizeof(check_rt_t), MY_ZEROFILL);
     rt->select_lex = select_lex;
 
     tables = &select_lex->table_list;
@@ -6098,14 +6116,14 @@ mysql_load_tables(
         }
     }
 
-    LIST_ADD_LAST(link, query_node->rt_lst, rt);
+    LIST_ADD_LAST(link, *rt_lst, rt);
     return 0;
 }
 
 table_rt_t* 
 mysql_find_field_from_all_tables(
     THD* thd, 
-    query_print_cache_node_t*   query_node, 
+    rt_lst_t* rt_lst, 
     st_select_lex *select_lex_in,
     const char* dbname,
     const char* tablename,
@@ -6115,14 +6133,13 @@ mysql_find_field_from_all_tables(
     table_info_t* tableinfo = NULL;
     field_info_t* fieldinfo = NULL;
     st_select_lex *select_lex;
-    query_print_rt_t*   rt;
+    check_rt_t*   rt;
     table_rt_t*         tablert;
     table_rt_t*         ret_tablert = NULL;
-    int i;
 
     select_lex = select_lex_in;
 retry:
-    rt = LIST_GET_FIRST(query_node->rt_lst);
+    rt = LIST_GET_FIRST(*rt_lst);
     while (rt != NULL)
     {
         if ((st_select_lex*)rt->select_lex == select_lex)
@@ -6184,40 +6201,36 @@ retry:
     }
     else
     {
-        my_error(ER_COLUMN_NOT_EXISTED, MYF(0), field_name);
+        char name[1024];
+        name[0] = '\0';
+        if (dbname)
+        {
+            strcat(name, dbname);
+            strcat(name, ".");
+        }
+        if (tablename)
+        {
+            strcat(name, tablename);
+            strcat(name, ".");
+        }
+        if (field_name)
+        {
+            strcat(name, field_name);
+        }
+        my_error(ER_COLUMN_NOT_EXISTED, MYF(0), name);
         mysql_errmsg_append(thd);
         return NULL;
     }
 }
 
-int mysql_print_subselect(
+int mysql_print_select_condition(
     THD* thd, 
     query_print_cache_node_t*   query_node, 
     str_t* print_str, 
-    st_select_lex *select_lex, 
-    bool top
+    st_select_lex *select_lex
 )
 {
-    Item* item;
     ORDER*   order;
-
-    if (mysql_load_tables(thd, query_node, select_lex))
-        return true;
-    if (!top)
-    {
-        str_append(print_str, "\"subselect\":");
-        str_append(print_str, "{");
-    }
-    str_append(print_str, "\"select_list\":[");
-    List_iterator<Item> it(select_lex->item_list);
-    while ((item= it++))
-    {
-        print_item(thd, query_node, print_str, item, select_lex);
-        str_append(print_str, ",");
-    }
-    str_truncate(print_str, 1);
-    str_append(print_str, "],");
-    mysql_print_tables(thd, query_node, select_lex, print_str, &select_lex->table_list);
     if (select_lex->where)
     {
         str_append(print_str, ",");
@@ -6260,6 +6273,71 @@ int mysql_print_subselect(
         str_append(print_str, "]");
     }
 
+    if (select_lex->select_limit)
+    {
+        str_append(print_str, ",");
+        str_append(print_str, "\"limit\":{");
+        str_append(print_str, "\"limit\":[");
+        print_item(thd, query_node, print_str, select_lex->select_limit, select_lex);
+        str_append(print_str, "]");
+        if (select_lex->offset_limit)
+        {
+            str_append(print_str, ",");
+            str_append(print_str, "\"limit_offset\":[");
+            print_item(thd, query_node, print_str, select_lex->offset_limit, select_lex);
+            str_append(print_str, "]");
+        }
+        str_append(print_str, "}");
+    }
+
+    return 0;
+}
+
+int mysql_print_subselect(
+    THD* thd, 
+    query_print_cache_node_t*   query_node, 
+    str_t* print_str, 
+    st_select_lex *select_lex, 
+    bool top
+)
+{
+    Item* item;
+    ORDER*   order;
+    TABLE_LIST* tables;
+
+    if (mysql_load_tables(thd, &query_node->rt_lst, select_lex))
+        return true;
+    if (!top)
+    {
+        str_append(print_str, "\"subselect\":");
+        str_append(print_str, "{");
+    }
+    str_append(print_str, "\"select_list\":[");
+    List_iterator<Item> it(select_lex->item_list);
+    while ((item= it++))
+    {
+        print_item(thd, query_node, print_str, item, select_lex);
+        str_append(print_str, ",");
+    }
+    str_truncate(print_str, 1);
+    str_append(print_str, "]");
+
+    if (top && (thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
+        thd->lex->sql_command == SQLCOM_DELETE ||
+        thd->lex->sql_command == SQLCOM_DELETE_MULTI ||
+        thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
+        thd->lex->sql_command == SQLCOM_UPDATE))
+        tables = select_lex->table_list.first->next_local;
+    else
+        tables = select_lex->table_list.first;
+
+    if (tables)
+    {
+        str_append(print_str, ",");
+        mysql_print_tables(thd, query_node, select_lex, print_str, tables, (char*)"table_ref");
+    }
+
+    mysql_print_select_condition(thd, query_node, print_str, select_lex);
     if (!top)
         str_append(print_str, "}");
 
@@ -6411,9 +6489,10 @@ int print_func_item(
         }
         break;
     case Item_func::FUNC_SP:
+    case Item_func::UNKNOWN_FUNC:
         {
             char funcname[128];
-            str_append(print_str, "\"func\":\"FUNC_SP\",");
+            str_append(print_str, "\"func\":\"OTHERS\",");
             str_append(print_str, "\"name\":");
             sprintf(funcname, "\"%s\",", ((Item_func*) item)->func_name());
             str_append(print_str, funcname);
@@ -6547,7 +6626,7 @@ print_item(
                 if (((Item_field*)item)->table_name)
                     sprintf(tablename, "\"%s\",", ((Item_field*)item)->table_name);
                 tablert = mysql_find_field_from_all_tables(
-                    thd, query_node, select_lex, ((Item_field*)item)->db_name, 
+                    thd, &query_node->rt_lst, select_lex, ((Item_field*)item)->db_name, 
                     ((Item_field*)item)->table_name, ((Item_field*)item)->field_name); 
                 if (tablert)
                 {
@@ -6687,7 +6766,7 @@ int mysql_print_select(THD* thd)
 {
     query_print_cache_node_t*   query_node;
     query_print_cache_t*        query_cache;
-    query_print_rt_t*           rt;
+    check_rt_t*           rt;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
 
     query_cache = thd->query_print_cache;
@@ -6715,6 +6794,234 @@ int mysql_print_select(THD* thd)
     return false;
 }
 
+int mysql_print_insert(THD* thd)
+{
+    query_print_cache_node_t*   query_node;
+    query_print_cache_t*        query_cache;
+    SELECT_LEX* select_lex = &thd->lex->select_lex;
+    Item* item;
+    List_item *values;
+    char tablename[FN_LEN];
+
+    query_cache = thd->query_print_cache;
+
+    query_node = (query_print_cache_node_t*)my_malloc(sizeof(query_print_cache_node_t), MY_ZEROFILL);
+    query_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    query_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(query_node->query_tree);
+    str_init(query_node->sql_statements);
+    str_append_with_length(query_node->sql_statements, thd->query(), thd->query_length());
+    mysql_load_tables(thd, &query_node->rt_lst, select_lex);
+    str_append(query_node->query_tree, "{");
+
+    str_append(query_node->query_tree, "\"command\":\"insert\",");
+    str_append(query_node->query_tree, "\"table_object\":");
+    str_append(query_node->query_tree, "{");
+    str_append(query_node->query_tree, "\"db\":");
+    sprintf(tablename, "\"%s\",", thd->lex->query_tables->db);
+    str_append(query_node->query_tree, tablename);
+
+    str_append(query_node->query_tree, "\"table\":");
+    sprintf(tablename, "\"%s\"", thd->lex->query_tables->table_name);
+    str_append(query_node->query_tree, tablename);
+    str_append(query_node->query_tree, "}");
+    if (thd->lex->field_list.elements > 0)
+    {
+        str_append(query_node->query_tree, ",");
+        str_append(query_node->query_tree, "\"fields\":[");
+        List_iterator<Item> it(thd->lex->field_list);
+        while ((item= it++))
+        {
+            print_item(thd, query_node, query_node->query_tree, item, &thd->lex->select_lex);
+            str_append(query_node->query_tree, ",");
+        }
+
+        str_truncate(query_node->query_tree, 1);
+        str_append(query_node->query_tree, "]");
+    }
+
+    if (thd->lex->sql_command != SQLCOM_INSERT_SELECT)
+    {
+        str_append(query_node->query_tree, ",");
+        str_append(query_node->query_tree, "\"many_values\":[");
+        List<List_item> &values_list = thd->lex->many_values;
+        List_iterator_fast<List_item> its(values_list);
+        while ((values = its++))
+        {
+            str_append(query_node->query_tree, "{");
+            str_append(query_node->query_tree, "\"values\":[");
+            List_iterator<Item> it(*values);
+            while ((item= it++))
+            {
+                print_item(thd, query_node, query_node->query_tree, item, &thd->lex->select_lex);
+                str_append(query_node->query_tree, ",");
+            }
+            str_truncate(query_node->query_tree, 1);
+            str_append(query_node->query_tree, "]}");
+            str_append(query_node->query_tree, ",");
+        }
+        str_truncate(query_node->query_tree, 1);
+        str_append(query_node->query_tree, "]");
+    }
+    else
+    {
+        str_append(query_node->query_tree, ",");
+        str_append(query_node->query_tree, "\"select_insert_values\":{");
+        if (mysql_print_subselect(thd, query_node, query_node->query_tree, select_lex, true))
+            return true;
+        str_append(query_node->query_tree, "}");
+    }
+
+    str_append(query_node->query_tree, "}");
+    if (thd->errmsg != NULL)
+    {
+        query_node->errlevel= 1;
+        query_node->errmsg = thd->errmsg;
+        thd->errmsg = NULL;
+    }
+
+    LIST_ADD_LAST(link, query_cache->field_lst, query_node);
+    return false;
+}
+
+int mysql_print_delete(THD* thd)
+{
+    query_print_cache_node_t*   query_node;
+    query_print_cache_t*        query_cache;
+    SELECT_LEX* select_lex = &thd->lex->select_lex;
+
+    query_cache = thd->query_print_cache;
+
+    query_node = (query_print_cache_node_t*)my_malloc(sizeof(query_print_cache_node_t), MY_ZEROFILL);
+    query_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    query_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(query_node->query_tree);
+    str_init(query_node->sql_statements);
+    str_append_with_length(query_node->sql_statements, thd->query(), thd->query_length());
+    mysql_load_tables(thd, &query_node->rt_lst, select_lex);
+    str_append(query_node->query_tree, "{");
+
+    str_append(query_node->query_tree, "\"command\":\"delete\",");
+    if (thd->lex->auxiliary_table_list.first)
+    {
+        mysql_print_tables(thd, query_node, select_lex, query_node->query_tree, 
+            thd->lex->auxiliary_table_list.first, (char*)"table_object");
+        str_append(query_node->query_tree, ",");
+        mysql_print_tables(thd, query_node, select_lex, query_node->query_tree, 
+            thd->lex->query_tables, (char*)"table_ref");
+    }
+    else
+        mysql_print_tables(thd, query_node, select_lex, query_node->query_tree, 
+            thd->lex->query_tables, (char*)"table_object");
+
+    mysql_print_select_condition(thd, query_node, query_node->query_tree, select_lex);
+    // if (select_lex->where)
+    // {
+    //     str_append(query_node->query_tree, ",");
+    //     str_append(query_node->query_tree, "\"where\":[");
+    //     print_item(thd, query_node, query_node->query_tree, select_lex->where, select_lex);
+    //     str_append(query_node->query_tree, "]");
+    // }
+
+    str_append(query_node->query_tree, "}");
+    if (thd->errmsg != NULL)
+    {
+        query_node->errlevel= 1;
+        query_node->errmsg = thd->errmsg;
+        thd->errmsg = NULL;
+    }
+
+    LIST_ADD_LAST(link, query_cache->field_lst, query_node);
+    return false;
+}
+
+int mysql_print_update(THD* thd)
+{
+    query_print_cache_node_t*   query_node;
+    query_print_cache_t*        query_cache;
+    SELECT_LEX* select_lex = &thd->lex->select_lex;
+    Item* item;
+
+    query_cache = thd->query_print_cache;
+
+    query_node = (query_print_cache_node_t*)my_malloc(sizeof(query_print_cache_node_t), MY_ZEROFILL);
+    query_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    query_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(query_node->query_tree);
+    str_init(query_node->sql_statements);
+    str_append_with_length(query_node->sql_statements, thd->query(), thd->query_length());
+    mysql_load_tables(thd, &query_node->rt_lst, select_lex);
+    str_append(query_node->query_tree, "{");
+
+    str_append(query_node->query_tree, "\"command\":\"update\",");
+    str_append(query_node->query_tree, "\"set_fields\":{");
+    str_append(query_node->query_tree, "\"fields\":[");
+    List_iterator<Item> it(thd->lex->select_lex.item_list);
+    while ((item= it++))
+    {
+        print_item(thd, query_node, query_node->query_tree, item, &thd->lex->select_lex);
+        str_append(query_node->query_tree, ",");
+    }
+
+    str_truncate(query_node->query_tree, 1);
+    str_append(query_node->query_tree, "]");
+    str_append(query_node->query_tree, ",");
+    str_append(query_node->query_tree, "\"values\":[");
+    List_iterator<Item> vit(thd->lex->value_list);
+    while ((item= vit++))
+    {
+        print_item(thd, query_node, query_node->query_tree, item, &thd->lex->select_lex);
+        str_append(query_node->query_tree, ",");
+    }
+    str_truncate(query_node->query_tree, 1);
+    str_append(query_node->query_tree, "]");
+    str_append(query_node->query_tree, "}");
+
+    str_append(query_node->query_tree, ",");
+    mysql_print_tables(thd, query_node, select_lex, query_node->query_tree, 
+        thd->lex->query_tables, (char*)"table_ref");
+
+    mysql_print_select_condition(thd, query_node, query_node->query_tree, select_lex);
+
+    str_append(query_node->query_tree, "}");
+    if (thd->errmsg != NULL)
+    {
+        query_node->errlevel= 1;
+        query_node->errmsg = thd->errmsg;
+        thd->errmsg = NULL;
+    }
+
+    LIST_ADD_LAST(link, query_cache->field_lst, query_node);
+    return false;
+}
+
+int mysql_print_not_support(THD* thd)
+{
+    query_print_cache_node_t*   query_node;
+    query_print_cache_t*        query_cache;
+
+    query_cache = thd->query_print_cache;
+
+    query_node = (query_print_cache_node_t*)my_malloc(sizeof(query_print_cache_node_t), MY_ZEROFILL);
+    query_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    query_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(query_node->query_tree);
+    str_init(query_node->sql_statements);
+    str_append_with_length(query_node->sql_statements, thd->query(), thd->query_length());
+
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0));
+    mysql_errmsg_append(thd);
+    if (thd->errmsg != NULL)
+    {
+        query_node->errlevel= 1;
+        query_node->errmsg = thd->errmsg;
+        thd->errmsg = NULL;
+    }
+
+    LIST_ADD_LAST(link, query_cache->field_lst, query_node);
+    return false;
+}
+
 int mysql_print_command(THD *thd)
 {
     int err;
@@ -6725,21 +7032,317 @@ int mysql_print_command(THD *thd)
         break;
 
     case SQLCOM_INSERT:
-        err = mysql_check_insert(thd);
+    case SQLCOM_INSERT_SELECT:
+        err = mysql_print_insert(thd);
         break;
 
     case SQLCOM_DELETE:
     case SQLCOM_DELETE_MULTI:
-        err = mysql_check_delete(thd);
+        err = mysql_print_delete(thd);
         break;
 
     case SQLCOM_UPDATE:
     case SQLCOM_UPDATE_MULTI:
-        err = mysql_check_update(thd);
+        err = mysql_print_update(thd);
         break;
 
     case SQLCOM_SELECT:
         err = mysql_print_select(thd);
+        break;
+
+    default:
+        mysql_print_not_support(thd);
+        break;
+    }
+
+    return 0;
+}
+
+int mysql_check_subselect_item(
+    THD* thd, 
+    st_select_lex *select_lex, 
+    bool top
+)
+{
+    Item* item;
+    ORDER*   order;
+
+    if (!thd->rt_lst)
+        thd->rt_lst = (rt_lst_t*)my_malloc(sizeof(rt_lst_t), MY_ZEROFILL);
+
+    if (mysql_load_tables(thd, thd->rt_lst, select_lex))
+        return true;
+    List_iterator<Item> it(select_lex->item_list);
+    while ((item= it++))
+    {
+        mysql_check_item(thd,  item, select_lex);
+    }
+    if (select_lex->where)
+    {
+        mysql_check_item(thd,  select_lex->where, select_lex);
+    }
+
+    if (select_lex->group_list.elements != 0)
+    {
+        for (order= thd->lex->select_lex.group_list.first ; order; order= order->next)
+        {
+            mysql_check_item(thd,  *order->item, select_lex);
+        }
+    }
+
+    if (select_lex->having)
+    {
+        mysql_check_item(thd,  select_lex->having, select_lex);
+    }
+
+    if (select_lex->order_list.elements != 0)
+    {
+        for (order= thd->lex->select_lex.order_list.first ; order; order= order->next)
+        {
+            mysql_check_item(thd,  *order->item, select_lex);
+        }
+    }
+
+    return 0;
+}
+
+int mysql_check_func_item(
+    THD* thd, 
+    Item* item, 
+    st_select_lex *select_lex
+)
+{
+    Item_func::Functype type;
+    if (!item)
+        return 0;
+    type = ((Item_func *)item)->functype();
+    switch(type)
+    {
+    case Item_func::EQ_FUNC:
+    case Item_func::NE_FUNC:
+    case Item_func::LT_FUNC:
+    case Item_func::LE_FUNC:
+    case Item_func::GE_FUNC:
+    case Item_func::GT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            mysql_check_item(thd,  left_item, select_lex);
+            Item *right_item= ((Item_func*) item)->arguments()[1];
+            mysql_check_item(thd,  right_item, select_lex);
+        }
+        break;
+
+    case Item_func::COND_OR_FUNC:
+    case Item_func::COND_AND_FUNC:
+        {
+            List<Item> *args= ((Item_cond*) item)->argument_list();
+            List_iterator<Item> li(*args);
+            Item *item_arg;
+            while ((item_arg= li++))
+            {
+                mysql_check_item(thd,  item_arg, select_lex);
+            }
+        }
+        break;
+    case Item_func::ISNULL_FUNC:
+    case Item_func::ISNOTNULL_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            mysql_check_item(thd,  left_item, select_lex);
+        }
+        break;
+    case Item_func::LIKE_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            Item *right_item= ((Item_func*) item)->arguments()[1];
+            mysql_check_item(thd,  left_item, select_lex);
+            mysql_check_item(thd,  right_item, select_lex);
+        }
+        break;
+    case Item_func::BETWEEN:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            Item *right_item1= ((Item_func*) item)->arguments()[1];
+            Item *right_item2= ((Item_func*) item)->arguments()[2];
+            mysql_check_item(thd,  left_item, select_lex);
+            mysql_check_item(thd,  right_item1, select_lex);
+            mysql_check_item(thd,  right_item2, select_lex);
+        }
+        break;
+    case Item_func::IN_FUNC:
+    case Item_func::MULT_EQUAL_FUNC:
+        {
+            for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+            {
+                Item *right_item= ((Item_func*) item)->arguments()[i];
+                mysql_check_item(thd,  right_item, select_lex);
+            }
+        }
+        break;
+    case Item_func::NOT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            mysql_check_item(thd,  left_item, select_lex);
+        }
+        break;
+    case Item_func::NOW_FUNC:
+        break;
+    case Item_func::EXTRACT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            mysql_check_item(thd,  left_item, select_lex);
+        }
+        break;
+    case Item_func::FUNC_SP:
+    case Item_func::UNKNOWN_FUNC:
+        {
+            for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+            {
+                Item *right_item= ((Item_func*) item)->arguments()[i];
+                mysql_check_item(thd,  right_item, select_lex);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+int 
+mysql_check_sum_item(
+    THD* thd, 
+    Item* item, 
+    st_select_lex *select_lex
+)
+{
+    Item_sum *item_sum= (((Item_sum*) item));
+    switch(item_sum->sum_func())
+    {
+    case Item_sum::COUNT_FUNC:
+    case Item_sum::COUNT_DISTINCT_FUNC:
+    case Item_sum::SUM_FUNC:
+    case Item_sum::SUM_DISTINCT_FUNC:
+    case Item_sum::AVG_FUNC:
+    case Item_sum::AVG_DISTINCT_FUNC:
+    case Item_sum::MIN_FUNC:
+    case Item_sum::MAX_FUNC:
+    case Item_sum::STD_FUNC:
+    case Item_sum::VARIANCE_FUNC:
+    case Item_sum::SUM_BIT_FUNC:
+    case Item_sum::UDF_SUM_FUNC:
+    case Item_sum::GROUP_CONCAT_FUNC:
+        {
+            Item* item_count = ((Item_sum_count*) item)->get_arg(0);
+            mysql_check_item(thd,  item_count, select_lex);
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+int
+mysql_check_item(
+    THD* thd, 
+    Item* item, 
+    st_select_lex *select_lex
+)
+{
+    if (!item)
+        return 0;
+    switch (item->type()) {
+    case Item::STRING_ITEM:
+        {
+            String* stringval;
+            String tmp;
+            char* fieldname;
+            stringval = ((Item_string*) item)->val_str(&tmp);
+            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            sprintf(fieldname, "\"%s\"", stringval->ptr());
+        }
+        break;
+    case Item::FIELD_ITEM:
+        {
+            table_info_t* tableinfo;
+            table_rt_t* tablert;
+            if (strcasecmp(((Item_field*)item)->field_name, "*"))
+            {
+                tablert = mysql_find_field_from_all_tables(
+                    thd, thd->rt_lst, select_lex, ((Item_field*)item)->db_name, 
+                    ((Item_field*)item)->table_name, ((Item_field*)item)->field_name); 
+                if (tablert)
+                {
+                    tableinfo = tablert->table_info;
+                }
+            }
+        }
+        break;
+    case Item::FUNC_ITEM:
+        {
+            mysql_check_func_item(thd,  item, select_lex);
+        }
+        break;
+    case Item::INT_ITEM:
+        {
+            char fieldname[FN_LEN];
+            sprintf(fieldname, "\"%lld\"", ((Item_int*) item)->val_int());
+        }
+        break;
+    case Item::REAL_ITEM:
+        {
+            char fieldname[FN_LEN];
+            sprintf(fieldname, "\"%f\"", ((Item_int*) item)->val_real());
+        }
+        break;
+    case Item::NULL_ITEM:
+        break;
+    case Item::COND_ITEM:
+        {
+            mysql_check_func_item(thd,  item, select_lex);
+        }
+        break;
+    case Item::SUBSELECT_ITEM:
+        {
+            st_select_lex *select_lex_new;
+            subselect_single_select_engine* real_engine;
+            const subselect_engine *engine = ((Item_subselect*)item)->get_engine_for_explain();
+            subselect_single_select_engine::enum_engine_type engine_type = engine->engine_type();
+            if (engine_type == subselect_engine::SINGLE_SELECT_ENGINE)
+            {
+                real_engine = (subselect_single_select_engine*)engine;
+                select_lex_new = real_engine->get_st_select_lex();
+                if (mysql_check_subselect_item(thd,  select_lex_new, false))
+                    return true;
+            }
+        }
+        break;
+    case Item::SUM_FUNC_ITEM:
+        {
+            mysql_check_sum_item(thd,  item, select_lex);
+        }
+        break;
+    case Item::ROW_ITEM:
+        {
+            for (uint i=0; i < ((Item_row*)item)->cols();i++)
+            {
+                Item *right_item= ((Item_row*)item)->element_index(i);
+                mysql_check_item(thd,  right_item, select_lex);
+            }
+        }
+        break;
+    case Item::DECIMAL_ITEM:
+        {
+            String* stringval;
+            String tmp;
+            char* fieldname;
+            stringval = ((Item_string*) item)->val_str(&tmp);
+            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+        }
         break;
     default:
         break;
@@ -10274,6 +10877,7 @@ int mysql_init_sql_cache(THD* thd)
 
     LIST_INIT(thd->tablecache.tablecache_lst);
     LIST_INIT(thd->dbcache.dbcache_lst);
+    thd->rt_lst = NULL;
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache = (split_cache_t*)my_malloc(sizeof(split_cache_t), MY_ZEROFILL);
@@ -10333,8 +10937,8 @@ int mysql_deinit_sql_cache(THD* thd)
     split_cache_node_t* split_cache_node_next;
     split_table_t*      split_table;
     split_table_t*      split_table_next;
-    query_print_rt_t*   query_rt;
-    query_print_rt_t*   query_rt_next;
+    check_rt_t*   query_rt;
+    check_rt_t*   query_rt_next;
     query_print_cache_t* query_print_cache;
     query_print_cache_node_t * query_print_cache_node;
     query_print_cache_node_t * query_print_cache_node_next;
@@ -10393,6 +10997,25 @@ int mysql_deinit_sql_cache(THD* thd)
             mysql_free_osc_cache_node(sql_cache_node->sqlsha1);
             str_deinit(sql_cache_node->oscoutput);
             my_free(sql_cache_node->oscoutput);
+        }
+
+        query_rt = sql_cache_node->rt_lst ? LIST_GET_FIRST(*sql_cache_node->rt_lst) : NULL;
+        while(query_rt)
+        {
+            query_rt_next = LIST_GET_NEXT(link, query_rt);
+            LIST_REMOVE(link, *sql_cache_node->rt_lst, query_rt);
+
+            table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
+            while(table_rt)
+            {
+                table_rt_next = LIST_GET_NEXT(link, table_rt);
+                LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                my_free(table_rt);
+                table_rt = table_rt_next;
+            }
+
+            my_free(query_rt);
+            query_rt = query_rt_next;
         }
 
         my_free(sql_cache_node);
