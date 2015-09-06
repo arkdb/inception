@@ -3047,10 +3047,7 @@ pthread_handler_t handle_shutdown(void *arg)
 #endif
 
 const char *load_default_groups[]= {
-#ifdef WITH_NDBCLUSTER_STORAGE_ENGINE
-"mysql_cluster",
-#endif
-"inception","mysqld","server", MYSQL_BASE_VERSION, 0, 0};
+"inception", 0, 0};
 
 #if defined(__WIN__) && !defined(EMBEDDED_LIBRARY)
 static const int load_default_groups_sz=
