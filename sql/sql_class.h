@@ -175,6 +175,9 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_OSC_SHOW        5
 #define INCEPTION_COMMAND_OSC_ABORT       6
 
+typedef struct check_rt_struct check_rt_t;
+typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
+
 typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
@@ -223,8 +226,17 @@ struct table_info_struct
     int     isdeleted;//表示是不是已经删除，删除表的时候会置为1
     int     table_size;
     int     have_pk;//用来表示这个表上面有没有主键
+
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;
+};
+
+enum enum_inception_optype { 
+    INCEPTION_TYPE_LOCAL,
+    INCEPTION_TYPE_CHECK,
+    INCEPTION_TYPE_EXECUTE,
+    INCEPTION_TYPE_SPLIT,
+    INCEPTION_TYPE_PRINT
 };
 
 typedef struct source_info_struct sinfo_t;
@@ -240,6 +252,7 @@ struct source_info_struct
     uint        backup;
     uint        ignore_warnings;
     uint        split;
+    uint        query_print;
 };
 
 typedef struct source_info_space_struct sinfo_space_t;
@@ -255,6 +268,7 @@ struct source_info_space_struct
     uint        backup;//force to execute though exist error before
     uint        ignore_warnings;
     uint        split;
+    enum enum_inception_optype optype;
 };
 
 typedef struct sql_cache_node_struct sql_cache_node_t;
@@ -288,6 +302,7 @@ struct sql_cache_node_struct
     int         ignore;//for statement ignore, eg. alter ignore table ...
     str_t*      oscoutput;
     volatile int     oscpercent;
+    rt_lst_t*   rt_lst;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -386,8 +401,45 @@ struct split_cache_struct
 {
     LIST_BASE_NODE_T(split_cache_node_t)    field_lst;
     LIST_BASE_NODE_T(split_table_t)         table_lst;
-    
     int            seqno_cache;
+};
+
+
+typedef struct table_rt_struct table_rt_t;
+struct table_rt_struct 
+{
+    table_info_t*     table_info;
+    char              alias[FN_LEN];
+    
+    LIST_NODE_T(table_rt_t)         link;
+};
+
+typedef struct check_rt_struct check_rt_t;
+struct check_rt_struct 
+{
+    void*             select_lex;
+    
+    LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
+    LIST_NODE_T(check_rt_t)                 link;
+};
+
+typedef struct query_print_cache_node_struct query_print_cache_node_t;
+struct query_print_cache_node_struct
+{
+    str_t*                                  sql_statements;
+    str_t*                                  query_tree;
+    int                                     errlevel;
+    str_t*                                  errmsg;
+
+    rt_lst_t                                rt_lst;
+    
+    LIST_NODE_T(query_print_cache_node_t)         link;
+};
+
+typedef struct query_print_cache_struct query_print_cache_t;
+struct query_print_cache_struct
+{
+    LIST_BASE_NODE_T(query_print_cache_node_t)    field_lst;
 };
 
 typedef struct sql_statistic_struct sql_statistic_t;
@@ -3145,6 +3197,7 @@ public:
   sql_statistic_t sql_statistic;
   sql_cache_t* sql_cache;
   split_cache_t* split_cache;
+  query_print_cache_t* query_print_cache;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
 
   int backup_flag;
@@ -3159,6 +3212,8 @@ public:
   int             useflag;//use temporary where set names utf8, when analyze next statement, reset it
   int          setnamesflag;//the same to above;
   str_t*        show_result;
+  rt_lst_t      *rt_lst;
+  str_t*        query_print_tree;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven
   bool       slave_thread, one_shot_set;

@@ -607,6 +607,7 @@ public:
   virtual bool may_be_null() const;
   virtual bool is_executed() const { return executed; }
   virtual enum_engine_type engine_type() const { return SINGLE_SELECT_ENGINE; }
+  st_select_lex*  get_st_select_lex() { return select_lex; }
 
   friend class subselect_hash_sj_engine;
   friend class Item_in_subselect;

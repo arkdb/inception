@@ -5119,47 +5119,50 @@ mysql_mutex_t	isql_option_mutex;
 
 struct my_option my_isql_options[]=
 {
-	{"host", 0, "remote server address.",	
-	&global_source.host, &global_source.host, 0, 
-	GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0,	0, 0},
+  {"host", 0, "remote server address.",	
+    &global_source.host, &global_source.host, 0, 
+    GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0,	0, 0},
 
-	{"password", 0, "the user's password.",	
-	&global_source.password, &global_source.password, 0, 
-	GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"password", 0, "the user's password.",	
+    &global_source.password, &global_source.password, 0, 
+    GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"user", 0, "login user.", 
-	&global_source.user, &global_source.user, 0, 
-	GET_STR_ALLOC,	REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"user", 0, "login user.", 
+    &global_source.user, &global_source.user, 0, 
+    GET_STR_ALLOC,	REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"port", 0, "mysql server's port.", 
-	&global_source.port, &global_source.port, 0, 
-	GET_INT,	REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"port", 0, "mysql server's port.", 
+    &global_source.port, &global_source.port, 0, 
+    GET_INT,	REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"check", 0, "to check.", 
-	&global_source.check, &global_source.check, 0, 
-	GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"check", 0, "to check.", 
+    &global_source.check, &global_source.check, 0, 
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"execute", 0, "to execute.", 
-	&global_source.execute, &global_source.execute, 0, 
-	GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"execute", 0, "to execute.", 
+    &global_source.execute, &global_source.execute, 0, 
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"force", 0, "force to execute though exist error before.", 
-	&global_source.force, &global_source.force, 0, 
-	GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"force", 0, "force to execute though exist error before.", 
+    &global_source.force, &global_source.force, 0, 
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
-	{"remote_backup", 0, "backup in execute.",
-	&global_source.backup, &global_source.backup, 0, 
-	GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0},
+  {"remote_backup", 0, "backup in execute.",
+    &global_source.backup, &global_source.backup, 0, 
+    GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0},
 
-    {"ignore_warnings", 0, "ignore warnings in check stage when execute.",
+  {"ignore_warnings", 0, "ignore warnings in check stage when execute.",
     &global_source.ignore_warnings, &global_source.ignore_warnings, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
-    {"split", 0, "split the sql statements to several parts.",
-        &global_source.split, &global_source.split, 0,
-        GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"split", 0, "split the sql statements to several parts.",
+    &global_source.split, &global_source.split, 0,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
-	{0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
+  {"query_print", 0, "print the query tree.",
+    &global_source.query_print, &global_source.query_print, 0,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
 };
 
 /**
