@@ -5047,6 +5047,7 @@ int mysql_check_add_column(THD *thd)
         if (field->change != NULL)
             continue;
 
+        found = FALSE;
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
