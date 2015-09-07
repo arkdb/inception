@@ -6607,7 +6607,7 @@ print_item(
             char* fieldname;
             str_append(print_str, "{");
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
             sprintf(fieldname, "\"%s\"", stringval->ptr());
             str_append(print_str, "\"type\":\"STRING_ITEM\",");
             str_append(print_str, "\"value\":");
@@ -7268,7 +7268,7 @@ mysql_check_item(
             String tmp;
             char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
             sprintf(fieldname, "\"%s\"", stringval->ptr());
         }
         break;
