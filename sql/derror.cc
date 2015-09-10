@@ -195,6 +195,7 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_OSC_KILL_FAILED, "Can not find OSC executing task");
   SERVER_SETMSG(ER_NET_PACKETS_OUT_OF_ORDER, "Got packets out of order");
   SERVER_SETMSG(ER_NOT_SUPPORTED_ITEM_TYPE, "Not supported expression type \'%s\'.");
+  SERVER_SETMSG(ER_INVALID_IDENT, "Identifier \'%s\' is invalid, valid options: [a-z|A-Z|0-9|_].");
 
 	/* Register messages for use with my_error(). */
 	if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

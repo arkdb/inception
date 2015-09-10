@@ -982,3 +982,9 @@ static Sys_var_mybool Sys_inception_read_only(
     GLOBAL_VAR(inception_read_only),
     CMD_LINE(OPT_ARG), DEFAULT(FALSE));
 
+static Sys_var_mybool Sys_inception_check_identifier(
+    "inception_check_identifier",
+    "if true, inception will check the identifier, valid option: [a-z|A-Z|0-9|_]",
+    GLOBAL_VAR(inception_check_identifier),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+

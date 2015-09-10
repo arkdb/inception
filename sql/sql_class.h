@@ -5494,6 +5494,7 @@ int mysql_check_table_existed(THD* thd);
 
 int mysql_check_charset(const char* charsetname);
 int truncate_inception_commit(const char* msg, int length);
+int mysql_check_identified(THD* thd, char* name, int len);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */
