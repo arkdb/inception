@@ -592,6 +592,7 @@ char* inception_osc_bin_dir= NULL;
 bool inception_osc_print_sql=0;
 bool inception_osc_print_none=0;
 bool inception_read_only=0;
+bool inception_check_identifier=0;
 bool inception_ddl_support=0;
 bool inception_osc_on=0;
 // ulong inception_osc_critical_connected=0;

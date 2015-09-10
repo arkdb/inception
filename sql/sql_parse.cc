@@ -1887,6 +1887,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_TABLE_MUST_INNODB:
     case ER_NAMES_MUST_UTF8:
     case ER_TEXT_NOT_NULLABLE_ERROR:
+    case ER_INVALID_IDENT:
         return INCEPTION_RULES;
 
     case ER_CONFLICTING_DECLARATIONS:
@@ -2057,6 +2058,12 @@ mysql_check_inception_variables(
 
     case ER_INC_INIT_ERR:
         if (inception_check_autoincrement_init_value)
+            return true;
+        else 
+            return false;
+        break;
+    case ER_INVALID_IDENT:
+        if (inception_check_identifier)
             return true;
         else 
             return false;
@@ -4891,6 +4898,29 @@ int mysql_check_column_default(
     }
 
     return false;
+}
+
+int mysql_check_identified(THD* thd, char* name, int len)
+{
+    char*     p;
+    p = name;
+    int i=0;
+    while (p && i < len)
+    {
+        if ((*p > 'Z' || *p < 'A') &&
+            (*p > 'z' || *p < 'a') &&
+            (*p > '9' || *p < '0') && 
+            *p != '_')
+        {
+            my_error(ER_INVALID_IDENT, MYF(0), name);
+            mysql_errmsg_append(thd);
+            return 0;
+        }
+        i++;
+        p++;
+    }
+
+    return 0;
 }
 
 int mysql_field_check(THD* thd, Create_field* field, char* table_name)
