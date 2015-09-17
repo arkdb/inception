@@ -7579,7 +7579,7 @@ int mysql_get_create_sql_from_table_info(
     create_sql->append("(");
 
     create_sql->append("id bigint auto_increment primary key, ");
-    create_sql->append("rollback_statement text, ");
+    create_sql->append("rollback_statement mediumtext, ");
     create_sql->append("opid_time varchar(50)");
 
     create_sql->append(") ENGINE INNODB DEFAULT CHARSET UTF8;");
@@ -9014,7 +9014,7 @@ int mysql_generate_field_insert_values_for_rollback(
         {
             if (field_node->primary_key)
             {
-                if (LIST_GET_FIRST(mi->table_info->field_lst) != field_node)
+                if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
@@ -9079,7 +9079,7 @@ int mysql_generate_field_insert_values_for_rollback(
         {
             if (field_node->primary_key)
             {
-                if (LIST_GET_FIRST(mi->table_info->field_lst) != field_node)
+                if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
@@ -10423,11 +10423,8 @@ int mysql_remote_execute_command(
             break;
 
         case SQLCOM_ALTER_TABLE:
-            if (inception_ddl_support)
-            {
-                err = mysql_execute_statement(thd, mysql,
-                        sql_cache_node->sql_statement, sql_cache_node);
-            }
+            err = mysql_execute_statement(thd, mysql,
+                    sql_cache_node->sql_statement, sql_cache_node);
             break;
 
         case SQLCOM_DROP_TABLE:
