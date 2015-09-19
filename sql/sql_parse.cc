@@ -4876,20 +4876,39 @@ int mysql_check_column_default(
             real_type == MYSQL_TYPE_DATETIME ||
             real_type == MYSQL_TYPE_DATETIME2 ||
             real_type == MYSQL_TYPE_DATE||
+            real_type == MYSQL_TYPE_TIME||
+            real_type == MYSQL_TYPE_TIME2 ||
             real_type == MYSQL_TYPE_NEWDATE||
             real_type == MYSQL_TYPE_TIMESTAMP))
         {
             MYSQL_TIME ltime;
-            MYSQL_TIME_STATUS status;
+            MYSQL_TIME_STATUS status={0};
+            MYSQL_TIME_STATUS status2={0};
             uchar buff[MAX_FIELD_WIDTH];
             String buffer((char*) buff,sizeof(buff),&my_charset_bin);
             Item_string* itemstr;
             itemstr = (Item_string*)default_value;
             String *res = itemstr->val_str(&buffer);
+            struct timeval tm;
+        
             str_to_datetime(system_charset_info, res->ptr(), res->length(), &ltime, 
                 MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE, &status);
+            //在上面没有检查出来的情况下，还需要对范围溢出做检查
+            if (status.warnings == 0)
+            {
+                if (real_type == MYSQL_TYPE_TIMESTAMP || 
+                    real_type == MYSQL_TYPE_TIMESTAMP2)
+                    datetime_with_no_zero_in_date_to_timeval(thd, &ltime, &tm, &status2.warnings);
+                if ((real_type == MYSQL_TYPE_TIME ||
+                    real_type == MYSQL_TYPE_TIME2) && non_zero_date(&ltime))
+                    status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
+                if ((real_type == MYSQL_TYPE_DATE||
+                    real_type == MYSQL_TYPE_NEWDATE) && non_zero_time(&ltime))
+                    status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
+            }
+
             //这里只要有警告，就是非法值，直接报警
-            if (status.warnings > 0)
+            if (status.warnings > 0 || status2.warnings > 0)
             {
                 my_error(ER_INVALID_DEFAULT, MYF(0), field_name);
                 mysql_errmsg_append(thd);
