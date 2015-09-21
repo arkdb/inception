@@ -2457,12 +2457,12 @@ int thd_parse_options(
 
     if (global_source.query_print == 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_PRINT;
-    else if (global_source.check == 1)
-        thd->thd_sinfo->optype = INCEPTION_TYPE_CHECK;
+    else if (global_source.split == 1)
+        thd->thd_sinfo->optype = INCEPTION_TYPE_SPLIT;
     else if (global_source.execute == 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_EXECUTE;
-    else if (global_source.split== 1)
-        thd->thd_sinfo->optype = INCEPTION_TYPE_SPLIT;
+    else if (global_source.check== 1)
+        thd->thd_sinfo->optype = INCEPTION_TYPE_CHECK;
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE ||
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
@@ -2477,12 +2477,12 @@ int thd_parse_options(
     }
 
     //只能设置一个操作类型
-    if (global_source.query_print + global_source.check +
-        global_source.execute + global_source.split != 1)
-    {
-        my_error(ER_SQL_INVALID_SOURCE, MYF(0));
-        goto ERROR;
-    }
+    // if (global_source.query_print + global_source.check +
+    //     global_source.execute + global_source.split != 1)
+    // {
+    //     my_error(ER_SQL_INVALID_SOURCE, MYF(0));
+    //     goto ERROR;
+    // }
 
     thd->thd_sinfo->ignore_warnings = global_source.ignore_warnings;
     strcpy(thd->thd_sinfo->host, global_source.host);
@@ -4919,7 +4919,7 @@ int mysql_check_create_index(THD *thd)
                         charset= get_charset(field_node->charsetnr, MYF(0));
                         if (!charset)
                             charset= get_charset(field_node->charset->number, MYF(0));
-
+                          
                         keymaxlen += min(field_node->max_length, col1->length * charset->mbmaxlen);
                     }
                     else
