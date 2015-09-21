@@ -45,6 +45,8 @@
 #include "crypt_genhash_impl.h"
 
 #include "mysql.h"
+#include <functional>
+
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
@@ -174,6 +176,10 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_LOCAL_SHOWALL   4
 #define INCEPTION_COMMAND_OSC_SHOW        5
 #define INCEPTION_COMMAND_OSC_ABORT       6
+#define INCEPTION_COMMAND_OSC_PROCESSLIST 7
+#define INCEPTION_COMMAND_PROCESSLIST     8
+
+#define LIST_PROCESS_HOST_LEN 64
 
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
@@ -502,6 +508,39 @@ public:
 
   friend LEX_STRING * thd_query_string (MYSQL_THD thd);
   friend char **thd_query(MYSQL_THD thd);
+};
+
+class thread_info
+{
+  public:
+    static void *operator new(size_t size)
+    {
+      return (void*) sql_alloc((uint) size);
+    }
+    static void operator delete(void *ptr __attribute__((unused)),
+        size_t size __attribute__((unused)))
+    { TRASH(ptr, size); }
+
+    ulong thread_id;
+    time_t start_time;
+    uint   command;
+    const char *user,*host,*db,*proc_info,*state_info;
+    char* dest_host;
+    char* dest_user;
+    int dest_port;
+    int state;
+    CSET_STRING query_string;
+};
+
+// For sorting by thread_id.
+class thread_info_compare :
+  public std::binary_function<const thread_info*, const thread_info*, bool>
+{
+  public:
+    bool operator() (const thread_info* p1, const thread_info* p2)
+    {
+      return p1->thread_id < p2->thread_id;
+    }
 };
 
 
@@ -3214,6 +3253,7 @@ public:
   str_t*        show_result;
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
+  volatile      int thread_state;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven
   bool       slave_thread, one_shot_set;

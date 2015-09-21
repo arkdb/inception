@@ -952,7 +952,6 @@ character_set_filesystem : &my_charset_bin,
 	}
 
 
-#define LIST_PROCESS_HOST_LEN 64
 
 	/**
 	Print "ON UPDATE" clause of a field into a string.
@@ -1246,34 +1245,7 @@ character_set_filesystem : &my_charset_bin,
 	returns for each thread: thread id, user, host, db, command, info
 	****************************************************************************/
 
-	class thread_info
-	{
-	public:
-		static void *operator new(size_t size)
-		{
-			return (void*) sql_alloc((uint) size);
-		}
-		static void operator delete(void *ptr __attribute__((unused)),
-			size_t size __attribute__((unused)))
-		{ TRASH(ptr, size); }
 
-		ulong thread_id;
-		time_t start_time;
-		uint   command;
-		const char *user,*host,*db,*proc_info,*state_info;
-		CSET_STRING query_string;
-	};
-
-	// For sorting by thread_id.
-	class thread_info_compare :
-		public std::binary_function<const thread_info*, const thread_info*, bool>
-	{
-	public:
-		bool operator() (const thread_info* p1, const thread_info* p2)
-		{
-			return p1->thread_id < p2->thread_id;
-		}
-	};
 
 	static const char *thread_state_info(THD *tmp)
 	{

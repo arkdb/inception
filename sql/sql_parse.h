@@ -42,6 +42,13 @@ enum enum_mysql_completiontype {
 #define INCEPTION_RULES                 0x01
 #define INCEPTION_PARSE                 0x02
 
+#define INCEPTION_STATE_INIT            1
+#define INCEPTION_STATE_CHECKING        2
+#define INCEPTION_STATE_EXECUTING       3
+#define INCEPTION_STATE_BACKUP          4
+#define INCEPTION_STATE_DEINIT          5
+#define INCEPTION_STATE_SEND            6
+
 extern "C" int test_if_data_home_dir(const char *dir);
 
 bool stmt_causes_implicit_commit(const THD *thd, uint mask);

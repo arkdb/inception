@@ -414,6 +414,7 @@ static SYMBOL symbols[] = {
   { "OR",		SYM(OR_SYM)},
   { "ORDER",		SYM(ORDER_SYM)},
   { "OSC_PERCENT",		SYM(OSC_PERCENT_SYM)},
+  { "OSC",		SYM(OSC_SYM)},
   { "OUT",              SYM(OUT_SYM)},
   { "OUTER",		SYM(OUTER)},
   { "OUTFILE",		SYM(OUTFILE)},

@@ -818,6 +818,8 @@ int mysql_not_need_data_source(THD* thd)
         (thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOW ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOWALL ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_SHOW ||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_PROCESSLIST ||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_PROCESSLIST ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
@@ -834,6 +836,7 @@ int mysql_send_all_results(THD* thd)
     char            tmp_buf[256];
 
     DBUG_ENTER("mysql_send_all_results");
+    thd->thread_state = INCEPTION_STATE_SEND;
 
     if (mysql_not_need_data_source(thd))
         DBUG_RETURN(false);
@@ -3865,6 +3868,172 @@ int mysql_execute_inception_osc_abort(THD* thd)
     DBUG_RETURN(res);
 }
 
+int mysql_execute_inception_processlist(THD *thd,bool verbose)
+{
+    List<Item> field_list;
+    Mem_root_array<thread_info*, true> thread_infos(thd->mem_root);
+    ulong max_query_length= (verbose ? thd->variables.max_allowed_packet : PROCESS_LIST_WIDTH);
+    Protocol *protocol= thd->protocol;
+    DBUG_ENTER("mysql_execute_inception_processlist");
+
+    field_list.push_back(new Item_int(NAME_STRING("Id"), 0, MY_INT64_NUM_DECIMAL_DIGITS));
+    field_list.push_back(new Item_empty_string("dest_user",16));//目标数据库用户名
+    field_list.push_back(new Item_empty_string("dest_host",FN_REFLEN));//目标主机
+    field_list.push_back(new Item_return_int("dest_port",20, MYSQL_TYPE_LONG));//目标端口
+    field_list.push_back(new Item_empty_string("from_host",FN_REFLEN));//连接来源主机
+    field_list.push_back(new Item_empty_string("Command",16));//操作类型
+    field_list.push_back(new Item_empty_string("STATE",16));//操作类型
+    field_list.push_back(new Item_return_int("Time",20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Info",max_query_length));
+    if (protocol->send_result_set_metadata(&field_list,
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+        DBUG_RETURN(false);
+
+    if (!thd->killed)
+    {
+        mysql_mutex_lock(&LOCK_thread_count);
+        thread_infos.reserve(get_thread_count());
+        Thread_iterator it= global_thread_list_begin();
+        Thread_iterator end= global_thread_list_end();
+        for (; it != end; ++it)
+        {
+            THD *tmp= *it;
+            Security_context *tmp_sctx= tmp->security_ctx;
+            thread_info *thd_info= new thread_info;
+
+            //id
+            thd_info->thread_id=tmp->thread_id;
+            //from host
+            if (tmp->peer_port && (tmp_sctx->host || tmp_sctx->ip) &&
+                thd->security_ctx->host_or_ip[0])
+            {
+                if ((thd_info->host= (char*) thd->alloc(LIST_PROCESS_HOST_LEN+1)))
+                    my_snprintf((char *) thd_info->host, LIST_PROCESS_HOST_LEN,
+                        "%s:%u", tmp_sctx->host_or_ip, tmp->peer_port);
+            }
+            else
+                thd_info->host= thd->strdup(tmp_sctx->host_or_ip[0] ? 
+                    tmp_sctx->host_or_ip : tmp_sctx->host ? tmp_sctx->host : "");
+            //command 
+            if (tmp->thd_sinfo)
+            {
+                thd_info->command=(int) tmp->thd_sinfo->optype;
+                thd_info->dest_port = (int)tmp->thd_sinfo->port;
+                thd_info->dest_host = tmp->thd_sinfo->host;
+                thd_info->dest_user= tmp->thd_sinfo->user;
+            }
+            
+            thd_info->state = tmp->thread_state;
+            //info
+            if (tmp->query())
+            {
+                uint length= min<uint>(max_query_length, tmp->query_length());
+                char *q= thd->strmake(tmp->query(),length);
+                thd_info->query_string= CSET_STRING(q, q ? length : 0, tmp->query_charset());
+            }
+            mysql_mutex_unlock(&tmp->LOCK_thd_data);
+            thd_info->start_time= tmp->start_time.tv_sec;
+            thread_infos.push_back(thd_info);
+        }
+        mysql_mutex_unlock(&LOCK_thread_count);
+    }
+
+    // Return list sorted by thread_id.
+    std::sort(thread_infos.begin(), thread_infos.end(), thread_info_compare());
+
+    time_t now= my_time(0);
+    for (size_t ix= 0; ix < thread_infos.size(); ++ix)
+    {
+        thread_info *thd_info= thread_infos.at(ix);
+        protocol->prepare_for_resend();
+        protocol->store((ulonglong) thd_info->thread_id);
+        protocol->store(thd_info->dest_user, system_charset_info);
+        protocol->store(thd_info->dest_host, system_charset_info);
+        protocol->store_long (thd_info->dest_port);
+        protocol->store(thd_info->host, system_charset_info);
+        //command
+        if (thd_info->command == INCEPTION_TYPE_CHECK)
+            protocol->store("CHECK", system_charset_info);
+        else if (thd_info->command == INCEPTION_TYPE_EXECUTE)
+            protocol->store("EXECUTE", system_charset_info);
+        else if (thd_info->command == INCEPTION_TYPE_SPLIT)
+            protocol->store("SPLIT", system_charset_info);
+        else if (thd_info->command == INCEPTION_TYPE_PRINT)
+            protocol->store("PRINT", system_charset_info);
+        else 
+            protocol->store("LOCAL", system_charset_info);
+
+        //state
+        if (thd_info->state == INCEPTION_STATE_INIT)
+            protocol->store("INIT", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_CHECKING)
+            protocol->store("CHECKING", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_EXECUTING)
+            protocol->store("EXECUTING", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_DEINIT)
+            protocol->store("DEINIT", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_BACKUP)
+            protocol->store("BACKUP", system_charset_info);
+
+        //time
+        if (thd_info->start_time)
+            protocol->store_long ((longlong) (now - thd_info->start_time));
+        else
+            protocol->store_null();
+
+        //info
+        protocol->store(thd_info->query_string.str(), thd_info->query_string.charset());
+        if (protocol->write())
+            break; /* purecov: inspected */
+    }
+    my_eof(thd);
+    DBUG_RETURN(false);
+}
+
+int mysql_execute_inception_osc_processlist(THD* thd)
+{
+    DBUG_ENTER("mysql_execute_inception_osc_processlist");
+    int res= 0;
+    osc_percent_cache_t* osc_percent_node;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+
+    field_list.push_back(new Item_empty_string("DBNAME", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("TABLENAME", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("COMMAND", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("SQLSHA1", FN_REFLEN));
+    field_list.push_back(new Item_return_int("PERCENT", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("REMAINTIME", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("INFOMATION", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+        DBUG_RETURN(true);
+
+    mysql_mutex_lock(&osc_mutex); 
+
+    osc_percent_node = LIST_GET_FIRST(global_osc_cache.osc_lst);
+    while(osc_percent_node)
+    {
+        protocol->prepare_for_resend();
+        protocol->store(osc_percent_node->dbname, system_charset_info);
+        protocol->store(osc_percent_node->tablename, system_charset_info);
+        protocol->store(osc_percent_node->sql_cache_node->sql_statement, system_charset_info);
+        protocol->store(osc_percent_node->sqlsha1, system_charset_info);
+        protocol->store(osc_percent_node->percent);
+        protocol->store(osc_percent_node->remaintime, system_charset_info);
+        protocol->store(str_get(osc_percent_node->sql_cache_node->oscoutput), system_charset_info);
+
+        protocol->write();
+
+        osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
+    }
+
+    mysql_mutex_unlock(&osc_mutex);
+    my_eof(thd);
+    DBUG_RETURN(res);
+}
+
 int mysql_execute_inception_osc_show(THD* thd)
 {
     DBUG_ENTER("mysql_execute_inception_osc_show");
@@ -4045,6 +4214,12 @@ int mysql_execute_inception_command(THD* thd)
 
     if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_SHOW)
       return mysql_execute_inception_osc_show(thd);
+
+    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_PROCESSLIST)
+      return mysql_execute_inception_osc_processlist(thd);
+
+    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_PROCESSLIST)
+      return mysql_execute_inception_processlist(thd, thd->lex->verbose);
 
     if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT)
       return mysql_execute_inception_osc_abort(thd);
@@ -7079,6 +7254,7 @@ int mysql_print_not_support(THD* thd)
 
 int mysql_print_command(THD *thd)
 {
+    thd->thread_state = INCEPTION_STATE_EXECUTING;
     int err;
     switch (thd->lex->sql_command)
     {
@@ -7413,6 +7589,7 @@ int mysql_check_command(THD *thd)
     SELECT_LEX *select_lex= &lex->select_lex;
     TABLE_LIST *first_table= select_lex->table_list.first;
     
+    thd->thread_state = INCEPTION_STATE_CHECKING;
     DBUG_ENTER("mysql_check_command");
 
     select_lex->context.resolve_in_table_list_only(select_lex->table_list.first);
@@ -10493,6 +10670,7 @@ int mysql_execute_all_statement(THD* thd)
     if ((mysql = thd->get_audit_connection()) == NULL)
         return TRUE;
 
+    thd->thread_state = INCEPTION_STATE_EXECUTING;
     sql_cache_node = LIST_GET_FIRST(thd->sql_cache->field_lst);
     while (!thd->killed && sql_cache_node != NULL)
     {
@@ -10626,6 +10804,7 @@ int mysql_execute_commit(THD *thd)
         {
             if (thd->thd_sinfo->backup)
             {
+                thd->thread_state = INCEPTION_STATE_BACKUP;
                 mysql_operation_statistic(thd);
                 mi = new Master_info(1);
                 mi->thd = thd;
@@ -10664,6 +10843,7 @@ int mysql_execute_commit(THD *thd)
     err = FALSE;
 error:
     mysql_send_all_results(thd);
+    thd->thread_state = INCEPTION_STATE_DEINIT;
     mysql_free_all_table_definition(thd);
     mysql_deinit_sql_cache(thd);
     delete mi;
@@ -10915,6 +11095,7 @@ int mysql_init_sql_cache(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
+    thd->thread_state = INCEPTION_STATE_INIT;
     thd->have_begin = TRUE;
     thd->have_error_before = FALSE;
     thd->check_error_before = FALSE;
