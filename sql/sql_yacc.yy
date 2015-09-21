@@ -13561,7 +13561,7 @@ IDENT_sys:
 	    }
 
         mysql_check_identified(thd, $1.str, $1.length);
-	    if (get_hash_symbol($1.str, $1.length,0))
+	    if (thd->have_begin && get_hash_symbol($1.str, $1.length,0))
 	    {
 		    my_error(ER_IDENT_USE_KEYWORD, MYF(0), $1.str);
 		    mysql_errmsg_append(thd);
@@ -13628,7 +13628,7 @@ ident:
               MYSQL_YYABORT;
             $$.length= $1.length;
         mysql_check_identified(thd, $$.str, $$.length);
-	    if (get_hash_symbol($$.str, $$.length,0))
+	    if (thd->have_begin && get_hash_symbol($$.str, $$.length,0))
 	    {
 		    my_error(ER_IDENT_USE_KEYWORD, MYF(0), $$.str);
 		    mysql_errmsg_append(thd);

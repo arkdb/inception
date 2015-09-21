@@ -988,3 +988,11 @@ static Sys_var_mybool Sys_inception_check_identifier(
     GLOBAL_VAR(inception_check_identifier),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+const char *osc_recursion_method[]= {"processlist", "hosts", "none", NullS};
+static Sys_var_enum Sys_inception_osc_recursion_method(
+    "inception_osc_recursion_method",
+    "Preferred recursion method used to find slaves.",
+    SESSION_VAR(inception_osc_recursion_method), CMD_LINE(REQUIRED_ARG),
+    osc_recursion_method, DEFAULT(recursion_method_processlist), 
+    NO_MUTEX_GUARD, NOT_IN_BINLOG);
+

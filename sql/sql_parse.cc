@@ -191,6 +191,7 @@ const char *xa_state_names[]={
 #define INC_VARCHAR_MAX_TO_TEXT     8000
 #define INC_CHAR_MAX_TO_VARCHAR     16
 
+extern const char *osc_recursion_method[];
 
 int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
 int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
@@ -10348,7 +10349,10 @@ int mysql_execute_alter_table_osc(
     oscargv[count++] = strdup(cmd_line);
 
     oscargv[count++] = strdup("--no-version-check");
-    oscargv[count++] = strdup("--recursion-method=processlist");
+    sprintf(cmd_line, "--recursion-method=%s", 
+        osc_recursion_method[thd->variables.inception_osc_recursion_method]);
+    oscargv[count++] = strdup(cmd_line);
+
     //这个参数就可以直接使用默认值
     // sprintf(cmd_line, "--set-vars innodb_lock_wait_timeout=%d ", 50);
     // osc_cmd_ptr = str_append(osc_cmd_ptr, cmd_line);

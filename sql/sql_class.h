@@ -918,6 +918,7 @@ typedef struct system_variables
   /*for inception session variables*/
   double inception_osc_chunk_size_limit;
   double inception_osc_max_lag;
+  ulong inception_osc_recursion_method;
   double inception_osc_check_interval;
   double inception_osc_chunk_time;
   bool inception_osc_drop_old_table;

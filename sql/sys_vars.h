@@ -1829,3 +1829,11 @@ public:
 };
 
 
+enum enum_osc_recursion_method{
+  recursion_method_processlist= 0,
+  recursion_method_hosts=  1, 
+  recursion_method_none =   2,
+  recursion_method_unspec=3  
+};
+
+
