@@ -4917,6 +4917,9 @@ int mysql_check_create_index(THD *thd)
                     {
                         CHARSET_INFO* charset;
                         charset= get_charset(field_node->charsetnr, MYF(0));
+                        if (!charset)
+                            charset= get_charset(field_node->charset->number, MYF(0));
+
                         keymaxlen += min(field_node->max_length, col1->length * charset->mbmaxlen);
                     }
                     else
@@ -5075,9 +5078,6 @@ int mysql_check_column_default(
                 if (real_type == MYSQL_TYPE_TIMESTAMP || 
                     real_type == MYSQL_TYPE_TIMESTAMP2)
                     datetime_with_no_zero_in_date_to_timeval(thd, &ltime, &tm, &status2.warnings);
-                if ((real_type == MYSQL_TYPE_TIME ||
-                    real_type == MYSQL_TYPE_TIME2) && non_zero_date(&ltime))
-                    status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
                 if ((real_type == MYSQL_TYPE_DATE||
                     real_type == MYSQL_TYPE_NEWDATE) && non_zero_time(&ltime))
                     status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
@@ -9201,6 +9201,7 @@ int mysql_generate_field_insert_values_for_rollback(
     char   tmp_buf[256];
     int    err = 0;
     int    field_index=0;
+    int    pkcount=0;
 
     if (optype == SQLCOM_INSERT)
     {
@@ -9211,7 +9212,7 @@ int mysql_generate_field_insert_values_for_rollback(
         {
             if (field_node->primary_key)
             {
-                if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
+                if (pkcount >= 1)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
@@ -9219,6 +9220,7 @@ int mysql_generate_field_insert_values_for_rollback(
 
                 err = mysql_get_field_string(field_node->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index);
+                pkcount++;
             }
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
@@ -9276,7 +9278,7 @@ int mysql_generate_field_insert_values_for_rollback(
         {
             if (field_node->primary_key)
             {
-                if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
+                if (pkcount >= 1)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
@@ -9284,6 +9286,7 @@ int mysql_generate_field_insert_values_for_rollback(
 
                 err = mysql_get_field_string(field_node->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index);
+                pkcount++;
             }
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
