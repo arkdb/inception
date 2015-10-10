@@ -5070,8 +5070,12 @@ int mysql_check_column_default(
             String *res = itemstr->val_str(&buffer);
             struct timeval tm;
         
-            str_to_datetime(system_charset_info, res->ptr(), res->length(), &ltime, 
-                MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE, &status);
+            if (real_type == MYSQL_TYPE_TIME ||
+                real_type == MYSQL_TYPE_TIME2)
+                str_to_time(system_charset_info, res->ptr(), res->length(), &ltime, 0, &status);
+            else
+                str_to_datetime(system_charset_info, res->ptr(), res->length(), &ltime, 
+                    MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE, &status);
             //在上面没有检查出来的情况下，还需要对范围溢出做检查
             if (status.warnings == 0)
             {
@@ -5080,6 +5084,9 @@ int mysql_check_column_default(
                     datetime_with_no_zero_in_date_to_timeval(thd, &ltime, &tm, &status2.warnings);
                 if ((real_type == MYSQL_TYPE_DATE||
                     real_type == MYSQL_TYPE_NEWDATE) && non_zero_time(&ltime))
+                    status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
+                if ((real_type == MYSQL_TYPE_TIME ||
+                    real_type == MYSQL_TYPE_TIME2) && non_zero_date(&ltime))
                     status2.warnings|= MYSQL_TIME_NOTE_TRUNCATED;
             }
 
@@ -11161,10 +11168,11 @@ int mysql_init_sql_cache(THD* thd)
             thd->thd_sinfo->backup = FALSE;
     }
 
-    if (thd->thd_sinfo->backup && (remote_backup_host == NULL ||
-        remote_backup_port == 0 || remote_system_user == NULL ||
-        remote_system_password == NULL || remote_system_user[0] == '\0' ||
-        remote_system_password[0] == '\0'))
+    if (thd->thd_sinfo->backup && !inception_read_only && 
+        inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+        (remote_backup_host == NULL || remote_backup_port == 0 || 
+        remote_system_user == NULL || remote_system_password == NULL || 
+        remote_system_user[0] == '\0' || remote_system_password[0] == '\0'))
     {
         my_error(ER_INVALID_BACKUP_HOST_INFO, MYF(0));
         DBUG_RETURN(ER_NO);
