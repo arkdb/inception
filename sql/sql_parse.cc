@@ -575,8 +575,13 @@ void mysql_compute_sql_sha1(THD* thd, sql_cache_node_t* sql_cache_node)
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->password);
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->host);
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->user);
+
     sprintf(port, "%d", thd->thd_sinfo->port);
     sqlinfo = str_append(sqlinfo, port);
+    //add the seqno, to solve execute same sql in different database
+    sprintf(port, "%d", sql_cache_node->seqno);
+    sqlinfo = str_append(sqlinfo, port);
+
     sqlinfo = str_append_with_length(sqlinfo, thd->query(), thd->query_length());
 
     char m_hashed_password_buffer[CRYPT_MAX_PASSWORD_SIZE + 1];
@@ -630,9 +635,9 @@ int mysql_cache_one_sql(THD* thd)
     }
 
     sql_cache_node->use_osc = thd->use_osc;
-    mysql_compute_sql_sha1(thd, sql_cache_node);
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = thd->sql_cache->seqno_cache++;
+    mysql_compute_sql_sha1(thd, sql_cache_node);
     sql_cache_node->affected_rows = thd->affected_rows;
     sql_cache_node->ignore = thd->lex->ignore;
     thd->affected_rows = 0;
@@ -2468,8 +2473,8 @@ int thd_parse_options(
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
         inception_get_type(thd) == INCEPTION_TYPE_PRINT)
     {
-        if (global_source.user == NULL ||
-            global_source.password == NULL)
+        if (thd->thd_sinfo->user[0] == '\0' ||
+            thd->thd_sinfo->password == '\0' )
         {
             my_error(ER_SQL_INVALID_SOURCE, MYF(0));
             goto ERROR;
@@ -2489,7 +2494,7 @@ int thd_parse_options(
     thd->thd_sinfo->port = global_source.port;
     thd->thd_sinfo->force = global_source.force;
     thd->thd_sinfo->backup = global_source.backup;
-    if (thd->thd_sinfo->check)
+    if (inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
         thd->thd_sinfo->backup = FALSE;
 
     err = FALSE;
