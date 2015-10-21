@@ -5677,17 +5677,19 @@ int mysql_check_drop_index(THD *thd)
 
             if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE )
             {
+                int first = true;
                 sprintf(tmp_buf, "ADD INDEX `%s` (", field->name);
                 str_append(&thd->ddl_rollback, tmp_buf);
                 mysql_data_seek2(source_res, 0);
                 source_row = mysql_fetch_row(source_res);
                 while (source_row)
                 {
+                    if (!first)
+                        str_append(&thd->ddl_rollback, ",");
                     source_row_next = mysql_fetch_row(source_res);
                     str_append(&thd->ddl_rollback, source_row[4]);
-                    if (source_row_next && strcasecmp(source_row_next[2], field->name) == 0)
-                        str_append(&thd->ddl_rollback, ",");
                     source_row = source_row_next;
+                    first = false;
                 }
 
                 str_append(&thd->ddl_rollback, "),");
