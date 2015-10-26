@@ -5490,10 +5490,12 @@ int mysql_check_drop_column(THD *thd)
 
 int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* columnname)
 {
-    char        tmp_buf[256];
+    char*           tmp_buf;
+    char            buff_space[4096];
     MYSQL_RES *     source_res;
     MYSQL_ROW       source_row;
     MYSQL*          mysql;
+    tmp_buf = (char*)&buff_space;
 
     if (inception_get_type(thd) == INCEPTION_TYPE_CHECK)
         return 0;
@@ -5520,6 +5522,7 @@ int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* colum
         char*       notnull = (char*)"";
         char*       defaults = NULL;
         char*       comment = NULL;
+        int         maxlen;
 
         if (source_row[3] != NULL && !strcasecmp(source_row[3], "NO"))
             notnull = (char*)"NOT NULL";
@@ -5529,6 +5532,12 @@ int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* colum
 
         if (source_row[8] != NULL)
             comment = source_row[8];
+
+        maxlen = (defaults ? strlen(defaults) : 0) + strlen(source_row[1]) +
+            (comment ? strlen(comment) : 0) + strlen(notnull) + 512;
+
+        if (maxlen > 4096)
+            tmp_buf= (char*)my_malloc(maxlen, MYF(MY_ZEROFILL));
 
         if (defaults && comment)
             sprintf(tmp_buf, "CHANGE COLUMN `%s` `%s` %s %s DEFAULT '%s' COMMENT '%s' ",
@@ -5541,6 +5550,8 @@ int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* colum
                     columnname, columnname, source_row[1], notnull, comment);
         str_append(&thd->ddl_rollback, tmp_buf);
         str_append(&thd->ddl_rollback, ",");
+        if (tmp_buf != buff_space)
+            my_free(tmp_buf);
     }
 
     mysql_free_result(source_res);
