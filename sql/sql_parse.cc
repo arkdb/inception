@@ -1899,6 +1899,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_INVALID_IDENT:
         return INCEPTION_RULES;
 
+    case ER_DB_EXISTS:
     case ER_CONFLICTING_DECLARATIONS:
     case ER_NO_DB_ERROR:
     case ER_KEY_COLUMN_DOES_NOT_EXITS:
@@ -6184,6 +6185,12 @@ int mysql_check_create_db(THD *thd)
     {
         my_error(ER_TABLE_CHARSET_MUST_UTF8, MYF(0), 
             inception_support_charset, thd->lex->name.str);
+        mysql_errmsg_append(thd);
+    }
+
+    if (!mysql_check_db_existed(thd, thd->lex->name.str))
+    {
+        my_error(ER_DB_EXISTS, MYF(0), thd->lex->name.str);
         mysql_errmsg_append(thd);
     }
 
