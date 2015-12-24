@@ -375,6 +375,12 @@ static bool fix_general_log_file(sys_var *self, THD *thd, enum_var_type type)
     return fix_log(&opt_logname, default_logfile_name, ".log", opt_log,
         reopen_general_log);
 }
+static Sys_var_charptr Sys_log_error(
+       "log_error", "Error log file",
+       READ_ONLY GLOBAL_VAR(log_error_file_ptr),
+       CMD_LINE(OPT_ARG, OPT_LOG_ERROR),
+       IN_FS_CHARSET, DEFAULT(disabled_my_option));
+
 static Sys_var_charptr Sys_general_log_path(
     "general_log_file", "Log connections and queries to given file",
     GLOBAL_VAR(opt_logname), CMD_LINE(REQUIRED_ARG),
@@ -996,3 +1002,48 @@ static Sys_var_enum Sys_inception_osc_recursion_method(
     osc_recursion_method, DEFAULT(recursion_method_processlist), 
     NO_MUTEX_GUARD, NOT_IN_BINLOG);
 
+static Sys_var_charptr Sys_inception_datacenter_host(
+    "inception_datacenter_host", "the datacenter host of inception binlog transfer.",
+    READ_ONLY GLOBAL_VAR(inception_datacenter_host), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT(""));
+
+static Sys_var_uint Sys_inception_datacenter_port(
+    "inception_datacenter_port", "the datacenter port of inception binlog transfer.",
+    READ_ONLY GLOBAL_VAR(inception_datacenter_port), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_charptr Sys_inception_datacenter_user(
+    "inception_datacenter_user", "the datacenter user of inception binlog transfer.",
+    READ_ONLY GLOBAL_VAR(inception_datacenter_user), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT(""));
+
+static Sys_var_charptr Sys_inception_datacenter_password(
+    "inception_datacenter_password", "the datacenter password of inception binlog transfer.",
+    READ_ONLY GLOBAL_VAR(inception_datacenter_password), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT(""));
+
+static Sys_var_ulong Sys_server_id(
+    "inception_transfer_server_id",
+    "Uniquely identifies the server instance in the community of "
+    "replication partners",
+    GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+static Sys_var_ulong Sys_inception_transfer_event_sequence_sync(
+    "inception_transfer_event_sequence_sync",
+    "sync the event id every this number",
+    GLOBAL_VAR(inception_transfer_event_sequence_sync), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(1000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+static Sys_var_ulong Sys_inception_transfer_trx_sequence_sync(
+    "inception_transfer_trx_sequence_sync",
+    "sync the transaction id every this number",
+    GLOBAL_VAR(inception_transfer_trx_sequence_sync), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(100), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+static Sys_var_ulong Sys_inception_transfer_binlog_expire_days(
+    "inception_transfer_binlog_expire_days",
+    "transfer binlog expire days",
+    GLOBAL_VAR(inception_transfer_binlog_expire_days), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, UINT_MAX32), DEFAULT(7), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));

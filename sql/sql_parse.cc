@@ -14,6 +14,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #define MYSQL_LEX 1
+// #include "mysql_thread.h"
 #include "my_global.h"
 #include "sql_priv.h"
 #include "unireg.h"                    // REQUIRED: for other includes
@@ -111,6 +112,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <algorithm>
 #include "item_subselect.h"
 #include "sql_time.h"
+#include "thr_alarm.h"
+
 using std::max;
 using std::min;
 
@@ -191,6 +194,27 @@ const char *xa_state_names[]={
 #define INC_VARCHAR_MAX_TO_TEXT     8000
 #define INC_CHAR_MAX_TO_VARCHAR     16
 
+#define TRANSFER_SLAVE_NET_TIMEOUT 3600
+
+enum transfer_stage_type {
+    transfer_not_start=0,
+    transfer_wait_master_send,
+    transfer_read_events,
+    transfer_make_next_id,
+    transfer_write_datacenter,
+    transfer_stopped 
+};
+
+const char* transfer_stage_type_array[]=
+{
+    "",
+    "transfer_wait_master_send",
+    "transfer_read_events",
+    "transfer_make_next_id",
+    "transfer_write_datacenter",
+    "transfer_stopped"
+};
+
 extern const char *osc_recursion_method[];
 
 int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
@@ -200,6 +224,22 @@ int mysql_execute_commit(THD *thd);
 void mysql_free_all_table_definition(THD*  thd);
 int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql);
 int mysql_check_binlog_format(THD* thd, char* binlogformat);
+int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
+int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
+ulong mysql_read_event(MYSQL* mysql);
+int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_event** evlog);
+int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev);
+table_info_t* mysql_get_table_object(THD* thd, char* dbname, char* tablename, int not_exist_report);
+int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index, int qurot_flag,  int doublequtor_escape);
+int inception_transfer_execute_store( Master_info* mi, Log_event* ev, char*  sql, int trx_flag);
+int mysql_unpack_row(
+    Master_info* mi,
+    uchar const *const row_data,
+    MY_BITMAP const *cols,
+    uchar const **const row_end,
+    uchar const *const row_end_ptr);
+bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
+ulong mysql_read_event_for_transfer(MYSQL* mysql);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -827,6 +867,8 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_PROCESSLIST ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_PROCESSLIST ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT ||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_BINLOG_TRANSFER ||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TRANSFER_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
     
@@ -4040,6 +4082,338 @@ int mysql_execute_inception_osc_processlist(THD* thd)
     DBUG_RETURN(res);
 }
 
+transfer_cache_t*
+inception_transfer_load_datacenter(
+    THD* thd, 
+    char* datacenter_name,
+    int need_lock
+)
+{
+    transfer_cache_t* datacenter;
+    transfer_cache_t* slave_dc;
+    MYSQL_RES *     source_res=NULL;
+    MYSQL_ROW       source_row;
+    MYSQL* mysql;
+    char tmp[1024];
+    char* instance_name;
+    char* instance_ip;
+    int instance_port;
+    char* binlog_file;
+    int binlog_position;
+
+    if (need_lock)
+        mysql_mutex_lock(&transfer_mutex); 
+    datacenter = LIST_GET_FIRST(global_transfer_cache.transfer_lst);
+    while(datacenter)
+    {
+        if (!strcasecmp(datacenter->datacenter_name, datacenter_name))
+            break;
+        datacenter = LIST_GET_NEXT(link, datacenter);
+    }
+
+    if (need_lock)
+        mysql_mutex_unlock(&transfer_mutex); 
+
+    if (datacenter)
+        return datacenter;
+
+    //not found in global transfer cache
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return NULL;
+    }
+
+    sprintf (tmp, "select * from `%s`.`instances` where instance_role in ('master')", 
+        datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
+        return NULL;
+    }
+
+    source_row = mysql_fetch_row(source_res);
+    //check the count of master node, if not 1, then report invalid
+    if (source_res->row_count != 1)
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
+        mysql_free_result(source_res);
+        return NULL;
+    }
+
+    instance_name = source_row[1];
+    instance_ip = source_row[3];
+    instance_port = atoi(source_row[4]);
+    binlog_file = source_row[5];
+    if (source_row[6] == NULL)
+        binlog_position = 0;
+    else
+        binlog_position = atoi(source_row[6]);
+
+    datacenter = (transfer_cache_t*)my_malloc(sizeof(transfer_cache_t) , MY_ZEROFILL);
+    strcpy(datacenter->hostname, instance_ip);
+    datacenter->binlog_file[0] = '\0';
+    datacenter->cbinlog_file[0] = '\0';
+    if (binlog_file != NULL)
+    {
+        strcpy(datacenter->binlog_file, binlog_file);
+        strcpy(datacenter->cbinlog_file, binlog_file);
+    }
+    datacenter->binlog_position = binlog_position;
+    datacenter->cbinlog_position = binlog_position;
+    datacenter->mysql_port = instance_port;
+    datacenter->thread_stage = transfer_not_start;
+    strcpy(datacenter->datacenter_name, datacenter_name);
+    str_init(&datacenter->errmsg);
+    datacenter->stop_time = NULL;
+    LIST_INIT(datacenter->slave_lst);
+    if (need_lock)
+        mysql_mutex_lock(&transfer_mutex); 
+    LIST_ADD_LAST(link, global_transfer_cache.transfer_lst, datacenter);
+    if (need_lock)
+        mysql_mutex_unlock(&transfer_mutex); 
+
+    mysql_free_result(source_res);
+
+    source_res = NULL;
+    //read the slaves
+    sprintf (tmp, "select * from `%s`.`instances` where \
+        instance_role in ('slave')", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+        return NULL;
+    if ((source_res = mysql_store_result(mysql)) == NULL)
+        return NULL;
+    source_row = mysql_fetch_row(source_res);
+    while(source_row)
+    {
+        slave_dc = (transfer_cache_t*)my_malloc(sizeof(transfer_cache_t) , MY_ZEROFILL);
+        strcpy(slave_dc->hostname, source_row[3]);
+        slave_dc->binlog_file[0] = '\0';
+        slave_dc->binlog_position = 0;
+        slave_dc->valid = true;
+        slave_dc->mysql_port = strtoll(source_row[4], NULL, 10);
+        strcpy(slave_dc->datacenter_name, datacenter_name);
+        str_init(&slave_dc->errmsg);
+        slave_dc->stop_time = NULL;
+        LIST_ADD_LAST(link, datacenter->slave_lst, slave_dc);
+        source_row = mysql_fetch_row(source_res);
+    }
+
+    mysql_free_result(source_res);
+    return datacenter;
+}
+
+int mysql_slave_transfer_status(
+    THD* thd,
+    transfer_cache_t* osc_percent_node
+)
+{
+    DBUG_ENTER("mysql_slave_transfer_status");
+    int res= 0;
+    LEX *lex= thd->lex;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+    char timestamp[20];
+    struct tm * start;
+    long time_diff;
+    timestamp[0] = 0;
+    transfer_cache_t* slave_node; 
+
+    field_list.push_back(new Item_empty_string("Datacenter_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Slave_Host", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Slave_Port", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Binlog_File", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Binlog_Pos", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Valid_Slave", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Last_Error", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Stop_Time", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    mysql_mutex_lock(&transfer_mutex); 
+    osc_percent_node = inception_transfer_load_datacenter(thd, thd->lex->name.str, false);
+    if (osc_percent_node == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        DBUG_RETURN(res);
+    }
+
+    slave_node = LIST_GET_FIRST(osc_percent_node->slave_lst); 
+    while (slave_node)
+    {
+        protocol->prepare_for_resend();
+        protocol->store(osc_percent_node->datacenter_name, system_charset_info);
+        protocol->store(slave_node->hostname, system_charset_info);
+        protocol->store(slave_node->mysql_port);
+        protocol->store(slave_node->cbinlog_file, system_charset_info);
+        protocol->store(slave_node->cbinlog_position);
+        if (slave_node->valid)
+            protocol->store("Yes", system_charset_info);
+        else 
+            protocol->store("No", system_charset_info);
+
+        protocol->store(str_get(&slave_node->errmsg), system_charset_info);
+        if (!slave_node->valid && slave_node->stop_time != NULL)
+        {
+            start = slave_node->stop_time;
+            sprintf(timestamp, "%02d%02d%02d %02d:%02d:%02d",
+                          start->tm_year +1900,
+                          start->tm_mon+1,
+                          start->tm_mday,
+                          start->tm_hour,
+                          start->tm_min,
+                          start->tm_sec);
+            protocol->store(timestamp, system_charset_info);
+        }
+        else
+        {
+            protocol->store("", system_charset_info);
+        }
+
+        protocol->write();
+        slave_node = LIST_GET_NEXT(link, slave_node);
+    }
+    mysql_mutex_unlock(&transfer_mutex);
+
+    my_eof(thd);
+    DBUG_RETURN(res);
+}
+
+int mysql_master_transfer_status(
+    THD* thd,
+    transfer_cache_t* osc_percent_node
+)
+{
+    DBUG_ENTER("mysql_master_transfer_status");
+    int res= 0;
+    LEX *lex= thd->lex;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+    char timestamp[20];
+    struct tm * start;
+    long time_diff;
+    start = osc_percent_node->stop_time;
+    timestamp[0] = 0;
+    char tmp[1024];
+    str_t str_space;
+    str_t* str;
+    transfer_cache_t* slave_dc; 
+
+    field_list.push_back(new Item_empty_string("Datacenter_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Master_Host", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Master_Port", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Binlog_File", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Binlog_Pos", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Transfer_Running", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Last_Error", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Stop_Time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Transfer_Stage", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    mysql_mutex_lock(&transfer_mutex); 
+
+    //load the datacenter again, to confirm is is existed still
+    osc_percent_node = inception_transfer_load_datacenter(thd, thd->lex->name.str, false);
+    if (osc_percent_node == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex);
+        DBUG_RETURN(res);
+    }
+
+    protocol->prepare_for_resend();
+    protocol->store(osc_percent_node->datacenter_name, system_charset_info);
+    protocol->store(osc_percent_node->hostname, system_charset_info);
+    protocol->store(osc_percent_node->mysql_port);
+    protocol->store(osc_percent_node->cbinlog_file, system_charset_info);
+    protocol->store(osc_percent_node->cbinlog_position);
+    if (osc_percent_node->transfer_on)
+        protocol->store("Yes", system_charset_info);
+    else 
+        protocol->store("No", system_charset_info);
+
+    protocol->store(str_get(&osc_percent_node->errmsg), system_charset_info);
+    if (!osc_percent_node->transfer_on && osc_percent_node->stop_time != NULL)
+    {
+        sprintf(timestamp, "%02d%02d%02d %02d:%02d:%02d",
+                      start->tm_year +1900,
+                      start->tm_mon+1,
+                      start->tm_mday,
+                      start->tm_hour,
+                      start->tm_min,
+                      start->tm_sec);
+        protocol->store(timestamp, system_charset_info);
+    }
+    else
+    {
+        protocol->store("", system_charset_info);
+    }
+
+    protocol->store(transfer_stage_type_array[osc_percent_node->thread_stage], system_charset_info);
+
+    if (osc_percent_node->transfer_on)
+    {
+        time_diff = ((long)(time(0) - osc_percent_node->last_master_timestamp) - 
+            osc_percent_node->clock_diff_with_master);
+        protocol->store((longlong)(osc_percent_node->last_master_timestamp ? max(0L, time_diff) : 0));
+    }
+    else
+    {
+        protocol->store((longlong)0);
+    }
+
+    str = str_init(&str_space);
+    slave_dc = LIST_GET_FIRST(osc_percent_node->slave_lst);
+    while (slave_dc) 
+    {
+        sprintf(tmp, "%s:%d(%s)", slave_dc->hostname, slave_dc->mysql_port, (slave_dc->valid ? "Yes": "No"));    
+        str_append(str, tmp);
+        str_append(str, ", ");
+        slave_dc = LIST_GET_NEXT(link, slave_dc);
+    }
+
+    protocol->store(str_get(str), system_charset_info);
+    mysql_mutex_unlock(&transfer_mutex);
+
+    protocol->write();
+
+    my_eof(thd);
+    DBUG_RETURN(res);
+}
+
+int mysql_show_transfer_status(THD* thd)
+{
+    DBUG_ENTER("mysql_show_transfer_status");
+    int res= 0;
+    LEX *lex= thd->lex;
+    transfer_cache_t* osc_percent_node;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+
+    osc_percent_node = inception_transfer_load_datacenter(thd, thd->lex->name.str, true);
+    if (osc_percent_node == NULL)
+        DBUG_RETURN(res);
+
+    if (thd->lex->type == 1)
+        mysql_master_transfer_status(thd, osc_percent_node); 
+    else if (thd->lex->type == 2)
+        mysql_slave_transfer_status(thd, osc_percent_node); 
+
+    DBUG_RETURN(res);
+}
+
 int mysql_execute_inception_osc_show(THD* thd)
 {
     DBUG_ENTER("mysql_execute_inception_osc_show");
@@ -4197,11 +4571,1763 @@ int mysql_execute_inception_set_command(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
+int inception_transfer_execute_sql(THD* thd, char* sql)
+{
+    MYSQL* mysql;
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+        return true;
+
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        my_error(mysql_errno(mysql), MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    return false;
+}
+
+int inception_transfer_instance_table_create(
+    THD* thd, 
+    char* datacenter
+)
+{
+    char tmp[1024];
+    str_t  create_sql_space;
+    str_t* create_sql;
+    MYSQL* mysql;
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return NULL;
+    }
+
+    create_sql = &create_sql_space;
+    create_sql = str_init(create_sql);
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "instances");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "id int unsigned auto_increment primary key, ");
+    create_sql = str_append(create_sql, "instance_name varchar(64) comment 'instance name', ");
+    create_sql = str_append(create_sql, "instance_role varchar(64) comment 'instance role, include master and slave ', ");
+    create_sql = str_append(create_sql, "instance_ip varchar(64) comment 'instance ip', ");
+    create_sql = str_append(create_sql, "instance_port int comment 'instance port', ");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) comment 'binlog file name', ");
+    create_sql = str_append(create_sql, "binlog_position int comment 'binlog file position') ");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer instance set'");
+
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_data");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "id bigint unsigned not null comment 'id but not auto increment', ");
+    create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'transaction id', ");
+    create_sql = str_append(create_sql, "dbname varchar(64) comment 'dbname', ");
+    create_sql = str_append(create_sql, "tablename varchar(64) comment 'tablename', ");
+    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "instance_name varchar(64) comment 'the source instance of this event', ");
+    create_sql = str_append(create_sql, "optype varchar(64) DEFAULT NULL COMMENT 'operation type, include insert, update...',");
+    create_sql = str_append(create_sql, "data text comment 'binlog transfer data, format json', ");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`), ");
+    create_sql = str_append(create_sql, "KEY `idx_dbtablename` (`dbname`,`tablename`), ");
+    create_sql = str_append(create_sql, "KEY `idx_create_time` (`create_time`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'binlog transfer data'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "master_positions");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "id bigint unsigned not null comment 'id but not auto increment', ");
+    create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'transaction id', ");
+    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL COMMENT 'binlog file name',");
+    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL COMMENT 'binlog file position',");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer binlog commit positions'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "slave_positions");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "id bigint unsigned auto_increment primary key, ");
+    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "instance_ip varchar(64) comment 'instance ip', ");
+    create_sql = str_append(create_sql, "instance_port int comment 'instance port', ");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL COMMENT 'binlog file name',");
+    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL COMMENT 'binlog file position',");
+    create_sql = str_append(create_sql, "KEY idx_create_time(`create_time`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer binlog commit positions'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_sequence");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "idname varchar(64) comment 'id name', ");
+    create_sql = str_append(create_sql, "sequence bigint unsigned not null comment 'sequence') ");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'sequence management'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+    else
+    {
+        //insert the init data when create the table first
+        str_truncate(create_sql, str_get_len(create_sql));
+        create_sql = str_append(create_sql, "INSERT INTO ");
+        sprintf (tmp, "`%s`.`%s` values('EID', 1), ('TID', 1)", datacenter, "transfer_sequence");
+        create_sql = str_append(create_sql, tmp);
+        if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int inception_transfer_add_instance(
+    THD* thd, 
+    char* datacenter_name,
+    ulong master_flag, 
+    char* instance_name,
+    char* ip,
+    int   port
+)
+{
+    int ret;
+    char tmp[1024];
+    str_t  create_sql_space;
+    str_t* create_sql;
+    transfer_cache_t* datacenter;
+    transfer_cache_t* slave;
+    MYSQL* mysql;
+
+    if (inception_transfer_instance_table_create(thd, datacenter_name))
+        return true;
+
+    mysql_mutex_lock(&transfer_mutex);
+    datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
+    if (datacenter && datacenter->transfer_on)
+    {
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter_name);
+        goto error;
+    }
+
+    if (datacenter) 
+    {
+        if (master_flag==1)
+        {
+            my_error(ER_INSTANCE_EXISTED, MYF(0), ip,port, instance_name);
+            goto error;
+        }
+        else
+        {
+            slave = LIST_GET_FIRST(datacenter->slave_lst); 
+            while (slave)
+            {
+                if (slave->mysql_port == port && !strcasecmp(slave->hostname, ip))
+                {
+                    my_error(ER_INSTANCE_EXISTED, MYF(0), ip,port, instance_name);
+                    goto error;
+                }
+
+                slave = LIST_GET_NEXT(link, slave);
+            }
+        }
+    }
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        goto error;
+    }
+    create_sql = &create_sql_space;
+    create_sql = str_init(create_sql);
+    sprintf (tmp, "INSERT INTO `%s`.`%s`(instance_name, instance_role, \
+      instance_ip, instance_port) values('%s', '%s', '%s', %d)", datacenter_name, 
+        "instances", instance_name, master_flag==1 ? "master":"slave", ip, port);
+    create_sql = str_append(create_sql, tmp);
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+        goto error;
+    }
+
+    //free current datacenter from global cache
+    if (datacenter)
+    {
+        LIST_REMOVE(link, global_transfer_cache.transfer_lst, datacenter);
+        my_free(datacenter);
+    }
+error:
+    mysql_mutex_unlock(&transfer_mutex);
+
+    return false;
+}
+
+MYSQL* inception_init_binlog_connection(
+    MYSQL* mysql, 
+    char* hostname, 
+    int port, 
+    char* username, 
+    char* password
+)
+{
+    ulong client_flag= CLIENT_REMEMBER_OPTIONS |CLIENT_COMPRESS;
+    //在超时之后，外面会自动重连
+    uint net_timeout= TRANSFER_SLAVE_NET_TIMEOUT;
+    // bool reconnect= TRUE;
+
+    end_server(mysql);
+    mysql_init(mysql);
+    mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+    mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
+    // mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
+
+    if (mysql_real_connect(mysql, hostname, username, password, NULL, port, NULL, client_flag) == 0)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_close(mysql);
+        return NULL;
+    }
+
+    return mysql;
+}
+
+MYSQL* inception_get_connection(
+    MYSQL* mysql, 
+    char* hostname, 
+    int port, 
+    char* username, 
+    char* password ,
+    int timeout
+)
+{
+    ulong client_flag= CLIENT_REMEMBER_OPTIONS ;
+    uint net_timeout= timeout;
+    bool reconnect= TRUE;
+
+    mysql_init(mysql);
+    mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+    mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
+    mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
+
+    if (mysql_real_connect(mysql, hostname, username, password, NULL, port, NULL, client_flag) == 0)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_close(mysql);
+        return NULL;
+    }
+
+    return mysql;
+}
+
+table_info_t*
+inception_transfer_get_table_object(
+    THD*  thd,
+    char*  dbname,
+    char*  tablename,
+    transfer_cache_t* datacenter
+)
+{
+    table_info_t* tableinfo = NULL;
+    MYSQL   mysql_space;
+    MYSQL* mysql;
+
+    tableinfo = mysql_get_table_object_from_cache(thd, dbname, tablename);
+    //解决表已经删除，但后面又用到了，则直接判断这个标记
+    //而不是重新从远程载入这个表对象，删除表的时候只打标记
+    if (tableinfo && tableinfo->isdeleted)
+        return NULL;
+
+    if (tableinfo != NULL)
+        return tableinfo;
+
+            //todo: free the mysql handle
+    mysql = inception_get_connection(&mysql_space, 
+        datacenter->hostname, datacenter->mysql_port, 
+        datacenter->username, datacenter->password, 10);
+    if (mysql == NULL)
+    {
+        thd->clear_error();
+        my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+        return NULL;
+    }
+
+    tableinfo = mysql_query_table_from_source(thd, mysql, dbname, tablename, TRUE);
+    if (tableinfo != NULL)
+    {
+        mysql_add_table_object(thd, tableinfo);
+        mysql_alloc_record(tableinfo, mysql);
+    }
+
+    mysql_close(mysql);
+    return tableinfo;
+}
+
+int 
+inception_transfer_table_map(
+    Master_info* mi,
+    Log_event* ev
+)
+{
+    Table_map_log_event* tab_map_ev;
+    table_info_t*   table_info;
+    int err;
+
+    err = mysql_parse_table_map_log_event(mi, ev);
+
+    tab_map_ev = (Table_map_log_event*)ev;
+
+    table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
+        (char*)tab_map_ev->get_table_name(), mi->datacenter);
+
+    mi->table_info = table_info;
+
+    return false;
+}
+
+int inception_transfer_make_one_row(
+    Master_info* mi,
+    int    optype,
+    String*   backupsql
+)
+{
+    field_info_t* field_node;
+    char   tmp_buf[256];
+    int    err = 0;
+    int    field_index=0;
+    int    pkcount=0;
+    char*   dictkey = NULL;
+
+    if (optype == SQLCOM_INSERT || optype == SQLCOM_UPDATE+1000)
+        dictkey = (char*)"\"NEW\":";
+    else if (optype == SQLCOM_DELETE || optype == SQLCOM_UPDATE)
+        dictkey = (char*)"\"OLD\":";
+
+    backupsql->append(dictkey);
+    backupsql->append("[");
+    field_node = LIST_GET_FIRST(mi->table_info->field_lst);
+    while (field_node != NULL)
+    {
+        if (pkcount >= 1)
+            backupsql->append(", ");
+
+        // "field_name":"value"
+        backupsql->append("{");
+        backupsql->append("\"");
+        backupsql->append(field_node->field_name);
+        backupsql->append("\":");
+        backupsql->append("\"");
+        err = mysql_get_field_string(field_node->conv_field,
+            backupsql, mi->table_info->null_arr, field_index, FALSE, TRUE);
+        backupsql->append("\"");
+        backupsql->append("}");
+
+        pkcount++;
+        field_node = LIST_GET_NEXT(link, field_node);
+        field_index++;
+    }
+
+    backupsql->append("]");
+    return false;
+}
+
+int inception_transfer_generate_write_record(
+    Master_info* mi,
+    Log_event* ev,
+    int    optype,
+    String*   backup_sql,
+    transfer_cache_t* datacenter
+)
+{
+    char  dbname[NAME_CHAR_LEN + 1];
+    sinfo_space_t* thd_sinfo;
+    char   tmp_buf[256];
+    THD*    thd;
+    char*   optype_str=NULL;
+
+    DBUG_ENTER("inception_transfer_generate_write_record");
+    backup_sql->truncate();
+
+    thd = mi->thd;
+    thd_sinfo = mi->thd->thd_sinfo;
+
+    if (optype == SQLCOM_INSERT)
+        optype_str = (char*)"INSERT";
+    else if (optype == SQLCOM_DELETE)
+        optype_str = (char*)"DELETE";
+    else if (optype == SQLCOM_UPDATE)
+        optype_str = (char*)"UPDATE";
+
+    backup_sql->append("INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
+      tablename, create_time, instance_name, optype , data) VALUES \
+      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
+        thd->event_id, thd->transaction_id, mi->table_info->db_name, mi->table_info->table_name, 
+        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
+    backup_sql->append(tmp_buf);
+
+    backup_sql->append("'");
+    backup_sql->append("{");
+    inception_transfer_make_one_row(mi, optype, backup_sql);
+
+    DBUG_RETURN(false);
+}
+
+longlong inception_transfer_next_sequence(
+    Master_info* mi,
+    char* datacenter_name,
+    int type)
+{
+    long long sequence=0;
+    MYSQL* mysql;
+    char sql[256];
+    MYSQL_RES *     source_res=NULL;
+    MYSQL_ROW       source_row;
+    long long eventid=0;
+    long long trxid=0;
+    THD* thd;
+
+    thd = mi->thd;
+    mi->datacenter->thread_stage = transfer_make_next_id;
+    //first time
+    //todo... 检查正确性
+    if (thd->event_id == 0 || thd->transaction_id == 0)
+    {
+        sprintf(sql, "select * from `%s`.`transfer_sequence` where idname='%s' or idname='%s'", 
+            datacenter_name, INCEPTION_TRANSFER_EIDNAME, INCEPTION_TRANSFER_TIDNAME);
+        mysql = thd->get_transfer_connection();
+        if (mysql == NULL)
+        {
+            my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+            return NULL;
+        }
+
+        if (mysql_real_query(mysql, sql, strlen(sql)))
+            return true;
+
+        if ((source_res = mysql_store_result(mysql)) == NULL)
+            return true;
+
+        source_row = mysql_fetch_row(source_res);
+        //check the count of master node, if not 1, then report invalid
+        while (source_row)
+        {
+            if (!strcasecmp(INCEPTION_TRANSFER_EIDNAME, source_row[0]))
+                eventid = strtoll(source_row[1], NULL, 10);
+            if (!strcasecmp(INCEPTION_TRANSFER_TIDNAME, source_row[0]))
+                trxid = strtoll(source_row[1], NULL, 10);
+            source_row = mysql_fetch_row(source_res);
+        }
+    }
+
+    if (type == INCEPTION_TRANSFER_EIDENUM)
+    {
+        if (eventid != 0)
+        {
+            if (eventid > thd->event_id)
+                thd->event_id = eventid;
+            if (thd->event_id % inception_transfer_event_sequence_sync==0 ||
+                thd->event_id + inception_transfer_event_sequence_sync > eventid)
+            {
+                thd->event_id = eventid;
+                sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
+                    datacenter_name, inception_transfer_event_sequence_sync + 
+                    thd->event_id, INCEPTION_TRANSFER_EIDNAME);
+                if (mysql_real_query(mysql, sql, strlen(sql)))
+                    return true;
+            }
+        }
+        sequence = thd->event_id = thd->event_id + 1;
+    }
+    else if (type == INCEPTION_TRANSFER_TIDENUM)
+    {
+        if (trxid != 0)
+        {
+            if (trxid > thd->transaction_id)
+                thd->transaction_id = trxid;
+            if (thd->transaction_id % inception_transfer_trx_sequence_sync==0 ||
+                thd->transaction_id + inception_transfer_trx_sequence_sync > trxid)
+            {
+                thd->transaction_id = trxid;
+                sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
+                    datacenter_name, inception_transfer_trx_sequence_sync + 
+                    thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
+                if (mysql_real_query(mysql, sql, strlen(sql)))
+                    return true;
+            }
+        }
+        sequence = thd->transaction_id = thd->transaction_id + 1;
+    }
+    else
+        sequence = 0;
+
+    return sequence;
+}
+
+int inception_transfer_write_row(
+    Master_info *mi, 
+    Log_event* ev,
+    int optype
+)
+{
+    Write_rows_log_event*  write_ev;
+    int       error= 0;
+    String backup_sql;
+
+    DBUG_ENTER("inception_transfer_write_row");
+    write_ev = (Write_rows_log_event*)ev;
+
+    do
+    {
+        mi->thd->event_id = inception_transfer_next_sequence(mi, 
+            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+
+        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+            &write_ev->m_curr_row_end, write_ev->m_rows_end))
+            DBUG_RETURN(true);
+
+        if (inception_transfer_generate_write_record(mi, write_ev, 
+              optype, &backup_sql, mi->datacenter))
+            DBUG_RETURN(true);
+
+        if (optype != SQLCOM_UPDATE)
+        {
+            backup_sql.append("}');");
+            if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
+                DBUG_RETURN(true);
+        }
+
+        write_ev->m_curr_row = write_ev->m_curr_row_end;
+
+        if (optype == SQLCOM_UPDATE)
+        {
+            if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+                &write_ev->m_curr_row_end, write_ev->m_rows_end))
+                DBUG_RETURN(true);
+
+            backup_sql.append(",");
+            inception_transfer_make_one_row(mi, SQLCOM_UPDATE+1000, &backup_sql);
+
+            backup_sql.append("}');");
+            if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
+                DBUG_RETURN(true);
+
+            write_ev->m_curr_row = write_ev->m_curr_row_end;
+        }
+
+    }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
+
+    DBUG_RETURN(false);
+}
+
+int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_cache_t* datacenter)
+{
+    char   tmp_buf[256];
+    THD*    query_thd;
+    char*   optype_str=NULL;
+    int optype=0;
+    String backup_sql_space;
+    String* backup_sql;
+    THD *thd;
+
+    thd = mi->thd;
+    backup_sql = &backup_sql_space;
+    DBUG_ENTER("inception_transfer_write_ddl_event");
+
+    query_thd = thd->query_thd;
+    optype = query_thd->lex->sql_command;
+    switch (optype)
+    {
+      case SQLCOM_TRUNCATE:
+        optype_str = (char*)"TRUNCATE";
+        break;
+      case SQLCOM_ALTER_TABLE:
+        optype_str = (char*)"ALTERTABLE";
+        break;
+      case SQLCOM_UPDATE:
+        optype_str = (char*)"UPDATE";
+        break;
+    }
+
+    backup_sql->truncate();
+    backup_sql->append("INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
+      tablename, create_time, instance_name, optype , data) VALUES \
+      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
+        thd->event_id, thd->transaction_id, query_thd->lex->query_tables->db, 
+        query_thd->lex->query_tables->table_name, 
+        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
+    backup_sql->append(tmp_buf);
+
+    backup_sql->append("'");
+    if (optype == SQLCOM_TRUNCATE)
+    {
+        backup_sql->append("");
+    }
+    else
+    {
+        backup_sql->append("{");
+        backup_sql->append("}");
+    }
+
+    backup_sql->append("'");
+    backup_sql->append(")");
+
+    if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
+        DBUG_RETURN(true);
+
+    DBUG_RETURN(false);
+}
+
+void inception_transfer_set_thd_db(THD *thd, const char *db, uint32 db_len)
+{
+    char lcase_db_buf[NAME_LEN +1]; 
+    LEX_STRING new_db;
+    new_db.length= db_len;
+    if (lower_case_table_names == 1)
+    {
+        strmov(lcase_db_buf, db); 
+        my_casedn_str(system_charset_info, lcase_db_buf);
+        new_db.str= lcase_db_buf;
+    }
+    else 
+        new_db.str= (char*) db;
+
+    // new_db.str= (char*) rpl_filter->get_rewrite_db(new_db.str,
+    //                                                &new_db.length);
+    thd->set_db(new_db.str, new_db.length);
+    mysql_change_db(thd, &new_db, FALSE);
+}
+
+void
+inception_transfer_set_errmsg(
+    THD * thd,
+    transfer_cache_t* transfer
+)
+{
+    time_t skr;
+
+    if (!thd->is_error())
+        return;
+
+    str_truncate(&transfer->errmsg, str_get_len(&transfer->errmsg));
+    str_append(&transfer->errmsg, thd->get_stmt_da()->message());
+    thd->clear_error();
+    skr= my_time(0);
+    localtime_r(&skr, &transfer->stop_time_space);
+    transfer->stop_time = &transfer->stop_time_space;
+    sql_print_error(str_get(&transfer->errmsg));
+}
+
+int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
+{
+    int err=false;
+    THD* thd;
+    THD* query_thd;
+    Parser_state parser_state;
+    Query_log_event*  query_log;
+    thd = mi->thd;
+
+    DBUG_ENTER("inception_transfer_sql_parse");
+    if (!thd->query_thd)
+    {
+        query_thd = new THD;
+        query_thd->thread_stack= (char*) &query_thd;
+        setup_connection_thread_globals(query_thd);
+        thd->query_thd = query_thd;
+    }
+    else
+    {
+        query_thd = thd->query_thd;
+    }
+
+    lex_start(query_thd);
+    mysql_reset_thd_for_next_command(query_thd);
+    query_log = (Query_log_event*)ev;
+
+    query_thd->set_query_and_id((char*) query_log->query, query_log->q_len, 
+        system_charset_info, next_query_id());
+    if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
+    {
+        inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (parse_sql(query_thd, &parser_state, NULL))
+        {
+            sql_print_error("transfer parse query event error: %s, SQL: %s", 
+                thd->get_stmt_da()->message(), query_thd->query());
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), thd->get_stmt_da()->message());
+            inception_transfer_set_errmsg(thd, mi->datacenter);
+            DBUG_RETURN(true);
+        }
+        else
+        {
+            int optype;
+            optype = query_thd->lex->sql_command;
+            switch (query_thd->lex->sql_command)
+            {
+                case SQLCOM_CREATE_TABLE:
+                    break;
+                case SQLCOM_ALTER_TABLE:
+                    err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
+                    break;
+                case SQLCOM_TRUNCATE:
+                    err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
+                    break;
+                default:
+                    break;
+            }
+
+            if (!err && (optype == SQLCOM_ALTER_TABLE || optype == SQLCOM_TRUNCATE))
+            {
+                mi->datacenter->cbinlog_position = ev->log_pos;
+                strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+            }
+        }
+    }
+
+    query_thd->end_statement();
+    query_thd->cleanup_after_query();
+
+    DBUG_RETURN(err);
+}
+
+int
+inception_transfer_query_event(
+    Master_info* mi,
+    Log_event* ev
+)
+{
+    Query_log_event*  query_log;
+    THD* thd;
+
+    DBUG_ENTER("inception_transfer_query_event");
+
+    query_log = (Query_log_event*)ev;
+    thd = mi->thd;
+
+    if (strcasecmp(query_log->query, "BEGIN") == 0)
+    {
+        thd->transaction_id=inception_transfer_next_sequence(mi, 
+            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM);
+        DBUG_RETURN(false);
+    }
+
+    if (strcasecmp(query_log->query, "COMMIT") == 0)
+    {
+        //only when transaction is to commit, then update the binlog position
+        mi->datacenter->cbinlog_position = ev->log_pos;
+        strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+        DBUG_RETURN(false);
+    }
+
+    mi->thd->event_id = inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+    inception_transfer_sql_parse(mi, ev);
+    DBUG_RETURN(false);
+}
+
+MYSQL_RES*
+inception_transfer_execute_read(
+    THD* thd,
+    char* sql, 
+    char* hostname,
+    int mysql_port,
+    char* username,
+    char* password,
+    int timeout
+)
+{
+    MYSQL mysql_space;
+    MYSQL_RES *     source_res1=NULL;
+    MYSQL_ROW       source_row;
+    MYSQL* mysql;
+
+    mysql = inception_get_connection(&mysql_space, hostname, 
+        mysql_port, username, password, timeout);
+    if (mysql == NULL ||
+        mysql_real_query(mysql, sql, strlen(sql)) ||
+        (source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        if (thd->is_error())
+            return NULL;
+        my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+        mysql_close(mysql);
+        return NULL;
+    }
+
+    mysql_close(mysql);
+    return source_res1;
+}
+
+int
+inception_transfer_get_slaves_position(
+    Master_info* mi
+)
+{
+    THD* thd;
+    transfer_cache_t* datacenter;
+    transfer_cache_t* slave;
+    MYSQL_ROW       source_row;
+    MYSQL_RES *     source_res1=NULL;
+    transfer_cache_t* slave_next;
+    int retry_count=0;
+    char tmp[1024];
+    
+    datacenter = mi->datacenter;
+    thd = mi->thd;
+
+    slave = LIST_GET_FIRST(datacenter->slave_lst);
+    while (slave)
+    {
+        slave_next = LIST_GET_NEXT(link, slave);
+        if (!slave->valid)
+        {
+            slave = slave_next;
+            continue;
+        }
+
+        retry_count=0;
+retry_fetch1:
+        retry_count ++;
+        sprintf (tmp, "SHOW MASTER STATUS");
+        source_res1 = inception_transfer_execute_read(thd, tmp, slave->hostname, 
+            slave->mysql_port, datacenter->username, datacenter->password, 2);
+        if (source_res1 == NULL && retry_count <= 2)
+            goto retry_fetch1;
+        if (retry_count == 3)
+        {
+            inception_transfer_set_errmsg(thd, slave);
+            slave->valid = false;
+            slave = slave_next;
+            continue;
+        }
+            
+        source_row = mysql_fetch_row(source_res1);
+        if (source_row != NULL)
+        {
+            strcpy(slave->cbinlog_file, source_row[0]);
+            slave->cbinlog_position = strtoul(source_row[1], 0, 10);
+        }
+
+        retry_count=0;
+retry_fetch2:
+        retry_count ++;
+        sprintf (tmp, "select from_unixtime(unix_timestamp());");
+        source_res1 = inception_transfer_execute_read(thd, tmp, slave->hostname, 
+            slave->mysql_port, datacenter->username, datacenter->password, 2);
+        if (source_res1 == NULL && retry_count <= 2)
+            goto retry_fetch2;
+        if (retry_count == 3)
+        {
+            slave->valid = false;
+            inception_transfer_set_errmsg(thd, slave);
+            slave = slave_next;
+            continue;
+        }
+
+        source_row = mysql_fetch_row(source_res1);
+        if (source_row != NULL)
+            strcpy(slave->current_time, source_row[0]);
+
+        slave = slave_next;
+    }
+
+    slave = LIST_GET_FIRST(datacenter->slave_lst);
+    while (slave)
+    {
+        slave_next = LIST_GET_NEXT(link, slave);
+        if (!slave->valid)
+        {
+            slave = slave_next;
+            continue;
+        }
+        
+        retry_count=0;
+        sprintf(tmp, "INSERT INTO `%s`.slave_positions(create_time,instance_ip,\
+          instance_port, binlog_file,binlog_position) values('%s',\
+            '%s', %d, '%s', %d)", datacenter->datacenter_name, 
+            slave->current_time, slave->hostname, 
+            slave->mysql_port, slave->cbinlog_file, slave->cbinlog_position);
+retry_write:
+        retry_count+=1;
+        if (inception_transfer_execute_sql(thd, tmp))
+        {
+            if (retry_count <= 2)
+                goto retry_write;
+            inception_transfer_set_errmsg(thd, slave);
+            slave = slave_next;
+            continue;
+        }
+
+        slave = slave_next;
+    }
+
+    return false;
+}
+
+int 
+inception_transfer_write_Xid(
+    Master_info* mi,
+    Log_event* ev
+)
+{
+    String backup_sql_space;
+    String* backup_sql;
+    char tmp_buf[1024];
+
+    backup_sql = &backup_sql_space;
+
+    //still the privise trx, but is another event
+    mi->thd->event_id = inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+    backup_sql->append("INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
+      tablename, create_time, instance_name, optype , data) VALUES \
+      (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', 'COMMIT', '')", 
+        mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
+        ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
+    backup_sql->append(tmp_buf);
+    if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
+        return true;
+    mi->datacenter->cbinlog_position = ev->log_pos;
+    strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+
+    inception_transfer_get_slaves_position(mi);
+
+    return false;
+}
+
+int inception_transfer_binlog_process(
+    Master_info* mi,
+    Log_event* ev,
+    transfer_cache_t* datacenter
+)
+{
+    int err = 0;
+    THD* thd;
+
+    DBUG_ENTER("inception_transfer_binlog_process");
+
+    thd = mi->thd;
+    if (ev == NULL)
+        DBUG_RETURN(false);
+
+    switch(ev->get_type_code())
+    {
+    case QUERY_EVENT:
+        err = inception_transfer_query_event(mi, ev);
+        break;
+
+    case XID_EVENT:
+        inception_transfer_write_Xid(mi, ev);
+        break;
+        
+    case TABLE_MAP_EVENT:
+        err = inception_transfer_table_map(mi, ev);
+        break;
+
+    case WRITE_ROWS_EVENT_V1:
+    case WRITE_ROWS_EVENT:
+        err = inception_transfer_write_row(mi, ev, SQLCOM_INSERT);
+        break;
+
+    case UPDATE_ROWS_EVENT:
+    case UPDATE_ROWS_EVENT_V1:
+        err = inception_transfer_write_row(mi, ev, SQLCOM_UPDATE);
+        break;
+
+    case DELETE_ROWS_EVENT:
+    case DELETE_ROWS_EVENT_V1:
+        err = inception_transfer_write_row(mi, ev, SQLCOM_DELETE);
+        break;
+
+    default:
+        break;
+    }
+
+    DBUG_RETURN(err);
+}
+
+int inception_init_slave_thread(THD* thd)
+{
+  DBUG_ENTER("init_slave_thread");
+  thd->security_ctx->skip_grants();
+  my_net_init(&thd->net, 0);
+/*
+  Adding MAX_LOG_EVENT_HEADER_LEN to the max_allowed_packet on all
+  slave threads, since a replication event can become this much larger
+  than the corresponding packet (query) sent from client to master.
+*/
+  thd->variables.max_allowed_packet= slave_max_allowed_packet;
+  thd->slave_thread = 1;
+  thd->enable_slow_log= opt_log_slow_slave_statements;
+  set_slave_thread_options(thd);
+  thd->client_capabilities = CLIENT_LOCAL_FILES;
+  mysql_mutex_lock(&LOCK_thread_count);
+  thd->thread_id= thd->variables.pseudo_thread_id= thread_id++;
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  thd->set_time();
+  /* Do not use user-supplied timeout value for system threads. */
+  thd->variables.lock_wait_timeout= LONG_TIMEOUT;
+  DBUG_RETURN(0);
+}
+
+int register_slave_on_master(MYSQL* mysql,
+    bool *suppress_warnings, int server_id_in)
+{
+    uchar buf[1024], *pos= buf;
+    DBUG_ENTER("register_slave_on_master");
+
+    *suppress_warnings= FALSE;
+
+    int4store(pos, server_id_in); pos+= 4;
+    pos= net_store_data(pos, (uchar*) 0, 0);
+    pos= net_store_data(pos, (uchar*) 0, 0);
+    pos= net_store_data(pos, (uchar*) 0, 0);
+    int2store(pos, (uint16) report_port); pos+= 2;
+
+    int4store(pos, /* rpl_recovery_rank */ 0);    pos+= 4;
+    /* The master will fill in master_id */
+    int4store(pos, 0);                    pos+= 4;
+
+    if (simple_command(mysql, COM_REGISTER_SLAVE, buf, (size_t) (pos- buf), 0))
+    {
+        if (mysql_errno(mysql) == ER_NET_READ_INTERRUPTED)
+            *suppress_warnings= TRUE;                 // Suppress reconnect warning
+        else
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(1);
+    }
+
+    DBUG_RETURN(0);
+}
+
+bool inception_transfer_killed(THD* thd, Master_info* mi)
+{
+  DBUG_ENTER("inception_transfer_killed");
+
+  DBUG_ASSERT(mi->info_thd == thd);
+  DBUG_RETURN(mi->datacenter->abort_slave || abort_loop || thd->killed);
+}
+
+int inception_transfer_failover(Master_info* mi)
+{
+    char sql[1024];
+    THD* thd;
+    transfer_cache_t* datacenter;
+    transfer_cache_t* slave;
+    MYSQL* mysql;
+    MYSQL_RES *     source_res=NULL;
+    MYSQL_ROW       source_row;
+    int ret=false;
+    //all failover are in this function
+    //lock the datacenter and rewrite the cache and datacenter instances table
+    //the failed instance will been omit in new instance table
+    thd = mi->thd;
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return NULL;
+    }
+
+    datacenter = mi->datacenter;
+    mysql_mutex_lock(&transfer_mutex);
+    slave = LIST_GET_FIRST(datacenter->slave_lst);
+    while(slave)
+    {
+        if (strcasecmp(slave->hostname, datacenter->hostname) ||
+            slave->mysql_port != datacenter->mysql_port)
+        {
+            //the new master node
+            break;
+        }
+
+        slave = LIST_GET_NEXT(link, slave);
+    }
+
+    if (slave)
+    {
+        //remove first
+        //find the failover binlog position
+        sprintf(sql, "select binlog_file, binlog_position from `%s`.slave_positions where "
+            "instance_ip='%s' and instance_port= %d and create_time < "
+            "from_unixtime(%d) order by create_time desc limit 1;", datacenter->datacenter_name, 
+            slave->hostname, slave->mysql_port, (int)datacenter->last_event_timestamp);
+
+        if (mysql_real_query(mysql, sql, strlen(sql)) ||
+            (source_res = mysql_store_result(mysql)) == NULL ||
+            (source_row = mysql_fetch_row(source_res)) == NULL)
+        {
+            ret = true;
+            goto error;
+        }
+        strcpy(datacenter->binlog_file, source_row[0]);
+        datacenter->binlog_position = strtoul(source_row[1], 0, 10);
+        mysql_free_result(source_res);
+
+        sql_print_information("found the new master instance(%s:%d) from datacenter %s, "
+            "new position is %s:%d", slave->hostname, slave->mysql_port, 
+            datacenter->datacenter_name, datacenter->binlog_file, 
+            datacenter->binlog_position);
+
+        sql_print_information("delete the failed instance(s)(%s:%d) from datacenter %s", 
+            datacenter->hostname, datacenter->mysql_port, datacenter->datacenter_name);
+        sprintf(sql,  "DELETE FROM `%s`.instances WHERE instance_ip='%s' and instance_port=%d ", 
+            datacenter->datacenter_name, datacenter->hostname, datacenter->mysql_port);
+        if (mysql_real_query(mysql, sql, strlen(sql)))
+        {
+            ret = true;
+            goto error;
+        }
+
+        LIST_REMOVE(link, datacenter->slave_lst, slave); 
+        strcpy(datacenter->hostname, slave->hostname);
+        datacenter->mysql_port = slave->mysql_port;
+        strcpy(datacenter->cbinlog_file, datacenter->binlog_file);
+        datacenter->cbinlog_position = datacenter->binlog_position; 
+        str_truncate(&datacenter->errmsg, str_get_len(&datacenter->errmsg));
+        my_free(slave);
+    }
+    else
+    {
+        sql_print_information("No good slave to failover, transfer interruptted for datacenter %s",
+            datacenter->datacenter_name);
+        {
+            ret = true;
+            goto error;
+        }
+    }
+
+    sql_print_information("update the new instance(%s:%d) to master for datacenter %s", 
+            datacenter->hostname, datacenter->mysql_port, datacenter->datacenter_name);
+    sprintf(sql,  "UPDATE `%s`.instances SET instance_role = 'master' WHERE \
+        instance_ip='%s' and instance_port=%d limit 1",//to prevent the duplicate key
+        datacenter->datacenter_name, datacenter->hostname, datacenter->mysql_port);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        ret = true;
+        goto error;
+    }
+
+    sql_print_information("failover successfully, transfer continue for datacenter %s", 
+        datacenter->datacenter_name);
+
+error:
+    mysql_mutex_unlock(&transfer_mutex);
+    return ret;
+}
+
+pthread_handler_t inception_transfer_delete(void* arg)
+{
+    THD *thd= NULL;
+    // datacenter_t* datacenter;
+    transfer_cache_t* datacenter;
+    MYSQL* mysql = NULL;
+    char sql[1024];
+    char sql1[1024];
+    char sql2[1024];
+
+    my_thread_init();
+    thd= new THD;
+    thd->thread_stack= (char*) &thd;
+
+    datacenter = (transfer_cache_t*)arg;
+    setup_connection_thread_globals(thd);
+
+    sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
+        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days*10);
+    sprintf(sql1, "DELETE FROM `%s`.slave_positions where create_time < \
+        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days*10);
+    sprintf(sql2, "DELETE FROM `%s`.master_positions where create_time < \
+        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days*10);
+    while (datacenter->transfer_on)
+    {
+        mysql = thd->get_transfer_connection();
+        if (mysql == NULL)
+        {
+            sleep(1);
+            continue;
+        }
+        if (mysql_real_query(mysql, sql, strlen(sql)) ||
+            mysql_real_query(mysql, sql1, strlen(sql1)) ||
+            mysql_real_query(mysql, sql2, strlen(sql2)))
+        {
+            sleep(1);
+            continue;
+        }
+        sleep(1);
+    }
+
+    my_thread_end();
+    pthread_exit(0);
+    return NULL;
+}
+
+pthread_handler_t inception_transfer_thread(void* arg)
+{
+    pthread_t threadid;
+    THD *thd= NULL;
+    Master_info* mi;
+    // datacenter_t* datacenter;
+    transfer_cache_t* datacenter;
+    MYSQL mysql_space;
+    MYSQL* mysql = NULL;
+    char*   event_buf;
+    Log_event*  evlog;
+    char* binlog_file = NULL;
+    int binlog_position = 0;
+    int retrycount = 0;
+    bool suppress_warnings;
+    time_t skr;
+    int failover = false;
+
+    my_thread_init();
+
+    datacenter = (transfer_cache_t*)arg;
+    thd= new THD;
+
+    mi = new Master_info(1);
+    mi->thd = thd;
+    thd->thread_stack= (char*) &thd;
+
+    mi->datacenter = datacenter;
+    pthread_detach_this_thread();
+    mi->info_thd = thd;
+    mysql_mutex_lock(&LOCK_thread_count);
+    add_global_thread(thd);
+    mysql_mutex_unlock(&LOCK_thread_count);
+
+    setup_connection_thread_globals(thd);
+    inception_init_slave_thread(thd);
+
+    thd->query_thd = NULL;
+    thd->event_id = thd->transaction_id = 0;
+    datacenter->clock_diff_with_master = mi->clock_diff_with_master;
+    binlog_file = datacenter->binlog_file;
+    binlog_position = datacenter->binlog_position;
+    str_truncate(&datacenter->errmsg, str_get_len(&datacenter->errmsg));
+    datacenter->thd = thd;
+    mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
+    mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
+    datacenter->abort_slave = false;
+    datacenter->transfer_on = 1;
+
+    //locked in inception_transfer_start_replicate
+    mysql_mutex_unlock(&transfer_mutex);
+    if (mysql_thread_create(0, &threadid, &connection_attrib,
+        inception_transfer_delete, (void*)datacenter))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter->datacenter_name);
+        goto error; 
+    }
+
+reconnect:
+    datacenter = mi->datacenter;
+    mysql = inception_init_binlog_connection(&mysql_space, 
+        datacenter->hostname, datacenter->mysql_port, 
+        datacenter->username, datacenter->password);
+    if (mysql == NULL)
+    {
+        if (!inception_transfer_killed(thd, mi) && retrycount++ < 3)
+        {
+            sql_print_information("Forcing to reconnect master");
+            goto reconnect;
+        }
+        if (failover)
+            goto failover;
+        thd->clear_error();
+        my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        goto error; 
+    }
+
+    if (mysql_get_master_version(mysql, mi) || 
+        register_slave_on_master(mysql, &suppress_warnings, server_id) ||
+        mysql_request_binlog_dump(mysql, binlog_file, binlog_position, server_id))
+    {
+        if (!inception_transfer_killed(thd, mi) && retrycount++ < 3)
+        {
+            sql_print_information("Forcing to reconnect master");
+            goto reconnect;
+        }
+        if (failover)
+            goto failover;
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        goto error; 
+    }
+
+    while(!inception_transfer_killed(thd, mi))
+    {
+        ulong event_len;
+
+        datacenter->thread_stage = transfer_wait_master_send;
+        datacenter->last_master_timestamp = 0;
+        event_len = mysql_read_event_for_transfer(mysql);
+        event_buf= (char*)mysql->net.read_pos + 1;
+
+        if (event_len == packet_error)
+        {
+            failover = true;
+            if (mysql_errno(mysql) == CR_NET_PACKET_TOO_LARGE ||
+                mysql_errno(mysql) == ER_MASTER_FATAL_ERROR_READING_BINLOG ||
+                mysql_errno(mysql) == ER_OUT_OF_RESOURCES)
+            {
+                thd->clear_error();
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                inception_transfer_set_errmsg(thd, mi->datacenter);
+                goto failover;
+            }
+
+            if (!inception_transfer_killed(thd, mi) && retrycount++ < 3)
+            {
+                sql_print_information("Forcing to reconnect master");
+                goto reconnect;
+            }
+            
+failover:
+            if (inception_transfer_killed(thd, mi))
+                goto error;
+            if (inception_transfer_failover(mi))
+            {
+                sql_print_information("failover the master failed");
+                goto error;
+            }
+            else
+            {
+                //new master position
+                binlog_file = mi->datacenter->binlog_file;
+                binlog_position = mi->datacenter->binlog_position;
+                sql_print_information("failover the master successfully, new master is: %s:%d", 
+                    mi->datacenter->hostname, mi->datacenter->mysql_port);
+                sql_print_information("Forcing to reconnect new master");
+                goto reconnect;
+            }
+        }
+
+        retrycount = 0;
+        datacenter->thread_stage = transfer_read_events;
+        if (mysql_process_event(mi, event_buf, event_len, &evlog) || evlog == NULL)
+            goto error;
+        binlog_file = (char*)mi->get_master_log_name();
+        binlog_position = mi->get_master_log_pos();
+        datacenter->last_master_timestamp = evlog->get_time() + evlog->exec_time;
+        datacenter->last_event_timestamp = datacenter->last_master_timestamp;
+        if (inception_transfer_binlog_process(mi, evlog, datacenter))
+        {
+            delete evlog;
+            goto error; 
+        }
+        delete  evlog;
+    }
+
+error:
+    sql_print_information("transfer stopped");
+    datacenter->thread_stage = transfer_stopped;
+    thd->release_resources();
+    mysql_cond_broadcast(&datacenter->stop_cond);
+    skr= my_time(0);
+    localtime_r(&skr, &datacenter->stop_time_space);
+    datacenter->stop_time = &datacenter->stop_time_space;
+    datacenter->transfer_on = 0;
+    mysql_close(mysql);
+    my_thread_end();
+    pthread_exit(0);
+    return NULL;
+}
+
+int inception_transfer_stop_replicate(
+    char* datacenter_name    
+)
+{
+    transfer_cache_t* datacenter;
+    THD* thd;
+
+    mysql_mutex_lock(&transfer_mutex); 
+    datacenter = LIST_GET_FIRST(global_transfer_cache.transfer_lst);
+    while(datacenter)
+    {
+        if (!strcasecmp(datacenter->datacenter_name, datacenter_name))
+            break;
+        datacenter = LIST_GET_NEXT(link, datacenter);
+    }
+
+    mysql_mutex_unlock(&transfer_mutex); 
+
+    if (!datacenter || !datacenter->transfer_on)
+    {
+        my_error(ER_TRANSFER_NONRUNNING, MYF(0), datacenter_name);
+        return true;
+    }
+
+    mysql_mutex_lock(&datacenter->run_lock);
+    thd = datacenter->thd;
+    datacenter->abort_slave=1;
+    sql_print_information("inception transfer has been stopped");
+    while (datacenter->transfer_on)                        // Should always be true
+    {
+        int error;
+        DBUG_PRINT("loop", ("killing slave thread"));
+     
+        mysql_mutex_lock(&thd->LOCK_thd_data);
+#ifndef DONT_USE_THR_ALARM
+        /*
+          Error codes from pthread_kill are:
+          EINVAL: invalid signal number (can't happen)
+          ESRCH: thread already killed (can happen, should be ignored)
+        */
+        int err __attribute__((unused))= pthread_kill(thd->real_id, thr_client_alarm);
+        DBUG_ASSERT(err != EINVAL);
+#endif
+        thd->awake(THD::NOT_KILLED);
+        mysql_mutex_unlock(&thd->LOCK_thd_data);
+     
+        /*
+          There is a small chance that slave thread might miss the first
+          alarm. To protect againts it, resend the signal until it reacts
+        */
+        struct timespec abstime;
+        set_timespec(abstime,2);
+        error= mysql_cond_timedwait(&datacenter->stop_cond, &datacenter->run_lock, &abstime);
+        DBUG_ASSERT(error == ETIMEDOUT || error == 0);
+    }
+
+    mysql_mutex_unlock(&datacenter->run_lock);
+    return false;
+}
+
+int inception_transfer_start_replicate(
+    THD* thd, 
+    char* datacenter_name, 
+    char* username,
+    char* password
+)
+{
+    pthread_t threadid;
+    char tmp[1024];
+    MYSQL_RES *     source_res1=NULL;
+    MYSQL_ROW       source_row;
+    transfer_cache_t* datacenter;
+
+    mysql_mutex_lock(&transfer_mutex);
+    datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
+    if (datacenter && datacenter->transfer_on)
+    {
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter_name);
+        mysql_mutex_unlock(&transfer_mutex);
+        return true;
+    }
+
+    if (!datacenter)
+    {
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        mysql_mutex_unlock(&transfer_mutex);
+        return true;
+    }
+
+    strcpy(datacenter->username, username);
+    strcpy(datacenter->password, password);
+
+    //if binlog position is null, then start with 'show master status' position
+    //but first, should read the max binlog position from transfer_data, from where
+    //to start the replicate first, and then from the show master status;
+    if (datacenter->binlog_file[0] == '\0' || datacenter->binlog_position == 0)
+    {
+        MYSQL mysql_space;
+        MYSQL* mysql;
+            
+        mysql = thd->get_transfer_connection();
+        sprintf(tmp, "select binlog_file,binlog_position from `%s`.`master_positions` m,\
+            `%s`.`transfer_data` t where t.id=m.id and m.id=(select max(id) \
+              from `%s`.`master_positions`) and t.instance_name='%s:%d';", 
+            datacenter_name, datacenter_name, datacenter_name, datacenter->hostname,
+            datacenter->mysql_port);
+        if (mysql_real_query(mysql, tmp, strlen(tmp)))
+        {
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+            mysql_mutex_unlock(&transfer_mutex);
+            return true;
+        }
+
+        if ((source_res1 = mysql_store_result(mysql)) == NULL ||
+            source_res1->row_count != 1)
+        {
+            if (source_res1 && source_res1->row_count != 1)
+                mysql_free_result(source_res1);
+            //todo: free the mysql handle
+            mysql =inception_get_connection(&mysql_space, 
+                datacenter->hostname, datacenter->mysql_port, username, password, 10);
+            if (mysql == NULL)
+            {
+                thd->clear_error();
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                mysql_mutex_unlock(&transfer_mutex);
+                return true;
+            }
+            sprintf (tmp, "SHOW MASTER STATUS");
+            if (mysql_real_query(mysql, tmp, strlen(tmp)))
+            {
+                mysql_close(mysql);
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                mysql_mutex_unlock(&transfer_mutex);
+                return true;
+            }
+
+            if ((source_res1 = mysql_store_result(mysql)) == NULL)
+            {
+                mysql_close(mysql);
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                mysql_mutex_unlock(&transfer_mutex);
+                return true;
+            }
+            mysql_close(mysql);
+        }
+            
+        source_row = mysql_fetch_row(source_res1);
+        if (source_row == NULL)
+        {
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Master binlog is OFF");
+            mysql_free_result(source_res1);
+            mysql_mutex_unlock(&transfer_mutex);
+            return true;
+        }
+
+        strcpy(datacenter->binlog_file, source_row[0]);
+        datacenter->binlog_position = strtoul(source_row[1], 0, 10);
+        strcpy(datacenter->cbinlog_file, source_row[0]);
+        datacenter->cbinlog_position = strtoul(source_row[1], 0, 10);
+        mysql_free_result(source_res1);
+    }
+    else if (strcmpi(datacenter->cbinlog_file, datacenter->binlog_file) > 0 ||
+        (strcmpi(datacenter->cbinlog_file, datacenter->binlog_file) == 0 && 
+         datacenter->cbinlog_position > datacenter->binlog_position))
+    {
+        strcpy(datacenter->binlog_file, datacenter->cbinlog_file);
+        datacenter->binlog_position = datacenter->cbinlog_position;
+        // str_init(&datacenter->errmsg);
+    }
+    else
+    {
+        strcpy(datacenter->cbinlog_file, datacenter->binlog_file);
+        datacenter->cbinlog_position = datacenter->binlog_position;
+    }
+
+    //start replicate
+    if (mysql_thread_create(0, &threadid, &connection_attrib,
+        inception_transfer_thread, (void*)datacenter))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
+        mysql_mutex_unlock(&transfer_mutex);
+        return true;
+    }
+
+    return false;
+}
+
+int inception_transfer_set_instance_position(
+    THD* thd, 
+    char* datacenter,
+    char* binlog_file_name,
+    int   binlog_file_pos
+)
+{
+    MYSQL* mysql;
+    char tmp[1024];
+    transfer_cache_t* transfer_node;
+    
+    mysql_mutex_lock(&transfer_mutex); 
+    transfer_node = inception_transfer_load_datacenter(thd, datacenter, false);
+
+    if (transfer_node && transfer_node->transfer_on)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter);
+        return true;
+    }
+
+    if (!transfer_node)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter);
+        return true;
+    }
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return NULL;
+    }
+
+    sprintf(tmp, "update `%s`.`instances` set binlog_file='%s', binlog_position=%d \
+        where instance_role = 'master'", datacenter, binlog_file_name, binlog_file_pos);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        return true;
+    }
+
+    mysql_mutex_unlock(&transfer_mutex); 
+
+    return false;
+}
+
+int
+inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
+{
+    MYSQL* mysql;
+    char tmp[1024];
+    transfer_cache_t* transfer_node;
+
+    mysql_mutex_lock(&transfer_mutex); 
+    transfer_node = inception_transfer_load_datacenter(thd, datacenter_name, false);
+
+    if (transfer_node && transfer_node->transfer_on)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter_name);
+        return true;
+    }
+
+    if (!transfer_node)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        return true;
+    }
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return NULL;
+    }
+
+    sprintf(tmp, "update `%s`.`instances` set binlog_file='', binlog_position=0 \
+        where instance_role = 'master'", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        return true;
+    }
+
+    LIST_REMOVE(link, global_transfer_cache.transfer_lst, transfer_node);
+    mysql_mutex_unlock(&transfer_mutex); 
+
+    //todo: free the cache node
+    str_deinit(&transfer_node->errmsg);
+    my_free(transfer_node);
+
+    return false;
+}
+
+int mysql_execute_inception_binlog_transfer(THD* thd)
+{
+    MYSQL* mysql;
+    switch (thd->lex->inception_cmd_sub_type)
+    {
+        case INCEPTION_BINLOG_DC_CREATE:
+        {
+            char sql[1024];
+            sprintf(sql, "CREATE DATABASE `%s` default charset utf8", thd->lex->name.str);
+            mysql = thd->get_transfer_connection();
+            if (mysql == NULL)
+                return true;
+
+            if (mysql_real_query(mysql, sql, strlen(sql)))
+            {
+                if (mysql_errno(mysql) == ER_DB_CREATE_EXISTS)
+                    my_error(ER_DATACENTER_EXISTED, MYF(0), thd->lex->name.str);
+                else
+                    my_error(mysql_errno(mysql), MYF(0));
+
+                return true;
+            }
+
+            if (inception_transfer_instance_table_create(thd, thd->lex->name.str))
+                return true;
+            break;
+        }
+
+        case INCEPTION_BINLOG_INSTANCE_ADD:
+            return inception_transfer_add_instance(thd, thd->lex->name.str, thd->lex->type, 
+                thd->lex->comment.str, thd->lex->ident.str, thd->lex->server_options.port);
+        case INCEPTION_BINLOG_START_TRANSFER:
+            return inception_transfer_start_replicate(thd, thd->lex->name.str, 
+                thd->lex->ident.str, thd->lex->comment.str);
+        case INCEPTION_BINLOG_SET_POSITION:
+            return inception_transfer_set_instance_position(thd, thd->lex->name.str, 
+                thd->lex->ident.str, thd->lex->server_options.port);
+        case INCEPTION_BINLOG_RESET_TRANSFER:
+            return inception_transfer_reset_transfer(thd, thd->lex->ident.str);
+        case INCEPTION_BINLOG_STOP_TRANSFER:
+            return inception_transfer_stop_replicate(thd->lex->ident.str);
+        default:
+            return false;
+    }
+
+    return false;
+}
+
 int mysql_execute_inception_command(THD* thd)
 {
-    if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
+    if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT)
         return false;
-    }
 
     if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_REMOTE_SHOW)
       return mysql_inception_remote_show(thd);
@@ -4209,26 +6335,30 @@ int mysql_execute_inception_command(THD* thd)
     if (thd->have_begin)
         return false;
 
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOWALL)
-      return mysql_inception_local_showall(thd);
+    switch (thd->lex->inception_cmd_type)
+    {
+        case INCEPTION_COMMAND_LOCAL_SHOWALL:
+            return mysql_inception_local_showall(thd);
+        case INCEPTION_COMMAND_LOCAL_SHOW:
+            return mysql_inception_local_show(thd);
+        case INCEPTION_COMMAND_LOCAL_SET:
+            return mysql_execute_inception_set_command(thd);
+        case INCEPTION_COMMAND_OSC_SHOW:
+            return mysql_execute_inception_osc_show(thd);
+        case INCEPTION_COMMAND_OSC_PROCESSLIST:
+            return mysql_execute_inception_osc_processlist(thd);
+        case INCEPTION_COMMAND_PROCESSLIST:
+            return mysql_execute_inception_processlist(thd, thd->lex->verbose);
+        case INCEPTION_COMMAND_OSC_ABORT:
+            return mysql_execute_inception_osc_abort(thd);
+        case INCEPTION_COMMAND_BINLOG_TRANSFER:
+            return mysql_execute_inception_binlog_transfer(thd);
+        case INCEPTION_COMMAND_SHOW_TRANSFER_STATUS:
+            return mysql_show_transfer_status(thd);
 
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOW)
-      return mysql_inception_local_show(thd);
-      
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET)
-      return mysql_execute_inception_set_command(thd);
-
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_SHOW)
-      return mysql_execute_inception_osc_show(thd);
-
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_PROCESSLIST)
-      return mysql_execute_inception_osc_processlist(thd);
-
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_PROCESSLIST)
-      return mysql_execute_inception_processlist(thd, thd->lex->verbose);
-
-    if (thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT)
-      return mysql_execute_inception_osc_abort(thd);
+        default:
+            return false;
+    }
 
     return false;
 }
@@ -8013,6 +10143,72 @@ int mysql_execute_remote_backup_sql(
     DBUG_RETURN(false);
 }
 
+int inception_transfer_execute_store(
+    Master_info* mi,
+    Log_event* ev,
+    char*  sql,
+    int trx_flag
+)
+{
+    MYSQL*  mysql;
+    String backup_sql;
+    THD*  thd;
+    char tmp_buf[1024];
+
+    DBUG_ENTER("inception_transfer_execute_store");
+
+    mi->datacenter->thread_stage = transfer_write_datacenter;
+    thd = mi->thd;
+    if ((mysql= thd->get_transfer_connection()) == NULL)
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(TRUE);
+    }
+
+    if (trx_flag)
+    {
+        if (mysql_real_query(mysql, "BEGIN", strlen("BEGIN")))
+        {
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+            inception_transfer_set_errmsg(thd, mi->datacenter);
+            DBUG_RETURN(true);
+        }
+    }
+
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(true);
+    }
+
+    if (trx_flag)
+    {
+        backup_sql.append("INSERT INTO ");
+        sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
+          create_time, binlog_file, binlog_position) VALUES \
+          (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
+            mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+            ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), ev->log_pos);
+        backup_sql.append(tmp_buf);
+        if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
+        {
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+            inception_transfer_set_errmsg(thd, mi->datacenter);
+            DBUG_RETURN(true);
+        }
+        if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
+        {
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+            inception_transfer_set_errmsg(thd, mi->datacenter);
+            DBUG_RETURN(true);
+        }
+    }
+
+    DBUG_RETURN(false);
+}
+
 int mysql_operation_statistic(THD* thd)
 {
     if (!inception_enable_sql_statistic)
@@ -8281,34 +10477,27 @@ int mysql_execute_sql_single(
     DBUG_RETURN(false);
 }
 
-int register_slave_on_master(MYSQL* mysql,
-    bool *suppress_warnings)
+ulong mysql_read_event_for_transfer(MYSQL* mysql)
 {
-    uchar buf[1024], *pos= buf;
-    DBUG_ENTER("register_slave_on_master");
+    ulong len;
+    DBUG_ENTER("mysql_read_event");
 
-    *suppress_warnings= FALSE;
-
-    int4store(pos, server_id); pos+= 4;
-    pos= net_store_data(pos, (uchar*) 0, 0);
-    pos= net_store_data(pos, (uchar*) 0, 0);
-    pos= net_store_data(pos, (uchar*) 0, 0);
-    int2store(pos, (uint16) report_port); pos+= 2;
-
-    int4store(pos, /* rpl_recovery_rank */ 0);    pos+= 4;
-    /* The master will fill in master_id */
-    int4store(pos, 0);                    pos+= 4;
-
-    if (simple_command(mysql, COM_REGISTER_SLAVE, buf, (size_t) (pos- buf), 0))
+    len = cli_safe_read(mysql);
+    if (len == packet_error || (long) len < 1)
     {
-        if (mysql_errno(mysql) == ER_NET_READ_INTERRUPTED)
-            *suppress_warnings= TRUE;                 // Suppress reconnect warning
-        else
-            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-        DBUG_RETURN(1);
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(packet_error);
     }
 
-    DBUG_RETURN(0);
+    /* Check if eof packet */
+    if (len < 8 && mysql->net.read_pos[0] == 254)
+    {
+        sql_print_information("Slave: received end packet from server, apparent "
+                                    "master shutdown: %s", mysql_error(mysql));
+        DBUG_RETURN(packet_error);
+    }
+
+    DBUG_RETURN(len - 1);
 }
 
 ulong mysql_read_event(MYSQL* mysql)
@@ -8335,7 +10524,8 @@ ulong mysql_read_event(MYSQL* mysql)
 int mysql_request_binlog_dump(
     MYSQL*  mysql,
     char*  file_name,
-    int   binlog_pos
+    int   binlog_pos,
+    int   server_id_in
 )
 {
     const int BINLOG_NAME_INFO_SIZE= strlen(file_name);
@@ -8360,7 +10550,7 @@ int mysql_request_binlog_dump(
     // See comment regarding binlog_flags above.
     int2store(ptr_buffer, binlog_flags);
     ptr_buffer+= ::BINLOG_FLAGS_INFO_SIZE;
-    int4store(ptr_buffer, server_id);
+    int4store(ptr_buffer, server_id_in);
     ptr_buffer+= ::BINLOG_SERVER_ID_INFO_SIZE;
     memcpy(ptr_buffer, file_name, BINLOG_NAME_INFO_SIZE);
     ptr_buffer+= BINLOG_NAME_INFO_SIZE;
@@ -8436,6 +10626,16 @@ Log_event* mysql_read_log_event(
     case DELETE_ROWS_EVENT:
         ev = new Delete_rows_log_event(buf, event_len, description_event);
         break;
+    case XID_EVENT:
+        ev = new Xid_log_event(buf, description_event);
+        break;
+    case GTID_LOG_EVENT:
+        case ANONYMOUS_GTID_LOG_EVENT:
+        ev= new Gtid_log_event(buf, event_len, description_event);
+        break;
+    case PREVIOUS_GTIDS_LOG_EVENT:
+        ev= new Previous_gtids_log_event(buf, event_len, description_event);
+        break;
     default:
         ev = new Ignorable_log_event(buf, description_event);
         break;
@@ -8470,14 +10670,14 @@ int process_io_rotate(Master_info *mi, Rotate_log_event *rev)
         rev->new_log_ident, rev->ident_len + 1);
     mi->set_master_log_pos(rev->pos);
 
-    Format_description_log_event *old_fdle= mi->get_mi_description_event();
-    if (old_fdle->binlog_version >= 4)
-    {
-        Format_description_log_event *new_fdle= new
-            Format_description_log_event(3);
-        new_fdle->checksum_alg= mi->relay_log_checksum_alg;
-        mi->set_mi_description_event(new_fdle);
-    }
+    // Format_description_log_event *old_fdle= mi->get_mi_description_event();
+    // if (old_fdle->binlog_version >= 4)
+    // {
+    //     Format_description_log_event *new_fdle= new
+    //         Format_description_log_event(3);
+    //     new_fdle->checksum_alg= mi->relay_log_checksum_alg;
+    //     mi->set_mi_description_event(new_fdle);
+    // }
 
     DBUG_RETURN(false);
 }
@@ -8540,6 +10740,8 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
                 my_error(ER_SLAVE_RELAY_LOG_WRITE_FAILURE, MYF(0));
                 DBUG_RETURN(true);
             }
+            mi->datacenter->cbinlog_position = mi->get_master_log_pos();
+            strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
         }
 
         break;
@@ -8578,10 +10780,14 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
         }
         break;
 
+    case HEARTBEAT_LOG_EVENT:
+        inc_pos = 0;
     default:
         inc_pos= event_len;
         break;
     }
+
+    mi->set_master_log_pos(mi->get_master_log_pos() + inc_pos);
 
     *evlog = mysql_read_log_event(buf, event_len,
         &error_desc, mi->get_mi_description_event());
@@ -8597,6 +10803,8 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
 
 int mysql_get_master_version(MYSQL* mysql, Master_info* mi)
 {
+    MYSQL_RES *master_res= 0;
+    MYSQL_ROW master_row;
     char err_buff[MAX_SLAVE_ERRMSG];
     const char* errmsg= 0;
     int err_code= 0;
@@ -8689,11 +10897,42 @@ int mysql_get_master_version(MYSQL* mysql, Master_info* mi)
     */
     mi->checksum_alg_before_fd= BINLOG_CHECKSUM_ALG_OFF;
 
+    float heartbeat_period;
+    heartbeat_period= min<float>(SLAVE_MAX_HEARTBEAT_PERIOD, 
+        (TRANSFER_SLAVE_NET_TIMEOUT/2.0));
+
+    char llbuf[22];
+    const char query_format[]= "SET @master_heartbeat_period= %s";
+    char query[sizeof(query_format) - 2 + sizeof(llbuf)];
+    llstr((ulonglong) (heartbeat_period*1000000000UL), llbuf);
+    sprintf(query, query_format, llbuf);
+    if (mysql_real_query(mysql, query, strlen(query)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(mi->thd);
+    }
+
     if (mysql_real_query(mysql, "SET @master_binlog_checksum='NONE'",
                          strlen("SET @master_binlog_checksum='NONE'")))
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
         mysql_errmsg_append(mi->thd);
+    }
+
+    if (!mysql_real_query(mysql, "SELECT UNIX_TIMESTAMP()", 
+          strlen("SELECT UNIX_TIMESTAMP()")) &&
+          (master_res= mysql_store_result(mysql)) &&
+          (master_row= mysql_fetch_row(master_res)))
+    {
+        mysql_mutex_lock(&mi->data_lock);
+        mi->clock_diff_with_master= (long) (time((time_t*) 0) - strtoul(master_row[0], 0, 10));
+        mysql_mutex_unlock(&mi->data_lock);
+    }
+    else
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(mi->thd);
+        DBUG_RETURN(1);
     }
 
     DBUG_RETURN(0);
@@ -8983,7 +11222,49 @@ mysql_dup_char(
 
 }
 
-int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index)
+void
+mysql_dup_char_with_escape(
+    char* src,
+    char* dest,
+    char chr,
+    char escape_char,
+    char escape_add
+)
+{
+    char* p = src;
+    while (*src)
+    {
+        if (*src == escape_char && (p == src || *(src-1)!='\\'))
+        {
+            *dest=escape_add;
+            *(++dest) = escape_add;
+            *(++dest) = escape_char;
+        }
+
+        //对于存在转义的情况，则不做替换
+        if (*src == chr && (p == src || *(src-1) != '\\'))
+        {
+            *dest=chr;
+            *(++dest) = chr;
+        }
+        else
+        {
+            *dest = *src;
+        }
+
+        dest++;
+        src++;
+    }
+
+}
+int mysql_get_field_string(
+    Field* field, 
+    String* backupsql, 
+    char* null_arr, 
+    int field_index, 
+    int qutor_flag,
+    int doublequtor_escape
+)
 {
     int result = 0;                       // Will be set if null_value == 0
     enum_field_types f_type;
@@ -9028,11 +11309,16 @@ int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int 
         case MYSQL_TYPE_BIT:
         case MYSQL_TYPE_NEWDECIMAL:
             {
-                backupsql->append("\'");
+                if (qutor_flag)
+                    backupsql->append("\'");
                 res=field->val_str(&buffer);
-                dupcharfield = (char*)my_malloc(res->length() * 2 + 1, MY_ZEROFILL);
+                dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
                 memset(dupcharfield, 0, res->length() * 2 + 1);
-                mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
+                if (!doublequtor_escape)
+                    mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
+                else
+                    mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, '\'', '\"', '\\');
+
                 backupsql->append(dupcharfield);
                 my_free(dupcharfield);
                 qutor_end =1;
@@ -9088,7 +11374,8 @@ int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int 
         case MYSQL_TYPE_TIMESTAMP:
         case MYSQL_TYPE_TIMESTAMP2:
             {
-                backupsql->append("\'");
+                if (qutor_flag)
+                    backupsql->append("\'");
                 res=field->val_str(&buffer);
                 qutor_end =1;
                 //    MYSQL_TIME tm;
@@ -9098,7 +11385,8 @@ int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int 
         case MYSQL_TYPE_TIME:
         case MYSQL_TYPE_TIME2:
             {
-                backupsql->append("\'");
+                if (qutor_flag)
+                    backupsql->append("\'");
                 res=field->val_str(&buffer);
                 qutor_end =1;
                 //    MYSQL_TIME tm;
@@ -9111,9 +11399,8 @@ int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int 
     if (append_flag)
         backupsql->append(res->ptr(), res->length(), 1024);
 
-    if (qutor_end)
+    if (qutor_end && qutor_flag)
         backupsql->append("\'");
-
 
     return result;
 }
@@ -9244,7 +11531,7 @@ int mysql_generate_field_insert_values_for_rollback(
                 backup_sql->append(tmp_buf);
 
                 err = mysql_get_field_string(field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index);
+                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
                 pkcount++;
             }
             field_node = LIST_GET_NEXT(link, field_node);
@@ -9269,7 +11556,7 @@ int mysql_generate_field_insert_values_for_rollback(
         while (field_node != NULL)
         {
             err = mysql_get_field_string(field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index);
+                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
             if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
                 backup_sql->append(",");
 
@@ -9287,7 +11574,7 @@ int mysql_generate_field_insert_values_for_rollback(
             sprintf(tmp_buf, "%s=", field_node->field_name);
             backup_sql->append(tmp_buf);
             err = mysql_get_field_string(field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index);
+                    backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
 
             if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
                 backup_sql->append(",");
@@ -9310,7 +11597,7 @@ int mysql_generate_field_insert_values_for_rollback(
                 backup_sql->append(tmp_buf);
 
                 err = mysql_get_field_string(field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index);
+                    backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
                 pkcount++;
             }
             field_node = LIST_GET_NEXT(link, field_node);
@@ -10008,7 +12295,7 @@ int mysql_backup_single_statement(
             {
                 //从当前语句BINLOG位置开始重试3次，如果3次都失败则退出
                 if (mysql_request_binlog_dump(mysql, sql_cache_node->start_binlog_file,
-                      sql_cache_node->start_binlog_pos))
+                      sql_cache_node->start_binlog_pos, 0))
                     goto error;
                 continue;
             }
@@ -10794,7 +13081,7 @@ int mysql_dump_binlog_from_first_statement(Master_info*   mi, MYSQL* mysql, sql_
         {
             mysql_get_master_version(mysql, mi);
             return mysql_request_binlog_dump(mysql,
-                    sql_cache_node->start_binlog_file, sql_cache_node->start_binlog_pos);
+                    sql_cache_node->start_binlog_file, sql_cache_node->start_binlog_pos, 0);
         }
 
         sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
@@ -10858,7 +13145,7 @@ int mysql_execute_commit(THD *thd)
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
                     if(mysql_backup_sql(thd, mi, mysql, sql_cache_node) && next_sql_cache_node)
                         mysql_request_binlog_dump(mysql, next_sql_cache_node->start_binlog_file,
-                          next_sql_cache_node->start_binlog_pos);
+                          next_sql_cache_node->start_binlog_pos, 0);
 
                     sql_cache_node = next_sql_cache_node;
                 }

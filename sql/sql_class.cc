@@ -917,7 +917,8 @@ THD::THD(bool enable_plugins)
    main_da(0, true),
    m_stmt_da(&main_da),
    audit_conn_inited(false),
-   backup_conn_inited(false)
+   backup_conn_inited(false),
+   transfer_conn_inited(false)
 {
   ulong tmp;
 
@@ -1166,6 +1167,56 @@ MYSQL* THD::get_backup_connection()
   }
 }
 
+bool THD::init_transfer_connection()
+{
+  MYSQL *mysql = &transfer_conn;
+  ulong client_flag= CLIENT_REMEMBER_OPTIONS ;
+  uint net_timeout= 3600*24;
+  bool reconnect= TRUE;
+
+  mysql_init(mysql);
+  mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
+  mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
+  mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
+  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+  mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
+  mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
+
+  if (mysql_real_connect(mysql, inception_datacenter_host, inception_datacenter_user,
+        inception_datacenter_password, NULL, inception_datacenter_port, NULL, client_flag) == 0)
+  {
+    my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+    mysql_close(mysql);
+    return FALSE;
+  }
+
+  transfer_conn_inited= TRUE;
+  return TRUE;
+}
+
+MYSQL* THD::get_transfer_connection()
+{
+  if (!transfer_conn_inited)
+  {
+    if (inception_datacenter_port== 0 ||
+        inception_datacenter_user== NULL || inception_datacenter_user[0] == '\0' || 
+        inception_datacenter_host== NULL || inception_datacenter_host[0] == '\0' || 
+        inception_datacenter_password== NULL || inception_datacenter_password[0] == '\0')
+    {
+      my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+      return NULL;
+    }
+    if (init_transfer_connection() == FALSE)
+      return NULL;
+    else
+      return &transfer_conn;
+  }
+  else
+  {
+    return &transfer_conn;
+  }
+}
+
 void THD::close_all_connections()
 {
   if (audit_conn_inited)
@@ -1178,6 +1229,11 @@ void THD::close_all_connections()
   {
     mysql_close(&backup_conn);
     backup_conn_inited= false;
+  }
+  if (transfer_conn_inited)
+  {
+    mysql_close(&transfer_conn);
+    transfer_conn_inited= false;
   }
 }
 

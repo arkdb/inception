@@ -170,17 +170,44 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMIT_LEN    strlen(INCEPTION_COMMIT)
 #define INCEPTION_BEGIN         "inception_magic_begin"
 
-#define INCEPTION_COMMAND_REMOTE_SHOW     1
-#define INCEPTION_COMMAND_LOCAL_SHOW      2
-#define INCEPTION_COMMAND_LOCAL_SET       3
-#define INCEPTION_COMMAND_LOCAL_SHOWALL   4
-#define INCEPTION_COMMAND_OSC_SHOW        5
-#define INCEPTION_COMMAND_OSC_ABORT       6
-#define INCEPTION_COMMAND_OSC_PROCESSLIST 7
-#define INCEPTION_COMMAND_PROCESSLIST     8
+#define INCEPTION_COMMAND_REMOTE_SHOW             1
+#define INCEPTION_COMMAND_LOCAL_SHOW              2
+#define INCEPTION_COMMAND_LOCAL_SET               3
+#define INCEPTION_COMMAND_LOCAL_SHOWALL           4
+#define INCEPTION_COMMAND_OSC_SHOW                5
+#define INCEPTION_COMMAND_OSC_ABORT               6
+#define INCEPTION_COMMAND_OSC_PROCESSLIST         7
+#define INCEPTION_COMMAND_PROCESSLIST             8
+#define INCEPTION_COMMAND_BINLOG_TRANSFER         9
+#define INCEPTION_COMMAND_SHOW_TRANSFER_STATUS    10
 
 #define LIST_PROCESS_HOST_LEN 64
 
+#define INCEPTION_BINLOG_DC_CREATE        1
+#define INCEPTION_BINLOG_INSTANCE_ADD     2
+#define INCEPTION_BINLOG_START_TRANSFER   3
+#define INCEPTION_BINLOG_SET_POSITION     4
+#define INCEPTION_BINLOG_RESET_TRANSFER   5
+#define INCEPTION_BINLOG_STOP_TRANSFER    6
+
+#define INCEPTION_TRANSFER_EIDNAME      "EID"
+#define INCEPTION_TRANSFER_TIDNAME      "TID"
+#define INCEPTION_TRANSFER_EIDENUM      1
+#define INCEPTION_TRANSFER_TIDENUM      2
+
+
+// typedef struct datacenter_struct datacenter_t;
+// struct datacenter_struct
+// {
+//     char    hostname[HOSTNAME_LENGTH + 1];
+//     int     mysql_port;
+//     char    username[USERNAME_CHAR_LENGTH + 1];
+//     char    password[MAX_PASSWORD_LENGTH+ 1];
+//     char    binlog_file[256 + 1];
+//     int     binlog_position;
+//     char    datacenter_name[FN_LEN+1];
+// };
+//
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
@@ -336,6 +363,51 @@ public:
     int   wait ();
 };
 
+typedef struct transfer_cache_struct transfer_cache_t;
+struct transfer_cache_struct
+{
+    char    hostname[HOSTNAME_LENGTH + 1];
+    int     mysql_port;
+    char    username[USERNAME_CHAR_LENGTH + 1];
+    char    password[MAX_PASSWORD_LENGTH+ 1];
+    char    binlog_file[256 + 1];
+    volatile int binlog_position;
+    char    datacenter_name[FN_LEN+1];
+
+    // datacenter_t*  datacenter;
+    str_t         errmsg;
+    //current binlog position
+    char          cbinlog_file[256 + 1];
+    volatile int  cbinlog_position;
+    struct tm*     stop_time;
+    struct tm     stop_time_space;
+    volatile int  thread_stage;
+
+    long          time_diff;
+    volatile int           transfer_on;
+    volatile int           abort_slave;
+    long clock_diff_with_master;
+    time_t last_master_timestamp;
+    time_t last_event_timestamp;
+    mysql_cond_t stop_cond;
+    mysql_mutex_t run_lock;
+    THD* thd;
+    LIST_NODE_T(transfer_cache_t) link;
+
+    // slave attributes
+    // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
+    int valid;
+    char    current_time[FN_LEN+1];
+    //use to record the slaves's binlog positions, to wirte the ha info
+    LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+};
+
+typedef struct transfer_struct transfer_t;
+struct transfer_struct 
+{
+    LIST_BASE_NODE_T(transfer_cache_t) transfer_lst;
+};
+
 typedef struct osc_percent_cache_struct osc_percent_cache_t;
 struct osc_percent_cache_struct 
 {
@@ -473,7 +545,9 @@ struct sql_statistic_struct
 };
 
 extern osc_cache_t global_osc_cache;
+extern transfer_t global_transfer_cache;
 extern mysql_mutex_t osc_mutex;
+extern mysql_mutex_t transfer_mutex;
 
 extern sinfo_t global_source;
 extern char** isql_option;
@@ -3224,6 +3298,9 @@ public:
   /* scramble - random string sent to client on handshake */
   char         scramble[SCRAMBLE_LENGTH+1];
   //add by wanghuai
+  longlong transaction_id;
+  longlong event_id;
+  THD* query_thd;
   sinfo_space_t* thd_sinfo;
   int timestamp_count;//timestamp column count in one table
   uint have_error_before;
@@ -4306,6 +4383,7 @@ private:
 public:
   MYSQL* get_audit_connection();
   MYSQL* get_backup_connection();
+  MYSQL* get_transfer_connection();
   void close_all_connections();
 
 private:
@@ -4321,7 +4399,10 @@ private:
 
   bool init_backup_connection();
   bool backup_conn_inited;
+  bool init_transfer_connection();
+  bool transfer_conn_inited;
   MYSQL backup_conn;
+  MYSQL transfer_conn;
 };
 
 

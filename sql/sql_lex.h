@@ -2354,6 +2354,7 @@ struct LEX: public Query_tables_list
   enum Foreign_key::fk_option fk_delete_opt;
   uint slave_thd_opt, start_transaction_opt;
   uint inception_cmd_type;
+  uint inception_cmd_sub_type;
   int nest_level;
   uint8 describe;
   /*
