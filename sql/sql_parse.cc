@@ -4639,11 +4639,11 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
     create_sql = str_append(create_sql, "instance_name varchar(64) comment 'the source instance of this event', ");
     create_sql = str_append(create_sql, "optype varchar(64) DEFAULT NULL COMMENT 'operation type, include insert, update...',");
-    create_sql = str_append(create_sql, "data text comment 'binlog transfer data, format json', ");
+    create_sql = str_append(create_sql, "data longtext comment 'binlog transfer data, format json', ");
     create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`), ");
     create_sql = str_append(create_sql, "KEY `idx_dbtablename` (`dbname`,`tablename`), ");
     create_sql = str_append(create_sql, "KEY `idx_create_time` (`create_time`))");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'binlog transfer data'");
+    create_sql = str_append(create_sql, "engine innodb charset utf8mb4 comment 'binlog transfer data'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
@@ -4825,7 +4825,7 @@ MYSQL* inception_init_binlog_connection(
     mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
-    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
     mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
     // mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
@@ -4856,7 +4856,7 @@ MYSQL* inception_get_connection(
     mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
-    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
     mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
     mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
@@ -5068,6 +5068,11 @@ longlong inception_transfer_next_sequence(
                 trxid = strtoll(source_row[1], NULL, 10);
             source_row = mysql_fetch_row(source_res);
         }
+    }
+    else
+    {
+        eventid = thd->event_id;
+        trxid = thd->transaction_id;
     }
 
     if (type == INCEPTION_TRANSFER_EIDENUM)
@@ -6120,17 +6125,17 @@ int inception_transfer_start_replicate(
             sprintf (tmp, "SHOW MASTER STATUS");
             if (mysql_real_query(mysql, tmp, strlen(tmp)))
             {
-                mysql_close(mysql);
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
                 mysql_mutex_unlock(&transfer_mutex);
+                mysql_close(mysql);
                 return true;
             }
 
             if ((source_res1 = mysql_store_result(mysql)) == NULL)
             {
-                mysql_close(mysql);
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
                 mysql_mutex_unlock(&transfer_mutex);
+                mysql_close(mysql);
                 return true;
             }
             mysql_close(mysql);
@@ -11234,16 +11239,24 @@ mysql_dup_char_with_escape(
     char* p = src;
     while (*src)
     {
+        //"
         if (*src == escape_char && (p == src || *(src-1)!='\\'))
         {
             *dest=escape_add;
             *(++dest) = escape_add;
             *(++dest) = escape_char;
         }
-
-        //对于存在转义的情况，则不做替换
-        if (*src == chr && (p == src || *(src-1) != '\\'))
+        //if the curr is \n or \r\n, then replace
+        else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
         {
+            *dest='<';
+            *(++dest) = 'b';
+            *(++dest) = 'r';
+            *(++dest) = '/';
+            *(++dest) = '>';
+        }
+        else if (*src == chr && (p == src || *(src-1) != '\\'))
+        {//'
             *dest=chr;
             *(++dest) = chr;
         }

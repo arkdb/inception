@@ -1072,7 +1072,7 @@ bool THD::init_audit_connection()
   mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
-  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
   mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
   mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
@@ -1129,7 +1129,7 @@ bool THD::init_backup_connection()
   mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
-  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
   mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
   mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
@@ -1178,7 +1178,7 @@ bool THD::init_transfer_connection()
   mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
-  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, system_charset_info->csname);
+  mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
   mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
   mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
