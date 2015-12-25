@@ -11312,6 +11312,16 @@ mysql_dup_char_with_escape(
             *(++dest) = '/';
             *(++dest) = '>';
         }
+	else if ((*src=='\\' && *(src+1) == 'n'))
+	{
+	    //if the string is \n explictly, example aaaa \\n aaaaa
+	    *dest='<';
+	    *(++dest) = 'b';
+	    *(++dest) = 'r';
+	    *(++dest) = '/';
+	    *(++dest) = '>';
+	    src++;//omit the n after "\"
+	}
         else if (*src == chr && (p == src || *(src-1) != '\\'))
         {//'
             *dest=chr;
