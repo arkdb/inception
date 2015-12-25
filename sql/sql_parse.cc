@@ -5052,11 +5052,9 @@ longlong inception_transfer_next_sequence(
             return NULL;
         }
 
-        if (mysql_real_query(mysql, sql, strlen(sql)))
-            return true;
-
-        if ((source_res = mysql_store_result(mysql)) == NULL)
-            return true;
+        if (mysql_real_query(mysql, sql, strlen(sql)) ||
+            (source_res = mysql_store_result(mysql))
+            return NULL;
 
         source_row = mysql_fetch_row(source_res);
         //check the count of master node, if not 1, then report invalid
@@ -5084,12 +5082,18 @@ longlong inception_transfer_next_sequence(
             if (thd->event_id % inception_transfer_event_sequence_sync==0 ||
                 thd->event_id + inception_transfer_event_sequence_sync > eventid)
             {
+                mysql = thd->get_transfer_connection();
+                if (mysql == NULL)
+                {
+                    my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+                    return NULL;
+                }
                 thd->event_id = eventid;
                 sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
                     datacenter_name, inception_transfer_event_sequence_sync + 
                     thd->event_id, INCEPTION_TRANSFER_EIDNAME);
                 if (mysql_real_query(mysql, sql, strlen(sql)))
-                    return true;
+                    return NULL;
             }
         }
         sequence = thd->event_id = thd->event_id + 1;
@@ -5103,12 +5107,18 @@ longlong inception_transfer_next_sequence(
             if (thd->transaction_id % inception_transfer_trx_sequence_sync==0 ||
                 thd->transaction_id + inception_transfer_trx_sequence_sync > trxid)
             {
+                mysql = thd->get_transfer_connection();
+                if (mysql == NULL)
+                {
+                    my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+                    return NULL;
+                }
                 thd->transaction_id = trxid;
                 sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
                     datacenter_name, inception_transfer_trx_sequence_sync + 
                     thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
                 if (mysql_real_query(mysql, sql, strlen(sql)))
-                    return true;
+                    return NULL;
             }
         }
         sequence = thd->transaction_id = thd->transaction_id + 1;
@@ -5822,6 +5832,28 @@ pthread_handler_t inception_transfer_delete(void* arg)
     return NULL;
 }
 
+int inception_reset_transfer_position(THD* thd, char* datacenter_name)
+{
+    MYSQL* mysql;
+    char tmp[1024];
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return true;
+    }
+
+    sprintf(tmp, "update `%s`.`instances` set binlog_file='', binlog_position=0 \
+        where instance_role = 'master'", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        return true;
+    }
+
+    return false;
+}
+
 pthread_handler_t inception_transfer_thread(void* arg)
 {
     pthread_t threadid;
@@ -5870,6 +5902,9 @@ pthread_handler_t inception_transfer_thread(void* arg)
     mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
     datacenter->abort_slave = false;
     datacenter->transfer_on = 1;
+
+    if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
+        goto error; 
 
     //locked in inception_transfer_start_replicate
     mysql_mutex_unlock(&transfer_mutex);
@@ -6255,17 +6290,7 @@ inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
         return true;
     }
 
-    mysql = thd->get_transfer_connection();
-    if (mysql == NULL)
-    {
-        mysql_mutex_unlock(&transfer_mutex); 
-        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-        return NULL;
-    }
-
-    sprintf(tmp, "update `%s`.`instances` set binlog_file='', binlog_position=0 \
-        where instance_role = 'master'", datacenter_name);
-    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    if(inception_reset_transfer_position(thd, datacenter_name))
     {
         mysql_mutex_unlock(&transfer_mutex); 
         return true;
