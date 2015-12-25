@@ -5023,7 +5023,7 @@ int inception_transfer_generate_write_record(
     DBUG_RETURN(false);
 }
 
-longlong inception_transfer_next_sequence(
+int inception_transfer_next_sequence(
     Master_info* mi,
     char* datacenter_name,
     int type)
@@ -5048,13 +5048,16 @@ longlong inception_transfer_next_sequence(
         mysql = thd->get_transfer_connection();
         if (mysql == NULL)
         {
-            my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-            return NULL;
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+            return true;
         }
 
         if (mysql_real_query(mysql, sql, strlen(sql)) ||
-            (source_res = mysql_store_result(mysql))
-            return NULL;
+            (source_res = mysql_store_result(mysql)) == NULL)
+        {
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+            return true;
+        }
 
         source_row = mysql_fetch_row(source_res);
         //check the count of master node, if not 1, then report invalid
@@ -5085,18 +5088,21 @@ longlong inception_transfer_next_sequence(
                 mysql = thd->get_transfer_connection();
                 if (mysql == NULL)
                 {
-                    my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-                    return NULL;
+                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                    return true;
                 }
                 thd->event_id = eventid;
                 sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
                     datacenter_name, inception_transfer_event_sequence_sync + 
                     thd->event_id, INCEPTION_TRANSFER_EIDNAME);
                 if (mysql_real_query(mysql, sql, strlen(sql)))
-                    return NULL;
+                {
+                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                    return true;
+                }
             }
         }
-        sequence = thd->event_id = thd->event_id + 1;
+        thd->event_id = thd->event_id + 1;
     }
     else if (type == INCEPTION_TRANSFER_TIDENUM)
     {
@@ -5110,23 +5116,29 @@ longlong inception_transfer_next_sequence(
                 mysql = thd->get_transfer_connection();
                 if (mysql == NULL)
                 {
-                    my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-                    return NULL;
+                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                    return true;
                 }
                 thd->transaction_id = trxid;
                 sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
                     datacenter_name, inception_transfer_trx_sequence_sync + 
                     thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
                 if (mysql_real_query(mysql, sql, strlen(sql)))
-                    return NULL;
+                {
+                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                    return true;
+                }
             }
         }
-        sequence = thd->transaction_id = thd->transaction_id + 1;
+
+        thd->transaction_id = thd->transaction_id + 1;
     }
     else
-        sequence = 0;
+    {
+        sql_print_information("get next sequence error, type not in(EID, TID)");
+    }
 
-    return sequence;
+    return false;
 }
 
 int inception_transfer_write_row(
@@ -5144,8 +5156,9 @@ int inception_transfer_write_row(
 
     do
     {
-        mi->thd->event_id = inception_transfer_next_sequence(mi, 
-            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+        if(inception_transfer_next_sequence(mi, 
+            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+            DBUG_RETURN(true);
 
         if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
@@ -5371,8 +5384,9 @@ inception_transfer_query_event(
 
     if (strcasecmp(query_log->query, "BEGIN") == 0)
     {
-        thd->transaction_id=inception_transfer_next_sequence(mi, 
-            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM);
+        if(inception_transfer_next_sequence(mi, 
+            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
+            DBUG_RETURN(true);
         DBUG_RETURN(false);
     }
 
@@ -5384,8 +5398,10 @@ inception_transfer_query_event(
         DBUG_RETURN(false);
     }
 
-    mi->thd->event_id = inception_transfer_next_sequence(mi, 
-        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+    if(inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+        DBUG_RETURN(true);
+
     inception_transfer_sql_parse(mi, ev);
     DBUG_RETURN(false);
 }
@@ -5542,8 +5558,9 @@ inception_transfer_write_Xid(
     backup_sql = &backup_sql_space;
 
     //still the privise trx, but is another event
-    mi->thd->event_id = inception_transfer_next_sequence(mi, 
-        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM);
+    if(inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+        return true;
     backup_sql->append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
@@ -5906,8 +5923,6 @@ pthread_handler_t inception_transfer_thread(void* arg)
     if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
         goto error; 
 
-    //locked in inception_transfer_start_replicate
-    mysql_mutex_unlock(&transfer_mutex);
     if (mysql_thread_create(0, &threadid, &connection_attrib,
         inception_transfer_delete, (void*)datacenter))
     {
@@ -6205,12 +6220,14 @@ int inception_transfer_start_replicate(
         datacenter->cbinlog_position = datacenter->binlog_position;
     }
 
+    datacenter->transfer_on = TRUE;
+    mysql_mutex_unlock(&transfer_mutex);
     //start replicate
     if (mysql_thread_create(0, &threadid, &connection_attrib,
         inception_transfer_thread, (void*)datacenter))
     {
+        datacenter->transfer_on = FALSE;
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
-        mysql_mutex_unlock(&transfer_mutex);
         return true;
     }
 
@@ -6261,6 +6278,7 @@ int inception_transfer_set_instance_position(
         return true;
     }
 
+    LIST_REMOVE(link, global_transfer_cache.transfer_lst, transfer_node);
     mysql_mutex_unlock(&transfer_mutex); 
 
     return false;
@@ -10208,9 +10226,17 @@ int inception_transfer_execute_store(
 
     if (mysql_real_query(mysql, sql, strlen(sql)))
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
-        DBUG_RETURN(true);
+        //if failed, execute the rollback to release locks, otherwise other connection can not
+        //continue to execute dml to this table
+        sql_print_warning("insert the transfer_data failed: %s", mysql_error(mysql));
+        if (mysql_real_query(mysql, "ROLLBACK", strlen("ROLLBACK")))
+        {
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+            inception_transfer_set_errmsg(thd, mi->datacenter);
+            DBUG_RETURN(true);
+        }
+        sql_print_warning("insert the transfer_data failed, rollback " 
+            "this transaction, omit this error");
     }
 
     if (trx_flag)
@@ -11266,6 +11292,12 @@ mysql_dup_char_with_escape(
     {
         //"
         if (*src == escape_char && (p == src || *(src-1)!='\\'))
+        {
+            *dest=escape_add;
+            *(++dest) = escape_add;
+            *(++dest) = escape_char;
+        }
+        else if (*src == escape_char && (src > p && *(src-1)=='\\'))
         {
             *dest=escape_add;
             *(++dest) = escape_add;
