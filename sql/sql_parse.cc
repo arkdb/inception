@@ -5082,8 +5082,7 @@ int inception_transfer_next_sequence(
         {
             if (eventid > thd->event_id)
                 thd->event_id = eventid;
-            if (thd->event_id % inception_transfer_event_sequence_sync==0 ||
-                thd->event_id + inception_transfer_event_sequence_sync > eventid)
+            if (thd->event_id % inception_transfer_event_sequence_sync==0)
             {
                 mysql = thd->get_transfer_connection();
                 if (mysql == NULL)
@@ -5110,8 +5109,7 @@ int inception_transfer_next_sequence(
         {
             if (trxid > thd->transaction_id)
                 thd->transaction_id = trxid;
-            if (thd->transaction_id % inception_transfer_trx_sequence_sync==0 ||
-                thd->transaction_id + inception_transfer_trx_sequence_sync > trxid)
+            if (thd->transaction_id % inception_transfer_trx_sequence_sync==0)
             {
                 mysql = thd->get_transfer_connection();
                 if (mysql == NULL)
@@ -5156,6 +5154,7 @@ int inception_transfer_write_row(
 
     do
     {
+        backup_sql.truncate();
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
             DBUG_RETURN(true);
@@ -11293,29 +11292,26 @@ mysql_dup_char_with_escape(
         //"
         if (*src == escape_char && (p == src || *(src-1)!='\\'))
         {
-            *dest=escape_add;
-            *(++dest) = escape_add;
-            *(++dest) = escape_char;
+            *dest=escape_add; *(++dest) = escape_add; *(++dest) = escape_char;
         }
         else if (*src == escape_char && (src > p && *(src-1)=='\\'))
         {
-            *dest=escape_add;
-            *(++dest) = escape_add;
-            *(++dest) = escape_char;
+            *dest=escape_add; *(++dest) = escape_add; *(++dest) = escape_char;
         }
         //if the curr is \n or \r\n, then replace
         else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
         {
-            *dest='<';
-            *(++dest) = 'b';
-            *(++dest) = 'r';
-            *(++dest) = '/';
-            *(++dest) = '>';
+            *dest='<'; *(++dest) = 'b'; *(++dest) = 'r'; *(++dest) = '/'; *(++dest) = '>';
+        }
+        else if ((*src=='\\' && *(src+1) == 'n'))
+        {
+            //if the string is \n explictly, example aaaa \\n aaaaa
+            *dest='<'; *(++dest) = 'b'; *(++dest) = 'r'; *(++dest) = '/'; *(++dest) = '>';
+            src++;//omit the n after "\"
         }
         else if (*src == chr && (p == src || *(src-1) != '\\'))
         {//'
-            *dest=chr;
-            *(++dest) = chr;
+            *dest=chr; *(++dest) = chr;
         }
         else
         {
@@ -11325,8 +11321,8 @@ mysql_dup_char_with_escape(
         dest++;
         src++;
     }
-
 }
+
 int mysql_get_field_string(
     Field* field, 
     String* backupsql, 
@@ -11383,7 +11379,6 @@ int mysql_get_field_string(
                     backupsql->append("\'");
                 res=field->val_str(&buffer);
                 dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-                memset(dupcharfield, 0, res->length() * 2 + 1);
                 if (!doublequtor_escape)
                     mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
                 else
