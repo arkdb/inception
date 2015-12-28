@@ -240,6 +240,7 @@ int mysql_unpack_row(
     uchar const *const row_end_ptr);
 bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
 ulong mysql_read_event_for_transfer(MYSQL* mysql);
+void free_tables_to_lock(Master_info*	mi);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -4808,20 +4809,19 @@ error:
 }
 
 MYSQL* inception_init_binlog_connection(
-    MYSQL* mysql, 
     char* hostname, 
     int port, 
     char* username, 
     char* password
 )
 {
+    MYSQL* mysql = NULL;
     ulong client_flag= CLIENT_REMEMBER_OPTIONS |CLIENT_COMPRESS;
     //在超时之后，外面会自动重连
     uint net_timeout= TRANSFER_SLAVE_NET_TIMEOUT;
     // bool reconnect= TRUE;
 
-    end_server(mysql);
-    mysql_init(mysql);
+    mysql = mysql_init(mysql);
     mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
@@ -4923,12 +4923,17 @@ inception_transfer_table_map(
     table_info_t*   table_info;
     int err;
 
-    err = mysql_parse_table_map_log_event(mi, ev);
-
     tab_map_ev = (Table_map_log_event*)ev;
+    err = mysql_parse_table_map_log_event(mi, ev);
+    if (err)
+        sql_print_error("transfer parse table map event failed, db: %s, table: %s", 
+		(char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
     table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
+    if (!table_info)
+        sql_print_error("transfer load table failed, db: %s, table: %s", 
+		(char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
     mi->table_info = table_info;
 
@@ -5740,6 +5745,8 @@ int inception_transfer_failover(Master_info* mi)
             (source_res = mysql_store_result(mysql)) == NULL ||
             (source_row = mysql_fetch_row(source_res)) == NULL)
         {
+            sql_print_information("failover can not find the appropriate slave position, " 
+		"last timestamp is %d", (int)datacenter->last_event_timestamp);
             ret = true;
             goto error;
         }
@@ -5774,10 +5781,8 @@ int inception_transfer_failover(Master_info* mi)
     {
         sql_print_information("No good slave to failover, transfer interruptted for datacenter %s",
             datacenter->datacenter_name);
-        {
-            ret = true;
-            goto error;
-        }
+    	ret = true;
+    	goto error;
     }
 
     sql_print_information("update the new instance(%s:%d) to master for datacenter %s", 
@@ -5817,14 +5822,14 @@ pthread_handler_t inception_transfer_delete(void* arg)
     setup_connection_thread_globals(thd);
 
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days*10);
+        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days);
     sprintf(sql1, "DELETE FROM `%s`.slave_positions where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days*10);
+        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days);
     sprintf(sql2, "DELETE FROM `%s`.master_positions where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld SECOND) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days*10);
+        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_days);
     while (datacenter->transfer_on)
     {
         mysql = thd->get_transfer_connection();
@@ -5877,7 +5882,6 @@ pthread_handler_t inception_transfer_thread(void* arg)
     Master_info* mi;
     // datacenter_t* datacenter;
     transfer_cache_t* datacenter;
-    MYSQL mysql_space;
     MYSQL* mysql = NULL;
     char*   event_buf;
     Log_event*  evlog;
@@ -5930,10 +5934,10 @@ pthread_handler_t inception_transfer_thread(void* arg)
     }
 
 reconnect:
+    mysql_close(mysql);
     datacenter = mi->datacenter;
-    mysql = inception_init_binlog_connection(&mysql_space, 
-        datacenter->hostname, datacenter->mysql_port, 
-        datacenter->username, datacenter->password);
+    mysql = inception_init_binlog_connection(datacenter->hostname, 
+	datacenter->mysql_port, datacenter->username, datacenter->password);
     if (mysql == NULL)
     {
         if (!inception_transfer_killed(thd, mi) && retrycount++ < 3)
@@ -5946,6 +5950,8 @@ reconnect:
         thd->clear_error();
         my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
         inception_transfer_set_errmsg(thd, mi->datacenter);
+        sql_print_information("connect master failed, hostname: %s, port: %d", 
+		datacenter->hostname, datacenter->mysql_port);
         goto error; 
     }
 
@@ -5961,6 +5967,7 @@ reconnect:
         if (failover)
             goto failover;
         inception_transfer_set_errmsg(thd, mi->datacenter);
+        sql_print_information("connect master failed, posible at get version, register slave or dump");
         goto error; 
     }
 
@@ -5998,16 +6005,21 @@ failover:
             if (inception_transfer_failover(mi))
             {
                 sql_print_information("failover the master failed");
+            	inception_transfer_set_errmsg(thd, mi->datacenter);
                 goto error;
             }
             else
             {
                 //new master position
+        	retrycount = 0;
+        	failover = 0;
+		free_tables_to_lock(mi);
                 binlog_file = mi->datacenter->binlog_file;
                 binlog_position = mi->datacenter->binlog_position;
                 sql_print_information("failover the master successfully, new master is: %s:%d", 
                     mi->datacenter->hostname, mi->datacenter->mysql_port);
-                sql_print_information("Forcing to reconnect new master");
+                sql_print_information("Forcing to reconnect new master, dump position is: %s:%d", 
+	 	    binlog_file, binlog_position);
                 goto reconnect;
             }
         }
@@ -6015,13 +6027,21 @@ failover:
         retrycount = 0;
         datacenter->thread_stage = transfer_read_events;
         if (mysql_process_event(mi, event_buf, event_len, &evlog) || evlog == NULL)
+        {
+            sql_print_information("read the event error, last "
+		"position is: %s:%d", binlog_file, binlog_position);
+            inception_transfer_set_errmsg(thd, mi->datacenter);
             goto error;
+        }
         binlog_file = (char*)mi->get_master_log_name();
         binlog_position = mi->get_master_log_pos();
         datacenter->last_master_timestamp = evlog->get_time() + evlog->exec_time;
         datacenter->last_event_timestamp = datacenter->last_master_timestamp;
         if (inception_transfer_binlog_process(mi, evlog, datacenter))
         {
+            sql_print_information("process the event error, event " 
+		"position is: %s:%d", binlog_file, binlog_position);
+            inception_transfer_set_errmsg(thd, mi->datacenter);
             delete evlog;
             goto error; 
         }
@@ -10210,6 +10230,7 @@ int inception_transfer_execute_store(
     {
         my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
         inception_transfer_set_errmsg(thd, mi->datacenter);
+       	sql_print_warning("write the datacenter failed, get connection failed");
         DBUG_RETURN(TRUE);
     }
 
@@ -10219,6 +10240,7 @@ int inception_transfer_execute_store(
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
+       	    sql_print_warning("write the datacenter failed, begin transaction failed");
             DBUG_RETURN(true);
         }
     }
@@ -10228,14 +10250,15 @@ int inception_transfer_execute_store(
         //if failed, execute the rollback to release locks, otherwise other connection can not
         //continue to execute dml to this table
         sql_print_warning("insert the transfer_data failed: %s", mysql_error(mysql));
+        sql_print_warning("rollback sql: %s", sql);
+        sql_print_warning("insert the transfer_data failed, rollback " 
+            "this transaction, omit this error");
         if (mysql_real_query(mysql, "ROLLBACK", strlen("ROLLBACK")))
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
             DBUG_RETURN(true);
         }
-        sql_print_warning("insert the transfer_data failed, rollback " 
-            "this transaction, omit this error");
     }
 
     if (trx_flag)
@@ -10251,12 +10274,14 @@ int inception_transfer_execute_store(
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
+       	    sql_print_warning("write the datacenter failed, insert failed");
             DBUG_RETURN(true);
         }
         if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
+       	    sql_print_warning("write the datacenter failed, commit failed");
             DBUG_RETURN(true);
         }
     }
@@ -11112,7 +11137,7 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
     for (RPL_TABLE_LIST *ptr= mi->tables_to_lock ; ptr != NULL ; 
         ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global))
     {
-        if (strcasecmp(ptr->db, mi->table_info->db_name) == 0
+        if (mi->table_info && strcasecmp(ptr->db, mi->table_info->db_name) == 0
           && strcasecmp(ptr->table_name , mi->table_info->table_name) == 0)
         {
             TABLE *conv_table = NULL;
@@ -11123,6 +11148,8 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
                 !ptr->m_tabledef.compatible_with(mi->thd, NULL, 
                 mi->table_info, &conv_table, mi->get_lock_tables_mem_root()))
             {
+		sql_print_information("convert table failed, db: %s, table: %s",
+			ptr->db, ptr->table_name);
                 DBUG_RETURN(FALSE);
             }
 
@@ -11134,6 +11161,9 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
         }
     }
 
+    if (mi->table_info)
+	sql_print_information("can not find binlog table, db: %s, table: %s",
+		mi->table_info->db_name, mi->table_info->table_name);
     DBUG_RETURN(FALSE);
 }
 
@@ -11215,6 +11245,7 @@ mysql_unpack_row(
         }
         else
         {
+            sql_print_warning("unpack rows event failed, ER_BINLOG_CORRUPTED");
             DBUG_RETURN(ER_BINLOG_CORRUPTED);
         }
 

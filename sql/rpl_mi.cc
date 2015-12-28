@@ -186,6 +186,7 @@ void free_tables_to_lock(Master_info*	mi)
   }
   free_root(&mi->lock_tables_mem_root, MYF(0));
   DBUG_ASSERT(tables_to_lock == NULL && tables_to_lock_count == 0);
+  mi->tables_to_lock = NULL;
   DBUG_VOID_RETURN;
 }
 
