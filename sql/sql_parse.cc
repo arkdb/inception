@@ -5159,24 +5159,36 @@ int inception_transfer_write_row(
 
     do
     {
-        backup_sql.truncate();
+        backup_sql.free();
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
-            DBUG_RETURN(true);
+        {
+            error=true;
+            goto error;
+        }
 
         if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
-            DBUG_RETURN(true);
+        {
+            error=true;
+            goto error;
+        }
 
         if (inception_transfer_generate_write_record(mi, write_ev, 
               optype, &backup_sql, mi->datacenter))
-            DBUG_RETURN(true);
+        {
+            error=true;
+            goto error;
+        }
 
         if (optype != SQLCOM_UPDATE)
         {
             backup_sql.append("}');");
             if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
-                DBUG_RETURN(true);
+            {
+                error=true;
+                goto error;
+            }
         }
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
@@ -5185,21 +5197,29 @@ int inception_transfer_write_row(
         {
             if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
                 &write_ev->m_curr_row_end, write_ev->m_rows_end))
-                DBUG_RETURN(true);
+            {
+                error=true;
+                goto error;
+            }
 
             backup_sql.append(",");
             inception_transfer_make_one_row(mi, SQLCOM_UPDATE+1000, &backup_sql);
 
             backup_sql.append("}');");
             if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
-                DBUG_RETURN(true);
+            {
+                error=true;
+                goto error;
+            }
 
             write_ev->m_curr_row = write_ev->m_curr_row_end;
         }
 
     }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
-    DBUG_RETURN(false);
+error:
+    backup_sql.free();
+    DBUG_RETURN(error);
 }
 
 int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_cache_t* datacenter)
@@ -5256,8 +5276,12 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     backup_sql->append(")");
 
     if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
+    {
+        backup_sql->free();
         DBUG_RETURN(true);
+    }
 
+    backup_sql->free();
     DBUG_RETURN(false);
 }
 
@@ -5564,7 +5588,10 @@ inception_transfer_write_Xid(
     //still the privise trx, but is another event
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+    {
+        backup_sql->free();
         return true;
+    }
     backup_sql->append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
@@ -5573,12 +5600,16 @@ inception_transfer_write_Xid(
         ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
     backup_sql->append(tmp_buf);
     if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
+    {
+        backup_sql->free();
         return true;
+    }
     mi->datacenter->cbinlog_position = ev->log_pos;
     strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
 
     inception_transfer_get_slaves_position(mi);
 
+    backup_sql->free();
     return false;
 }
 
@@ -5937,7 +5968,7 @@ reconnect:
     mysql_close(mysql);
     datacenter = mi->datacenter;
     mysql = inception_init_binlog_connection(datacenter->hostname, 
-	datacenter->mysql_port, datacenter->username, datacenter->password);
+	          datacenter->mysql_port, datacenter->username, datacenter->password);
     if (mysql == NULL)
     {
         if (!inception_transfer_killed(thd, mi) && retrycount++ < 3)
@@ -5951,7 +5982,7 @@ reconnect:
         my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
         inception_transfer_set_errmsg(thd, mi->datacenter);
         sql_print_information("connect master failed, hostname: %s, port: %d", 
-		datacenter->hostname, datacenter->mysql_port);
+		        datacenter->hostname, datacenter->mysql_port);
         goto error; 
     }
 
@@ -5967,7 +5998,8 @@ reconnect:
         if (failover)
             goto failover;
         inception_transfer_set_errmsg(thd, mi->datacenter);
-        sql_print_information("connect master failed, posible at get version, register slave or dump");
+        sql_print_information("connect master failed, posible at get version, " 
+            "register slave or dump");
         goto error; 
     }
 
@@ -6005,21 +6037,21 @@ failover:
             if (inception_transfer_failover(mi))
             {
                 sql_print_information("failover the master failed");
-            	inception_transfer_set_errmsg(thd, mi->datacenter);
+            	  inception_transfer_set_errmsg(thd, mi->datacenter);
                 goto error;
             }
             else
             {
                 //new master position
-        	retrycount = 0;
-        	failover = 0;
-		free_tables_to_lock(mi);
+                retrycount = 0;
+                failover = 0;
+                free_tables_to_lock(mi);
                 binlog_file = mi->datacenter->binlog_file;
                 binlog_position = mi->datacenter->binlog_position;
                 sql_print_information("failover the master successfully, new master is: %s:%d", 
                     mi->datacenter->hostname, mi->datacenter->mysql_port);
                 sql_print_information("Forcing to reconnect new master, dump position is: %s:%d", 
-	 	    binlog_file, binlog_position);
+                    binlog_file, binlog_position);
                 goto reconnect;
             }
         }
@@ -6029,7 +6061,7 @@ failover:
         if (mysql_process_event(mi, event_buf, event_len, &evlog) || evlog == NULL)
         {
             sql_print_information("read the event error, last "
-		"position is: %s:%d", binlog_file, binlog_position);
+		            "position is: %s:%d", binlog_file, binlog_position);
             inception_transfer_set_errmsg(thd, mi->datacenter);
             goto error;
         }
@@ -6040,7 +6072,7 @@ failover:
         if (inception_transfer_binlog_process(mi, evlog, datacenter))
         {
             sql_print_information("process the event error, event " 
-		"position is: %s:%d", binlog_file, binlog_position);
+		            "position is: %s:%d", binlog_file, binlog_position);
             inception_transfer_set_errmsg(thd, mi->datacenter);
             delete evlog;
             goto error; 
@@ -10275,6 +10307,7 @@ int inception_transfer_execute_store(
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
        	    sql_print_warning("write the datacenter failed, insert failed");
+            backup_sql.free();
             DBUG_RETURN(true);
         }
         if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
@@ -10282,10 +10315,12 @@ int inception_transfer_execute_store(
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             inception_transfer_set_errmsg(thd, mi->datacenter);
        	    sql_print_warning("write the datacenter failed, commit failed");
+            backup_sql.free();
             DBUG_RETURN(true);
         }
     }
 
+    backup_sql.free();
     DBUG_RETURN(false);
 }
 
