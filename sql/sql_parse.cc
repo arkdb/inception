@@ -4184,6 +4184,7 @@ inception_transfer_load_datacenter(
     datacenter->mysql_port = instance_port;
     datacenter->thread_stage = transfer_not_start;
     strcpy(datacenter->datacenter_name, datacenter_name);
+    strcpy(datacenter->instance_name, instance_name);
     str_init(&datacenter->errmsg);
     datacenter->stop_time = NULL;
     LIST_INIT(datacenter->slave_lst);
@@ -4327,6 +4328,7 @@ int mysql_master_transfer_status(
     transfer_cache_t* slave_dc; 
 
     field_list.push_back(new Item_empty_string("Datacenter_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Instance_Name", FN_REFLEN));
     field_list.push_back(new Item_empty_string("Master_Host", FN_REFLEN));
     field_list.push_back(new Item_return_int("Master_Port", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Binlog_File", FN_REFLEN));
@@ -4357,6 +4359,7 @@ int mysql_master_transfer_status(
 
     protocol->prepare_for_resend();
     protocol->store(osc_percent_node->datacenter_name, system_charset_info);
+    protocol->store(osc_percent_node->instance_name, system_charset_info);
     protocol->store(osc_percent_node->hostname, system_charset_info);
     protocol->store(osc_percent_node->mysql_port);
     protocol->store(osc_percent_node->cbinlog_file, system_charset_info);
@@ -4779,7 +4782,7 @@ int inception_transfer_add_instance(
 
     if (datacenter) 
     {
-        if (master_flag==1)
+        if (master_flag==1 || !strcasecmp(datacenter->instance_name, instance_name))
         {
             my_error(ER_INSTANCE_EXISTED, MYF(0), ip,port, instance_name);
             goto error;
@@ -4789,7 +4792,8 @@ int inception_transfer_add_instance(
             slave = LIST_GET_FIRST(datacenter->slave_lst); 
             while (slave)
             {
-                if (slave->mysql_port == port && !strcasecmp(slave->hostname, ip))
+                if ((slave->mysql_port == port && !strcasecmp(slave->hostname, ip)) ||
+                    !strcasecmp(slave->instance_name, instance_name))
                 {
                     my_error(ER_INSTANCE_EXISTED, MYF(0), ip,port, instance_name);
                     goto error;
@@ -6411,9 +6415,10 @@ inception_transfer_start_stop_slave(THD* thd, char* datacenter_name, char* slave
     {
         if (!strcasecmp(slave->instance_name, slave_name))
         {
-            mysql_mutex_lock(&slave->run_lock); 
+            mysql_mutex_lock(&transfer_node->run_lock); 
+            str_truncate_0(&slave->errmsg);
             slave->valid = on;
-            mysql_mutex_unlock(&slave->run_lock); 
+            mysql_mutex_unlock(&transfer_node->run_lock); 
             break;
         }
         
@@ -10310,12 +10315,13 @@ int inception_transfer_execute_store_simple(
 )
 {
     MYSQL*  mysql;
-    String backup_sql;
+    str_t * backup_sql;
     THD*  thd;
     char tmp_buf[1024];
 
     DBUG_ENTER("inception_transfer_execute_store_simple");
 
+    backup_sql = &mi->datacenter->sql_buffer;
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
     if ((mysql= thd->get_transfer_connection()) == NULL)
@@ -10337,19 +10343,19 @@ int inception_transfer_execute_store_simple(
         DBUG_RETURN(TRUE);
     }
 
-    backup_sql.truncate();
-    backup_sql.append("INSERT INTO ");
+    str_truncate_0(backup_sql);
+    str_append(backup_sql, "INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
       create_time, binlog_file, binlog_position) VALUES \
       (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
         mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
         ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
-    backup_sql.append(tmp_buf);
+    str_append(backup_sql, tmp_buf);
 
-    if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
+    if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
     {
         my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-        sql_print_warning("write the datacenter failed, insert failed");
+        sql_print_warning("write the datacenter failed, insert failed: %s", mysql_error(mysql));
         inception_transfer_set_errmsg(thd, mi->datacenter);
         DBUG_RETURN(TRUE);
     }
@@ -11305,8 +11311,8 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
                 !ptr->m_tabledef.compatible_with(mi->thd, NULL, 
                 mi->table_info, &conv_table, mi->get_lock_tables_mem_root()))
             {
-		sql_print_information("convert table failed, db: %s, table: %s",
-			ptr->db, ptr->table_name);
+                sql_print_information("convert table failed, db: %s, table: %s",
+			              ptr->db, ptr->table_name);
                 DBUG_RETURN(FALSE);
             }
 
@@ -11319,8 +11325,11 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
     }
 
     if (mi->table_info)
-	sql_print_information("can not find binlog table, db: %s, table: %s",
-		mi->table_info->db_name, mi->table_info->table_name);
+    {
+        sql_print_information("can not find binlog table, db: %s, table: %s",
+            mi->table_info->db_name, mi->table_info->table_name);
+    }
+
     DBUG_RETURN(FALSE);
 }
 
