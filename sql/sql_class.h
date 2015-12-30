@@ -47,6 +47,9 @@
 #include "mysql.h"
 #include <functional>
 
+// Added by michael.li
+#include <string>
+
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
@@ -393,6 +396,10 @@ struct transfer_cache_struct
     mysql_mutex_t run_lock;
     THD* thd;
     LIST_NODE_T(transfer_cache_t) link;
+    // datacenter->sql_buffer = String("", 0, system_charset_info);
+    // String* sql_buffer("", 0, system_charset_info);
+    // String *sql_buffer;
+    str_t sql_buffer;
 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE

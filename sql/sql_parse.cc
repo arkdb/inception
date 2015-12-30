@@ -242,6 +242,7 @@ int mysql_unpack_row(
 bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
 ulong mysql_read_event_for_transfer(MYSQL* mysql);
 void free_tables_to_lock(Master_info*	mi);
+int mysql_get_field_string_for_tranfer( Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag, int doublequtor_escape);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -336,6 +337,15 @@ str_append_with_length(
 }
 
 str_t*
+str_truncate_0(str_t* str)
+{
+    int len;
+
+    str->str[0] = '\0';
+    return str;
+}
+
+str_t*
 str_truncate(str_t* str, int endlen)
 {
     int len;
@@ -370,6 +380,11 @@ str_get_len(str_t* str)
     return strlen(str->str);
 }
 
+int
+str_get_alloc_len(str_t* str)
+{
+    return str->str_len;
+}
 
 /**
 This works because items are allocated with sql_alloc().
@@ -4155,6 +4170,7 @@ inception_transfer_load_datacenter(
         binlog_position = atoi(source_row[6]);
 
     datacenter = (transfer_cache_t*)my_malloc(sizeof(transfer_cache_t) , MY_ZEROFILL);
+    str_init(&datacenter->sql_buffer);
     strcpy(datacenter->hostname, instance_ip);
     datacenter->binlog_file[0] = '\0';
     datacenter->cbinlog_file[0] = '\0';
@@ -4318,6 +4334,7 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_empty_string("Transfer_Stage", FN_REFLEN));
     field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4387,6 +4404,7 @@ int mysql_master_transfer_status(
     }
 
     protocol->store(str_get(str), system_charset_info);
+    protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
     mysql_mutex_unlock(&transfer_mutex);
 
     protocol->write();
@@ -4944,7 +4962,7 @@ inception_transfer_table_map(
 int inception_transfer_make_one_row(
     Master_info* mi,
     int    optype,
-    String*   backupsql
+    str_t*   backup_sql
 )
 {
     field_info_t* field_node;
@@ -4959,31 +4977,31 @@ int inception_transfer_make_one_row(
     else if (optype == SQLCOM_DELETE || optype == SQLCOM_UPDATE)
         dictkey = (char*)"\"OLD\":";
 
-    backupsql->append(dictkey);
-    backupsql->append("[");
+    str_append(backup_sql, dictkey);
+    str_append(backup_sql, "[");
     field_node = LIST_GET_FIRST(mi->table_info->field_lst);
     while (field_node != NULL)
     {
         if (pkcount >= 1)
-            backupsql->append(", ");
+            str_append(backup_sql, ", ");
 
         // "field_name":"value"
-        backupsql->append("{");
-        backupsql->append("\"");
-        backupsql->append(field_node->field_name);
-        backupsql->append("\":");
-        backupsql->append("\"");
-        err = mysql_get_field_string(field_node->conv_field,
-            backupsql, mi->table_info->null_arr, field_index, FALSE, TRUE);
-        backupsql->append("\"");
-        backupsql->append("}");
+        str_append(backup_sql, "{");
+        str_append(backup_sql, "\"");
+        str_append(backup_sql, field_node->field_name);
+        str_append(backup_sql, "\":");
+        str_append(backup_sql, "\"");
+        err = mysql_get_field_string_for_tranfer(field_node->conv_field,
+            backup_sql, mi->table_info->null_arr, field_index, FALSE, TRUE);
+        str_append(backup_sql, "\"");
+        str_append(backup_sql, "}");
 
         pkcount++;
         field_node = LIST_GET_NEXT(link, field_node);
         field_index++;
     }
 
-    backupsql->append("]");
+    str_append(backup_sql,"]");
     return false;
 }
 
@@ -4991,7 +5009,7 @@ int inception_transfer_generate_write_record(
     Master_info* mi,
     Log_event* ev,
     int    optype,
-    String*   backup_sql,
+    str_t*   backup_sql,
     transfer_cache_t* datacenter
 )
 {
@@ -5002,7 +5020,7 @@ int inception_transfer_generate_write_record(
     char*   optype_str=NULL;
 
     DBUG_ENTER("inception_transfer_generate_write_record");
-    backup_sql->truncate();
+    str_truncate_0(backup_sql);
 
     thd = mi->thd;
     thd_sinfo = mi->thd->thd_sinfo;
@@ -5014,16 +5032,16 @@ int inception_transfer_generate_write_record(
     else if (optype == SQLCOM_UPDATE)
         optype_str = (char*)"UPDATE";
 
-    backup_sql->append("INSERT INTO ");
+    str_append(backup_sql, "INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
       (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
         thd->event_id, thd->transaction_id, mi->table_info->db_name, mi->table_info->table_name, 
         ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
-    backup_sql->append(tmp_buf);
+    str_append(backup_sql, tmp_buf);
 
-    backup_sql->append("'");
-    backup_sql->append("{");
+    str_append(backup_sql, "'");
+    str_append(backup_sql, "{");
     inception_transfer_make_one_row(mi, optype, backup_sql);
 
     DBUG_RETURN(false);
@@ -5153,14 +5171,14 @@ int inception_transfer_write_row(
 {
     Write_rows_log_event*  write_ev;
     int       error= 0;
-    String backup_sql = mi->sql_buffer;
+    str_t* backup_sql = &mi->datacenter->sql_buffer;
 
     DBUG_ENTER("inception_transfer_write_row");
     write_ev = (Write_rows_log_event*)ev;
 
     do
     {
-        backup_sql.truncate();
+        str_truncate_0(backup_sql);
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
         {
@@ -5176,7 +5194,7 @@ int inception_transfer_write_row(
         }
 
         if (inception_transfer_generate_write_record(mi, write_ev, 
-              optype, &backup_sql, mi->datacenter))
+              optype, backup_sql, mi->datacenter))
         {
             error=true;
             goto error;
@@ -5184,8 +5202,8 @@ int inception_transfer_write_row(
 
         if (optype != SQLCOM_UPDATE)
         {
-            backup_sql.append("}');");
-            if (inception_transfer_execute_store_simple(mi, write_ev, backup_sql.c_ptr()))
+            str_append(backup_sql, "}');");
+            if (inception_transfer_execute_store_simple(mi, write_ev, str_get(backup_sql)))
             {
                 error=true;
                 goto error;
@@ -5203,11 +5221,11 @@ int inception_transfer_write_row(
                 goto error;
             }
 
-            backup_sql.append(",");
-            inception_transfer_make_one_row(mi, SQLCOM_UPDATE+1000, &backup_sql);
+            str_append(backup_sql, ",");
+            inception_transfer_make_one_row(mi, SQLCOM_UPDATE+1000, backup_sql);
 
-            backup_sql.append("}');");
-            if (inception_transfer_execute_store_simple(mi, write_ev, backup_sql.c_ptr()))
+            str_append(backup_sql, "}');");
+            if (inception_transfer_execute_store_simple(mi, write_ev, str_get(backup_sql)))
             {
                 error=true;
                 goto error;
@@ -5228,11 +5246,11 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     THD*    query_thd;
     char*   optype_str=NULL;
     int optype=0;
-    String* backup_sql = &mi->sql_buffer;
+    str_t* backup_sql = &mi->datacenter->sql_buffer;
     THD *thd;
 
     thd = mi->thd;
-    backup_sql->truncate();
+    str_truncate_0(backup_sql);
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
     query_thd = thd->query_thd;
@@ -5250,30 +5268,30 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
         break;
     }
 
-    backup_sql->append("INSERT INTO ");
+    str_append(backup_sql, "INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
       (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
         thd->event_id, thd->transaction_id, query_thd->lex->query_tables->db, 
         query_thd->lex->query_tables->table_name, 
         ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
-    backup_sql->append(tmp_buf);
+    str_append(backup_sql,tmp_buf);
 
-    backup_sql->append("'");
+    str_append(backup_sql, "'");
     if (optype == SQLCOM_TRUNCATE)
     {
-        backup_sql->append("");
+        str_append(backup_sql, "");
     }
     else
     {
-        backup_sql->append("{");
-        backup_sql->append("}");
+        str_append(backup_sql, "{");
+        str_append(backup_sql, "}");
     }
 
-    backup_sql->append("'");
-    backup_sql->append(")");
+    str_append(backup_sql, "'");
+    str_append(backup_sql, ")");
 
-    if (inception_transfer_execute_store_with_transaction(mi, ev, backup_sql->c_ptr()))
+    if (inception_transfer_execute_store_with_transaction(mi, ev, str_get(backup_sql)))
         DBUG_RETURN(true);
 
     DBUG_RETURN(false);
@@ -5573,24 +5591,24 @@ inception_transfer_write_Xid(
     Log_event* ev
 )
 {
-    String* backup_sql = &mi->sql_buffer;
+    str_t* backup_sql = &mi->datacenter->sql_buffer;
     char tmp_buf[1024];
 
-    backup_sql->truncate();
+    str_truncate_0(backup_sql);
 
     //still the privise trx, but is another event
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
         return true;
 
-    backup_sql->append("INSERT INTO ");
+    str_append(backup_sql, "INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
       (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', 'COMMIT', '')", 
         mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
         ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
-    backup_sql->append(tmp_buf);
-    if (inception_transfer_execute_store_with_transaction(mi, ev, backup_sql->c_ptr()))
+    str_append(backup_sql, tmp_buf);
+    if (inception_transfer_execute_store_with_transaction(mi, ev, str_get(backup_sql)))
         return true;
 
     mi->datacenter->cbinlog_position = ev->log_pos;
@@ -10257,6 +10275,7 @@ int inception_transfer_execute_store_simple(
     {
         //if failed, execute the rollback to release locks, otherwise other connection can not
         //continue to execute dml to this table
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
             mysql_error(mysql), sql);
         DBUG_RETURN(TRUE);
@@ -10289,7 +10308,7 @@ int inception_transfer_execute_store_with_transaction(
 )
 {
     MYSQL*  mysql;
-    String backup_sql = mi->sql_buffer;
+    str_t *backup_sql = &mi->datacenter->sql_buffer;
     THD*  thd;
     char tmp_buf[1024];
 
@@ -10323,19 +10342,20 @@ int inception_transfer_execute_store_with_transaction(
         sql_print_warning("rollback sql: %s", sql);
         sql_print_warning("insert the transfer_data failed, rollback " 
             "this transaction, omit this error");
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         goto rollback;
     }
 
-    backup_sql.truncate();
-    backup_sql.append("INSERT INTO ");
+    str_truncate_0(backup_sql);
+    str_append(backup_sql, "INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
       create_time, binlog_file, binlog_position) VALUES \
       (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
         mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
         ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
-    backup_sql.append(tmp_buf);
+    str_append(backup_sql, tmp_buf);
 
-    if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
+    if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
     {
         my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("write the datacenter failed, insert failed: %s", 
@@ -10355,7 +10375,7 @@ rollback:
         inception_transfer_set_errmsg(thd, mi->datacenter);
         DBUG_RETURN(true);
     }
-    DBUG_RETURN(false);
+    DBUG_RETURN(true);
 
 commit:
     if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
@@ -11443,6 +11463,151 @@ mysql_dup_char_with_escape(
         dest++;
         src++;
     }
+}
+
+int mysql_get_field_string_for_tranfer(
+    Field* field, 
+    str_t* backup_sql, 
+    char* null_arr, 
+    int field_index, 
+    int qutor_flag,
+    int doublequtor_escape
+)
+{
+    int result = 0;                       // Will be set if null_value == 0
+    enum_field_types f_type;
+    String *res;
+    int qutor_end=0;
+    int append_flag=1;
+    uchar buff[MAX_FIELD_WIDTH];
+    String buffer((char*) buff,sizeof(buff),&my_charset_bin);
+    String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
+    char* dupcharfield;
+
+    if (null_arr[field_index])
+    {
+        str_append(backup_sql, "NULL");
+        append_flag = FALSE;
+    }
+    else
+    {
+        switch ((f_type=field->real_type())) {
+        default:
+        case MYSQL_TYPE_NULL:
+            str_append(backup_sql, "NULL");
+            append_flag = FALSE;
+            break;
+
+        // case MYSQL_TYPE_GEOMETRY:
+        case MYSQL_TYPE_ENUM:
+        case MYSQL_TYPE_SET:
+            res=field->val_str(&buffer);
+            break;
+
+        case MYSQL_TYPE_DECIMAL:
+        case MYSQL_TYPE_TINY_BLOB://255
+        case MYSQL_TYPE_MEDIUM_BLOB://16m
+        case MYSQL_TYPE_LONG_BLOB://4G
+        case MYSQL_TYPE_BLOB://65K
+        case MYSQL_TYPE_STRING:
+        case MYSQL_TYPE_VAR_STRING:
+        case MYSQL_TYPE_VARCHAR:
+        case MYSQL_TYPE_BIT:
+        case MYSQL_TYPE_NEWDECIMAL:
+            {
+                if (qutor_flag)
+                    str_append(backup_sql, "\'");
+                res=field->val_str(&buffer);
+                dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
+                if (!doublequtor_escape)
+                    mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
+                else
+                    mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, '\'', '\"', '\\');
+
+                str_append(backup_sql, dupcharfield);
+                my_free(dupcharfield);
+                qutor_end =1;
+                append_flag = FALSE;
+                break;
+            }
+        case MYSQL_TYPE_TINY:
+            {
+                //    nr= field->val_int();
+                res=field->val_str(&buffer);
+                break;
+            }
+        case MYSQL_TYPE_SHORT:
+        case MYSQL_TYPE_YEAR:
+            {
+                //    longlong nr;
+                //    nr= field->val_int();
+                res=field->val_str(&buffer);
+                break;
+            }
+        case MYSQL_TYPE_INT24:
+        case MYSQL_TYPE_LONG:
+            {
+                //    longlong nr;
+                //    nr= field->val_int();
+                res=field->val_str(&buffer);
+                break;
+            }
+        case MYSQL_TYPE_LONGLONG:
+            {
+                //    longlong nr;
+                //    nr= field->val_int();
+                res=field->val_str(&buffer);
+                break;
+            }
+        case MYSQL_TYPE_FLOAT:
+            {
+                //    float nr;
+                //    nr= (float) field->val_real();
+                res=field->val_str(&buffer);
+                break;
+            }
+        case MYSQL_TYPE_DOUBLE:
+            {
+                res=field->val_str(&buffer);
+                //    double nr= field->val_real();
+                break;
+            }
+        case MYSQL_TYPE_DATETIME:
+        case MYSQL_TYPE_DATETIME2:
+        case MYSQL_TYPE_DATE:
+        case MYSQL_TYPE_NEWDATE:
+        case MYSQL_TYPE_TIMESTAMP:
+        case MYSQL_TYPE_TIMESTAMP2:
+            {
+                if (qutor_flag)
+                    str_append(backup_sql, "\'");
+                res=field->val_str(&buffer);
+                qutor_end =1;
+                //    MYSQL_TIME tm;
+                //    field->get_date(&tm, TIME_FUZZY_DATE);
+                break;
+            }
+        case MYSQL_TYPE_TIME:
+        case MYSQL_TYPE_TIME2:
+            {
+                if (qutor_flag)
+                    str_append(backup_sql, "\'");
+                res=field->val_str(&buffer);
+                qutor_end =1;
+                //    MYSQL_TIME tm;
+                //    field->get_time(&tm);
+                break;
+            }
+        }
+    }
+
+    if (append_flag)
+        str_append_with_length(backup_sql, res->ptr(), res->length());
+
+    if (qutor_end && qutor_flag)
+        str_append(backup_sql, "\'");
+
+    return result;
 }
 
 int mysql_get_field_string(
