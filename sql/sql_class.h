@@ -192,6 +192,8 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_BINLOG_SET_POSITION     4
 #define INCEPTION_BINLOG_RESET_TRANSFER   5
 #define INCEPTION_BINLOG_STOP_TRANSFER    6
+#define INCEPTION_BINLOG_STOP_SLAVE       7
+#define INCEPTION_BINLOG_START_SLAVE       8
 
 #define INCEPTION_TRANSFER_EIDNAME      "EID"
 #define INCEPTION_TRANSFER_TIDNAME      "TID"
@@ -376,6 +378,7 @@ struct transfer_cache_struct
     char    binlog_file[256 + 1];
     volatile int binlog_position;
     char    datacenter_name[FN_LEN+1];
+    char    instance_name[FN_LEN+1];
 
     // datacenter_t*  datacenter;
     str_t         errmsg;
@@ -403,7 +406,7 @@ struct transfer_cache_struct
 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
-    int valid;
+    volatile int valid;
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;

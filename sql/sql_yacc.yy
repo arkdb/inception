@@ -15488,6 +15488,24 @@ inception:
             lex->sql_command = SQLCOM_INCEPTION;
             Lex->ident= $6;
         }
+        | INCEPTION_SYM START_SYM SLAVE ident FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_STOP_SLAVE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->name= $4;
+            Lex->ident= $7;
+        }
+        | INCEPTION_SYM STOP_SYM SLAVE ident FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_SLAVE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->name= $4;
+            Lex->ident= $7;
+        }
         | INCEPTION_SYM STOP_SYM ALTER TEXT_STRING_sys
         {    
                 LEX *lex=Lex;
