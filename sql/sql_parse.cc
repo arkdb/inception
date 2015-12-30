@@ -231,7 +231,8 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
 int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev);
 table_info_t* mysql_get_table_object(THD* thd, char* dbname, char* tablename, int not_exist_report);
 int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index, int qurot_flag,  int doublequtor_escape);
-int inception_transfer_execute_store( Master_info* mi, Log_event* ev, char*  sql, int trx_flag);
+int inception_transfer_execute_store_with_transaction( Master_info* mi, Log_event* ev, char*  sql);
+int inception_transfer_execute_store_simple( Master_info* mi, Log_event* ev, char*  sql);
 int mysql_unpack_row(
     Master_info* mi,
     uchar const *const row_data,
@@ -5152,14 +5153,14 @@ int inception_transfer_write_row(
 {
     Write_rows_log_event*  write_ev;
     int       error= 0;
-    String backup_sql;
+    String backup_sql = mi->sql_buffer;
 
     DBUG_ENTER("inception_transfer_write_row");
     write_ev = (Write_rows_log_event*)ev;
 
     do
     {
-        backup_sql.free();
+        backup_sql.truncate();
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
         {
@@ -5184,7 +5185,7 @@ int inception_transfer_write_row(
         if (optype != SQLCOM_UPDATE)
         {
             backup_sql.append("}');");
-            if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
+            if (inception_transfer_execute_store_simple(mi, write_ev, backup_sql.c_ptr()))
             {
                 error=true;
                 goto error;
@@ -5206,7 +5207,7 @@ int inception_transfer_write_row(
             inception_transfer_make_one_row(mi, SQLCOM_UPDATE+1000, &backup_sql);
 
             backup_sql.append("}');");
-            if (inception_transfer_execute_store(mi, write_ev, backup_sql.c_ptr(), FALSE))
+            if (inception_transfer_execute_store_simple(mi, write_ev, backup_sql.c_ptr()))
             {
                 error=true;
                 goto error;
@@ -5218,7 +5219,6 @@ int inception_transfer_write_row(
     }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
 error:
-    backup_sql.free();
     DBUG_RETURN(error);
 }
 
@@ -5228,12 +5228,11 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     THD*    query_thd;
     char*   optype_str=NULL;
     int optype=0;
-    String backup_sql_space;
-    String* backup_sql;
+    String* backup_sql = &mi->sql_buffer;
     THD *thd;
 
     thd = mi->thd;
-    backup_sql = &backup_sql_space;
+    backup_sql->truncate();
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
     query_thd = thd->query_thd;
@@ -5251,7 +5250,6 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
         break;
     }
 
-    backup_sql->truncate();
     backup_sql->append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
@@ -5275,13 +5273,9 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     backup_sql->append("'");
     backup_sql->append(")");
 
-    if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
-    {
-        backup_sql->free();
+    if (inception_transfer_execute_store_with_transaction(mi, ev, backup_sql->c_ptr()))
         DBUG_RETURN(true);
-    }
 
-    backup_sql->free();
     DBUG_RETURN(false);
 }
 
@@ -5579,19 +5573,16 @@ inception_transfer_write_Xid(
     Log_event* ev
 )
 {
-    String backup_sql_space;
-    String* backup_sql;
+    String* backup_sql = &mi->sql_buffer;
     char tmp_buf[1024];
 
-    backup_sql = &backup_sql_space;
+    backup_sql->truncate();
 
     //still the privise trx, but is another event
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
-    {
-        backup_sql->free();
         return true;
-    }
+
     backup_sql->append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
       tablename, create_time, instance_name, optype , data) VALUES \
@@ -5599,17 +5590,13 @@ inception_transfer_write_Xid(
         mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
         ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
     backup_sql->append(tmp_buf);
-    if (inception_transfer_execute_store(mi, ev, backup_sql->c_ptr(), TRUE))
-    {
-        backup_sql->free();
+    if (inception_transfer_execute_store_with_transaction(mi, ev, backup_sql->c_ptr()))
         return true;
-    }
+
     mi->datacenter->cbinlog_position = ev->log_pos;
     strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
 
     inception_transfer_get_slaves_position(mi);
-
-    backup_sql->free();
     return false;
 }
 
@@ -5635,7 +5622,7 @@ int inception_transfer_binlog_process(
         break;
 
     case XID_EVENT:
-        inception_transfer_write_Xid(mi, ev);
+        err = inception_transfer_write_Xid(mi, ev);
         break;
         
     case TABLE_MAP_EVENT:
@@ -10242,11 +10229,10 @@ int mysql_execute_remote_backup_sql(
     DBUG_RETURN(false);
 }
 
-int inception_transfer_execute_store(
+int inception_transfer_execute_store_simple(
     Master_info* mi,
     Log_event* ev,
-    char*  sql,
-    int trx_flag
+    char*  sql
 )
 {
     MYSQL*  mysql;
@@ -10254,27 +10240,79 @@ int inception_transfer_execute_store(
     THD*  thd;
     char tmp_buf[1024];
 
-    DBUG_ENTER("inception_transfer_execute_store");
+    DBUG_ENTER("inception_transfer_execute_store_simple");
 
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
     if ((mysql= thd->get_transfer_connection()) == NULL)
     {
         my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
+       	sql_print_warning("write the datacenter failed, get connection failed: %s", 
+            thd->get_stmt_da()->message());
         inception_transfer_set_errmsg(thd, mi->datacenter);
-       	sql_print_warning("write the datacenter failed, get connection failed");
         DBUG_RETURN(TRUE);
     }
 
-    if (trx_flag)
+    if (mysql_real_query(mysql, sql, strlen(sql)))
     {
-        if (mysql_real_query(mysql, "BEGIN", strlen("BEGIN")))
-        {
-            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-            inception_transfer_set_errmsg(thd, mi->datacenter);
-       	    sql_print_warning("write the datacenter failed, begin transaction failed");
-            DBUG_RETURN(true);
-        }
+        //if failed, execute the rollback to release locks, otherwise other connection can not
+        //continue to execute dml to this table
+        sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
+            mysql_error(mysql), sql);
+        DBUG_RETURN(TRUE);
+    }
+
+    backup_sql.truncate();
+    backup_sql.append("INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
+      create_time, binlog_file, binlog_position) VALUES \
+      (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
+        mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+        ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
+    backup_sql.append(tmp_buf);
+
+    if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        sql_print_warning("write the datacenter failed, insert failed");
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(TRUE);
+    }
+
+    DBUG_RETURN(false);
+}
+
+int inception_transfer_execute_store_with_transaction(
+    Master_info* mi,
+    Log_event* ev,
+    char*  sql
+)
+{
+    MYSQL*  mysql;
+    String backup_sql = mi->sql_buffer;
+    THD*  thd;
+    char tmp_buf[1024];
+
+    DBUG_ENTER("inception_transfer_execute_store_with_transaction");
+
+    mi->datacenter->thread_stage = transfer_write_datacenter;
+    thd = mi->thd;
+    if ((mysql= thd->get_transfer_connection()) == NULL)
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
+       	sql_print_warning("write the datacenter failed, get connection failed: %s", 
+            thd->get_stmt_da()->message());
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(TRUE);
+    }
+
+    if (mysql_real_query(mysql, "BEGIN", strlen("BEGIN")))
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        sql_print_warning("write the datacenter failed, begin transaction failed: %s", 
+            mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(true);
     }
 
     if (mysql_real_query(mysql, sql, strlen(sql)))
@@ -10285,42 +10323,50 @@ int inception_transfer_execute_store(
         sql_print_warning("rollback sql: %s", sql);
         sql_print_warning("insert the transfer_data failed, rollback " 
             "this transaction, omit this error");
-        if (mysql_real_query(mysql, "ROLLBACK", strlen("ROLLBACK")))
-        {
-            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-            inception_transfer_set_errmsg(thd, mi->datacenter);
-            DBUG_RETURN(true);
-        }
+        goto rollback;
     }
 
-    if (trx_flag)
+    backup_sql.truncate();
+    backup_sql.append("INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
+      create_time, binlog_file, binlog_position) VALUES \
+      (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
+        mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+        ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
+    backup_sql.append(tmp_buf);
+
+    if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
     {
-        backup_sql.append("INSERT INTO ");
-        sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
-          create_time, binlog_file, binlog_position) VALUES \
-          (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
-            mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
-            ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), ev->log_pos);
-        backup_sql.append(tmp_buf);
-        if (mysql_real_query(mysql, backup_sql.c_ptr(), backup_sql.length()))
-        {
-            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-            inception_transfer_set_errmsg(thd, mi->datacenter);
-       	    sql_print_warning("write the datacenter failed, insert failed");
-            backup_sql.free();
-            DBUG_RETURN(true);
-        }
-        if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
-        {
-            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-            inception_transfer_set_errmsg(thd, mi->datacenter);
-       	    sql_print_warning("write the datacenter failed, commit failed");
-            backup_sql.free();
-            DBUG_RETURN(true);
-        }
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        sql_print_warning("write the datacenter failed, insert failed: %s", 
+            mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        goto rollback;
     }
 
-    backup_sql.free();
+    goto commit;
+
+rollback:
+    if (mysql_real_query(mysql, "ROLLBACK", strlen("ROLLBACK")))
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        sql_print_warning("write the datacenter failed, commit failed: %s", 
+            mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(true);
+    }
+    DBUG_RETURN(false);
+
+commit:
+    if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        sql_print_warning("write the datacenter failed, commit failed: %s", 
+            mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, mi->datacenter);
+        DBUG_RETURN(true);
+    }
+
     DBUG_RETURN(false);
 }
 
