@@ -256,6 +256,7 @@ public:
   ulong		thread_id;
   time_t	exec_time;
   int		seqno;
+  String sql_buffer;
 
   MYSQL* mysql;
   uint32 file_id;				/* for 3.23 load data infile */
