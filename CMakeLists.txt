@@ -191,6 +191,7 @@ INCLUDE(configure.cmake)
 ADD_DEFINITIONS(-DHAVE_CONFIG_H)
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/include)
 
+
 # Add bundled or system zlib.
 MYSQL_CHECK_ZLIB_WITH_COMPRESS()
 # Add bundled yassl/taocrypt or system openssl.
@@ -288,3 +289,8 @@ ADD_SUBDIRECTORY(packaging/solaris)
 # Create a single package with "make package"
 # (see http://public.kitware.com/Bug/view.php?id=11452)
 SET(CPACK_MONOLITHIC_INSTALL 1 CACHE INTERNAL "")
+
+LINK_LIBRARIES(jemalloc)
+#SET(CMAKE_EXE_LINK_DIRECTORIES)
+SET(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG}
+-fprofile-arcs -ftest-coverage -lgcov -ljemalloc -L/usr/lib64/libjemalloc.so")

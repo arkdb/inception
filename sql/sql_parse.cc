@@ -5516,6 +5516,7 @@ retry_fetch1:
             strcpy(slave->cbinlog_file, source_row[0]);
             slave->cbinlog_position = strtoul(source_row[1], 0, 10);
         }
+	mysql_free_result(source_res1);
 
         retry_count=0;
 retry_fetch2:
@@ -5536,6 +5537,7 @@ retry_fetch2:
         source_row = mysql_fetch_row(source_res1);
         if (source_row != NULL)
             strcpy(slave->current_time, source_row[0]);
+	mysql_free_result(source_res1);
 
         slave = slave_next;
     }
@@ -6089,6 +6091,9 @@ error:
     localtime_r(&skr, &datacenter->stop_time_space);
     datacenter->stop_time = &datacenter->stop_time_space;
     datacenter->transfer_on = 0;
+    mysql_mutex_lock(&LOCK_thread_count);
+    remove_global_thread(thd);
+    mysql_mutex_unlock(&LOCK_thread_count);
     mysql_close(mysql);
     my_thread_end();
     pthread_exit(0);
