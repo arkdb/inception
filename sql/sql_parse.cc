@@ -4213,6 +4213,7 @@ inception_transfer_load_datacenter(
         slave_dc->valid = true;
         slave_dc->mysql_port = strtoll(source_row[4], NULL, 10);
         strcpy(slave_dc->datacenter_name, datacenter_name);
+        strcpy(slave_dc->instance_name, source_row[1]);
         str_init(&slave_dc->errmsg);
         slave_dc->stop_time = NULL;
         LIST_ADD_LAST(link, datacenter->slave_lst, slave_dc);
@@ -4240,6 +4241,7 @@ int mysql_slave_transfer_status(
     transfer_cache_t* slave_node; 
 
     field_list.push_back(new Item_empty_string("Datacenter_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Instance_Name", FN_REFLEN));
     field_list.push_back(new Item_empty_string("Slave_Host", FN_REFLEN));
     field_list.push_back(new Item_return_int("Slave_Port", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Binlog_File", FN_REFLEN));
@@ -4267,6 +4269,7 @@ int mysql_slave_transfer_status(
     {
         protocol->prepare_for_resend();
         protocol->store(osc_percent_node->datacenter_name, system_charset_info);
+        protocol->store(slave_node->instance_name, system_charset_info);
         protocol->store(slave_node->hostname, system_charset_info);
         protocol->store(slave_node->mysql_port);
         protocol->store(slave_node->cbinlog_file, system_charset_info);
@@ -5517,7 +5520,9 @@ retry_fetch1:
         if (retry_count == 3)
         {
             inception_transfer_set_errmsg(thd, slave);
+            mysql_mutex_lock(&datacenter->run_lock);
             slave->valid = false;
+            mysql_mutex_unlock(&datacenter->run_lock);
             slave = slave_next;
             continue;
         }
@@ -5540,7 +5545,9 @@ retry_fetch2:
             goto retry_fetch2;
         if (retry_count == 3)
         {
+            mysql_mutex_lock(&datacenter->run_lock);
             slave->valid = false;
+            mysql_mutex_unlock(&datacenter->run_lock);
             inception_transfer_set_errmsg(thd, slave);
             slave = slave_next;
             continue;
@@ -6385,6 +6392,49 @@ inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
     return false;
 }
 
+int
+inception_transfer_start_stop_slave(THD* thd, char* datacenter_name, char* slave_name, int on)
+{
+    MYSQL* mysql;
+    char tmp[1024];
+    transfer_cache_t* transfer_node;
+    transfer_cache_t* slave;
+
+    mysql_mutex_lock(&transfer_mutex); 
+    transfer_node = inception_transfer_load_datacenter(thd, datacenter_name, false);
+
+    //not existed
+    if (!transfer_node)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        return true;
+    }
+
+    slave = LIST_GET_FIRST(transfer_node->slave_lst);
+    while (slave)
+    {
+        if (!strcasecmp(slave->instance_name, slave_name))
+        {
+            mysql_mutex_lock(&slave->run_lock); 
+            slave->valid = on;
+            mysql_mutex_unlock(&slave->run_lock); 
+            break;
+        }
+        
+        slave = LIST_GET_NEXT(link, slave);
+    }
+
+    mysql_mutex_unlock(&transfer_mutex); 
+    if (!slave)
+    {
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), slave_name);
+        return true;
+    }
+
+    return false;
+}
+
 int mysql_execute_inception_binlog_transfer(THD* thd)
 {
     MYSQL* mysql;
@@ -6426,6 +6476,12 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
             return inception_transfer_reset_transfer(thd, thd->lex->ident.str);
         case INCEPTION_BINLOG_STOP_TRANSFER:
             return inception_transfer_stop_replicate(thd->lex->ident.str);
+        case INCEPTION_BINLOG_STOP_SLAVE:
+            return inception_transfer_start_stop_slave(thd, thd->lex->ident.str, 
+                thd->lex->name.str, true);
+        case INCEPTION_BINLOG_START_SLAVE:
+            return inception_transfer_start_stop_slave(thd, thd->lex->ident.str, 
+                thd->lex->name.str, false);
         default:
             return false;
     }
