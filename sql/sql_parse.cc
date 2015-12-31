@@ -4352,6 +4352,7 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
     field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4423,6 +4424,7 @@ int mysql_master_transfer_status(
 
     protocol->store(str_get(str), system_charset_info);
     protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
+    protocol->store((longlong)osc_percent_node->table_cache.records);
     mysql_mutex_unlock(&transfer_mutex);
 
     protocol->write();
