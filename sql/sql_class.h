@@ -250,6 +250,7 @@ struct table_info_struct
 {
     char    db_name[NAME_CHAR_LEN + 1];
     char    table_name[NAME_CHAR_LEN + 1];
+    char    hash_key[FN_LEN+ 1];
     uchar*  record;
     char*   null_arr;
     int     remote_existed;
@@ -403,6 +404,7 @@ struct transfer_cache_struct
     // String* sql_buffer("", 0, system_charset_info);
     // String *sql_buffer;
     str_t sql_buffer;
+    HASH table_cache;
 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE

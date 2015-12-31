@@ -4099,6 +4099,16 @@ int mysql_execute_inception_osc_processlist(THD* thd)
     DBUG_RETURN(res);
 }
 
+uchar *table_cache_get_key(table_info_t* table_info, size_t *length,
+                       my_bool not_used __attribute__((unused)))
+{
+    if (table_info->hash_key[0] == '\0')
+        sprintf(table_info->hash_key, "%s%s", table_info->db_name, table_info->table_name);
+
+    *length= strlen(table_info->hash_key);
+    return (uchar*)table_info->hash_key;
+}
+
 transfer_cache_t*
 inception_transfer_load_datacenter(
     THD* thd, 
@@ -4222,6 +4232,8 @@ inception_transfer_load_datacenter(
     }
 
     mysql_free_result(source_res);
+    my_hash_init(&datacenter->table_cache, &my_charset_bin, 
+        4096, 0, 0, (my_hash_get_key)table_cache_get_key, NULL, 0);
     return datacenter;
 }
 
@@ -4907,8 +4919,18 @@ inception_transfer_get_table_object(
     table_info_t* tableinfo = NULL;
     MYSQL   mysql_space;
     MYSQL* mysql;
+    my_hash_value_type hash_value;
+    char key[256];
+    int key_length;
 
-    tableinfo = mysql_get_table_object_from_cache(thd, dbname, tablename);
+    sprintf(key, "%s%s", dbname, tablename);
+    key_length = strlen(key);
+    hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
+
+    tableinfo = (table_info_t*)my_hash_search_using_hash_value(&datacenter->table_cache, 
+        hash_value, (uchar*) key, key_length);
+
+    // tableinfo = mysql_get_table_object_from_cache(thd, dbname, tablename);
     //解决表已经删除，但后面又用到了，则直接判断这个标记
     //而不是重新从远程载入这个表对象，删除表的时候只打标记
     if (tableinfo && tableinfo->isdeleted)
@@ -4931,7 +4953,13 @@ inception_transfer_get_table_object(
     tableinfo = mysql_query_table_from_source(thd, mysql, dbname, tablename, TRUE);
     if (tableinfo != NULL)
     {
-        mysql_add_table_object(thd, tableinfo);
+        if (my_hash_insert(&datacenter->table_cache, (uchar*) tableinfo))
+        {
+            mysql_table_info_free(tableinfo);
+            return NULL;
+        }
+
+        // mysql_add_table_object(thd, tableinfo);
         mysql_alloc_record(tableinfo, mysql);
     }
 
@@ -5022,7 +5050,7 @@ int inception_transfer_generate_write_record(
 {
     char  dbname[NAME_CHAR_LEN + 1];
     sinfo_space_t* thd_sinfo;
-    char   tmp_buf[256];
+    char   tmp_buf[2560];
     THD*    thd;
     char*   optype_str=NULL;
 
@@ -5061,7 +5089,7 @@ int inception_transfer_next_sequence(
 {
     long long sequence=0;
     MYSQL* mysql;
-    char sql[256];
+    char sql[2560];
     MYSQL_RES *     source_res=NULL;
     MYSQL_ROW       source_row;
     long long eventid=0;
@@ -5249,7 +5277,7 @@ error:
 
 int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_cache_t* datacenter)
 {
-    char   tmp_buf[256];
+    char   tmp_buf[2560];
     THD*    query_thd;
     char*   optype_str=NULL;
     int optype=0;
@@ -6087,8 +6115,8 @@ failover:
         datacenter->last_event_timestamp = datacenter->last_master_timestamp;
         if (inception_transfer_binlog_process(mi, evlog, datacenter))
         {
-            sql_print_information("process the event error, event " 
-		            "position is: %s:%d", binlog_file, binlog_position);
+            sql_print_information("process the event error, transaction binlog start " 
+		            "position is: %s:%d", datacenter->cbinlog_file, datacenter->cbinlog_position);
             inception_transfer_set_errmsg(thd, mi->datacenter);
             delete evlog;
             goto error; 
@@ -10343,22 +10371,22 @@ int inception_transfer_execute_store_simple(
         DBUG_RETURN(TRUE);
     }
 
-    str_truncate_0(backup_sql);
-    str_append(backup_sql, "INSERT INTO ");
-    sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
-      create_time, binlog_file, binlog_position) VALUES \
-      (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
-        mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
-        ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
-    str_append(backup_sql, tmp_buf);
-
-    if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
-    {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-        sql_print_warning("write the datacenter failed, insert failed: %s", mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
-        DBUG_RETURN(TRUE);
-    }
+    // str_truncate_0(backup_sql);
+    // str_append(backup_sql, "INSERT INTO ");
+    // sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
+    //   create_time, binlog_file, binlog_position) VALUES \
+    //   (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
+    //     mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+    //     ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
+    // str_append(backup_sql, tmp_buf);
+    //
+    // if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
+    // {
+    //     my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+    //     sql_print_warning("write the datacenter failed, insert failed: %s", mysql_error(mysql));
+    //     inception_transfer_set_errmsg(thd, mi->datacenter);
+    //     DBUG_RETURN(TRUE);
+    // }
 
     DBUG_RETURN(false);
 }
