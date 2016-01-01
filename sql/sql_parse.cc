@@ -4910,6 +4910,34 @@ MYSQL* inception_get_connection(
     return mysql;
 }
 
+int inception_transfer_delete_table_object(
+    THD*  thd,
+    transfer_cache_t* datacenter
+)
+{
+    table_info_t* tableinfo = NULL;
+    my_hash_value_type hash_value;
+    char key[256];
+    int key_length;
+    TABLE_LIST *table;
+
+    for (table=thd->lex->query_tables; table; table=table->next_global)
+    {
+        sprintf(key, "%s%s", table->db, table->table_name);
+        key_length = strlen(key);
+        hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
+
+        tableinfo = (table_info_t*)my_hash_search_using_hash_value(&datacenter->table_cache, 
+            hash_value, (uchar*) key, key_length);
+
+        if (!tableinfo)
+            continue; 
+
+        my_hash_delete(&datacenter->table_cache, (uchar*)tableinfo);
+        mysql_table_info_free(tableinfo);
+    }
+}
+
 table_info_t*
 inception_transfer_get_table_object(
     THD*  thd,
@@ -5423,6 +5451,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                     break;
                 case SQLCOM_ALTER_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
+                    //free the table object
+                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
                 case SQLCOM_TRUNCATE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
