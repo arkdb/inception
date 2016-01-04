@@ -404,6 +404,7 @@ struct transfer_cache_struct
     // String* sql_buffer("", 0, system_charset_info);
     // String *sql_buffer;
     str_t sql_buffer;
+    str_t dupchar_buffer;
     HASH table_cache;
 
     // slave attributes

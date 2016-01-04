@@ -196,6 +196,8 @@ const char *xa_state_names[]={
 
 #define TRANSFER_SLAVE_NET_TIMEOUT 3600
 
+#define STR_EXTEND_LENGTH		1024
+
 enum transfer_stage_type {
     transfer_not_start=0,
     transfer_wait_master_send,
@@ -242,7 +244,7 @@ int mysql_unpack_row(
 bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
 ulong mysql_read_event_for_transfer(MYSQL* mysql);
 void free_tables_to_lock(Master_info*	mi);
-int mysql_get_field_string_for_tranfer( Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag, int doublequtor_escape);
+int mysql_get_field_string_for_tranfer(Master_info* mi,  Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -280,28 +282,35 @@ str_init(str_t* str)
 }
 
 str_t*
+str_relloc(str_t* str, int namelen)
+{
+    char*   select_item_tmp;
+    int    buflen ;
+    int    newlen ;
+
+    newlen = namelen + STR_EXTEND_LENGTH;
+    select_item_tmp = (char*)my_malloc(newlen, MY_ZEROFILL);
+    buflen = newlen;
+    strcpy(select_item_tmp, str->str);
+    if (str->str != str->str_buf)
+        my_free(str->str);
+
+    str->str_len = buflen;
+    str->str = select_item_tmp;
+    return str;
+}
+
+str_t*
 str_append(
     str_t*  str,
     const char* new_string
 )
 {
     int    namelen;
-    char*   select_item_tmp;
-    int    buflen = NAME_CHAR_LEN;
 
     namelen = strlen(str->str) + strlen(new_string) + 1;
     if (namelen >= str->str_len)
-    {
-        select_item_tmp = (char*)malloc(namelen + NAME_CHAR_LEN);
-        memset(select_item_tmp, 0, namelen + NAME_CHAR_LEN);
-        buflen = namelen + NAME_CHAR_LEN;
-        strcpy(select_item_tmp, str->str);
-        if (str->str != str->str_buf)
-            free(str->str);
-
-        str->str_len = buflen;
-        str->str = select_item_tmp;
-    }
+        str_relloc(str, namelen);
 
     strcat(str->str, new_string);
     return str;
@@ -309,28 +318,16 @@ str_append(
 
 str_t*
 str_append_with_length(
-        str_t*  str,
-        const char* new_string,
-        int len
+    str_t*  str,
+    const char* new_string,
+    int len
 )
 {
     int    namelen;
-    char*   select_item_tmp;
-    int    buflen = NAME_CHAR_LEN;
 
     namelen = strlen(str->str) + len + 1;
     if (namelen >= str->str_len)
-    {
-        select_item_tmp = (char*)malloc(namelen + NAME_CHAR_LEN);
-        memset(select_item_tmp, 0, namelen + NAME_CHAR_LEN);
-        buflen = namelen + NAME_CHAR_LEN;
-        strcpy(select_item_tmp, str->str);
-        if (str->str != str->str_buf)
-            free(str->str);
-
-        str->str_len = buflen;
-        str->str = select_item_tmp;
-    }
+        str_relloc(str, namelen);
 
     strncat(str->str, new_string, len);
     return str;
@@ -339,8 +336,6 @@ str_append_with_length(
 str_t*
 str_truncate_0(str_t* str)
 {
-    int len;
-
     str->str[0] = '\0';
     return str;
 }
@@ -4181,6 +4176,7 @@ inception_transfer_load_datacenter(
 
     datacenter = (transfer_cache_t*)my_malloc(sizeof(transfer_cache_t) , MY_ZEROFILL);
     str_init(&datacenter->sql_buffer);
+    str_init(&datacenter->dupchar_buffer);
     strcpy(datacenter->hostname, instance_ip);
     datacenter->binlog_file[0] = '\0';
     datacenter->cbinlog_file[0] = '\0';
@@ -4244,12 +4240,10 @@ int mysql_slave_transfer_status(
 {
     DBUG_ENTER("mysql_slave_transfer_status");
     int res= 0;
-    LEX *lex= thd->lex;
     List<Item>    field_list;
     Protocol *    protocol= thd->protocol;
     char timestamp[20];
     struct tm * start;
-    long time_diff;
     timestamp[0] = 0;
     transfer_cache_t* slave_node; 
 
@@ -4326,7 +4320,6 @@ int mysql_master_transfer_status(
 {
     DBUG_ENTER("mysql_master_transfer_status");
     int res= 0;
-    LEX *lex= thd->lex;
     List<Item>    field_list;
     Protocol *    protocol= thd->protocol;
     char timestamp[20];
@@ -4437,10 +4430,8 @@ int mysql_show_transfer_status(THD* thd)
 {
     DBUG_ENTER("mysql_show_transfer_status");
     int res= 0;
-    LEX *lex= thd->lex;
     transfer_cache_t* osc_percent_node;
     List<Item>    field_list;
-    Protocol *    protocol= thd->protocol;
 
     osc_percent_node = inception_transfer_load_datacenter(thd, thd->lex->name.str, true);
     if (osc_percent_node == NULL)
@@ -4775,7 +4766,6 @@ int inception_transfer_add_instance(
     int   port
 )
 {
-    int ret;
     char tmp[1024];
     str_t  create_sql_space;
     str_t* create_sql;
@@ -5003,7 +4993,6 @@ int inception_transfer_make_one_row(
 )
 {
     field_info_t* field_node;
-    char   tmp_buf[256];
     int    err = 0;
     int    field_index=0;
     int    pkcount=0;
@@ -5028,8 +5017,8 @@ int inception_transfer_make_one_row(
         str_append(backup_sql, field_node->field_name);
         str_append(backup_sql, "\":");
         str_append(backup_sql, "\"");
-        err = mysql_get_field_string_for_tranfer(field_node->conv_field,
-            backup_sql, mi->table_info->null_arr, field_index, FALSE, TRUE);
+        err = mysql_get_field_string_for_tranfer(mi, field_node->conv_field,
+            backup_sql, mi->table_info->null_arr, field_index, FALSE);
         str_append(backup_sql, "\"");
         str_append(backup_sql, "}");
 
@@ -5050,7 +5039,6 @@ int inception_transfer_generate_write_record(
     transfer_cache_t* datacenter
 )
 {
-    char  dbname[NAME_CHAR_LEN + 1];
     sinfo_space_t* thd_sinfo;
     char   tmp_buf[2560];
     THD*    thd;
@@ -5089,7 +5077,6 @@ int inception_transfer_next_sequence(
     char* datacenter_name,
     int type)
 {
-    long long sequence=0;
     MYSQL* mysql;
     char sql[2560];
     MYSQL_RES *     source_res=NULL;
@@ -5496,7 +5483,6 @@ inception_transfer_execute_read(
 {
     MYSQL mysql_space;
     MYSQL_RES *     source_res1=NULL;
-    MYSQL_ROW       source_row;
     MYSQL* mysql;
 
     mysql = inception_get_connection(&mysql_space, hostname, 
@@ -6389,8 +6375,6 @@ int inception_transfer_set_instance_position(
 int
 inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
 {
-    MYSQL* mysql;
-    char tmp[1024];
     transfer_cache_t* transfer_node;
 
     mysql_mutex_lock(&transfer_mutex); 
@@ -6429,8 +6413,6 @@ inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
 int
 inception_transfer_start_stop_slave(THD* thd, char* datacenter_name, char* slave_name, int on)
 {
-    MYSQL* mysql;
-    char tmp[1024];
     transfer_cache_t* transfer_node;
     transfer_cache_t* slave;
 
@@ -8888,7 +8870,6 @@ int mysql_print_subselect(
 )
 {
     Item* item;
-    ORDER*   order;
     TABLE_LIST* tables;
 
     if (mysql_load_tables(thd, &query_node->rt_lst, select_lex))
@@ -9352,7 +9333,6 @@ int mysql_print_select(THD* thd)
 {
     query_print_cache_node_t*   query_node;
     query_print_cache_t*        query_cache;
-    check_rt_t*           rt;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
 
     query_cache = thd->query_print_cache;
@@ -10177,8 +10157,6 @@ int mysql_get_statistic_table_sql(
     String*   create_sql
 )
 {
-    char   sql_tmp[100];
-
     create_sql->truncate();
     create_sql->append("create table ");
     create_sql->append("inception.statistic");
@@ -10352,7 +10330,6 @@ int inception_transfer_execute_store_simple(
     MYSQL*  mysql;
     str_t * backup_sql;
     THD*  thd;
-    char tmp_buf[1024];
 
     DBUG_ENTER("inception_transfer_execute_store_simple");
 
@@ -10377,23 +10354,6 @@ int inception_transfer_execute_store_simple(
             mysql_error(mysql), sql);
         DBUG_RETURN(TRUE);
     }
-
-    // str_truncate_0(backup_sql);
-    // str_append(backup_sql, "INSERT INTO ");
-    // sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
-    //   create_time, binlog_file, binlog_position) VALUES \
-    //   (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
-    //     mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
-    //     ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
-    // str_append(backup_sql, tmp_buf);
-    //
-    // if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
-    // {
-    //     my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-    //     sql_print_warning("write the datacenter failed, insert failed: %s", mysql_error(mysql));
-    //     inception_transfer_set_errmsg(thd, mi->datacenter);
-    //     DBUG_RETURN(TRUE);
-    // }
 
     DBUG_RETURN(false);
 }
@@ -11512,66 +11472,70 @@ mysql_dup_char(
 void
 mysql_dup_char_with_escape(
     char* src,
-    char* dest,
-    char chr,
-    char escape_char,
-    char escape_add
+    str_t* dest,
+    char* chr,
+    char* escape_char
 )
 {
     char* p = src;
     while (*src)
     {
         //"
-        if (*src == escape_char && (p == src || *(src-1)!='\\'))
+        if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
         {
-            *dest=escape_add; *(++dest) = escape_add; *(++dest) = escape_char;
+	    str_append(dest, "\\\\");
+	    str_append(dest, escape_char);
         }
-        else if (*src == escape_char && (src > p && *(src-1)=='\\'))
+        else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
         {
-            *dest=escape_add; *(++dest) = escape_add; *(++dest) = escape_char;
+	    str_append(dest, "\\\\");
+	    str_append(dest, escape_char);
         }
         //if the curr is \n or \r\n, then replace
         else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
         {
-            *dest='<'; *(++dest) = 'b'; *(++dest) = 'r'; *(++dest) = '/'; *(++dest) = '>';
+	    str_append(dest, "<br/>");
         }
         else if ((*src=='\\' && *(src+1) == 'n'))
         {
             //if the string is \n explictly, example aaaa \\n aaaaa
-            *dest='<'; *(++dest) = 'b'; *(++dest) = 'r'; *(++dest) = '/'; *(++dest) = '>';
+	    str_append(dest, "<br/>");
             src++;//omit the n after "\"
         }
 	else if ((*src=='\\' && *(src+1) == 'n'))
 	{
 	    //if the string is \n explictly, example aaaa \\n aaaaa
-	    *dest='<';
-	    *(++dest) = 'b';
-	    *(++dest) = 'r';
-	    *(++dest) = '/';
-	    *(++dest) = '>';
+	    str_append(dest, "<br/>");
 	    src++;//omit the n after "\"
 	}
-        else if (*src == chr && (p == src || *(src-1) != '\\'))
+        else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
+                ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
         {//'
-            *dest=chr; *(++dest) = chr;
+	    str_append(dest, chr);
+	    str_append(dest, chr);
         }
+	else if ((*src=='\\' && *(src+1) == '\\'))
+	{
+	    //if the string is \n explictly, example aaaa \\n aaaaa
+	    str_append(dest, "\\\\");
+	    src++;//omit the n after "\"
+	}
         else
         {
-            *dest = *src;
+	    str_append_with_length(dest, src, 1);
         }
 
-        dest++;
         src++;
     }
 }
 
 int mysql_get_field_string_for_tranfer(
+    Master_info* mi,
     Field* field, 
     str_t* backup_sql, 
     char* null_arr, 
     int field_index, 
-    int qutor_flag,
-    int doublequtor_escape
+    int qutor_flag
 )
 {
     int result = 0;                       // Will be set if null_value == 0
@@ -11582,7 +11546,7 @@ int mysql_get_field_string_for_tranfer(
     uchar buff[MAX_FIELD_WIDTH];
     String buffer((char*) buff,sizeof(buff),&my_charset_bin);
     String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
-    char* dupcharfield;
+    str_t* dupcharfield = &mi->datacenter->dupchar_buffer;
 
     if (null_arr[field_index])
     {
@@ -11615,17 +11579,12 @@ int mysql_get_field_string_for_tranfer(
         case MYSQL_TYPE_BIT:
         case MYSQL_TYPE_NEWDECIMAL:
             {
+		str_truncate_0(dupcharfield);
                 if (qutor_flag)
                     str_append(backup_sql, "\'");
                 res=field->val_str(&buffer);
-                dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-                if (!doublequtor_escape)
-                    mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
-                else
-                    mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, '\'', '\"', '\\');
-
-                str_append(backup_sql, dupcharfield);
-                my_free(dupcharfield);
+                mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, (char*)"\'", (char*)"\"");
+                str_append(backup_sql, str_get(dupcharfield));
                 qutor_end =1;
                 append_flag = FALSE;
                 break;
@@ -11766,10 +11725,7 @@ int mysql_get_field_string(
                     backupsql->append("\'");
                 res=field->val_str(&buffer);
                 dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-                if (!doublequtor_escape)
-                    mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
-                else
-                    mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, '\'', '\"', '\\');
+                mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
 
                 backupsql->append(dupcharfield);
                 my_free(dupcharfield);
@@ -13948,7 +13904,6 @@ int mysql_deinit_sql_cache(THD* thd)
     split_table_t*      split_table_next;
     check_rt_t*   query_rt;
     check_rt_t*   query_rt_next;
-    query_print_cache_t* query_print_cache;
     query_print_cache_node_t * query_print_cache_node;
     query_print_cache_node_t * query_print_cache_node_next;
     table_rt_t*                 table_rt;
