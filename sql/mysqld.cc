@@ -1375,7 +1375,7 @@ static void close_connections(void)
     unix_sock= MYSQL_INVALID_SOCKET;
   }
 #endif
-//   end_thr_alarm(0);      // Abort old alarms.
+   end_thr_alarm(0);      // Abort old alarms.
 
   /*
     First signal all threads that it's time to die
