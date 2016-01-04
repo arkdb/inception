@@ -4147,25 +4147,18 @@ inception_transfer_load_datacenter(
     //not found in global transfer cache
     mysql = thd->get_transfer_connection();
     if (mysql == NULL)
-    {
-        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
         return NULL;
-    }
 
     sprintf (tmp, "select * from `%s`.`instances` where instance_role in ('master')", 
         datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res = mysql_store_result(mysql)) == NULL)
-    {
-        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
         return NULL;
-    }
 
     source_row = mysql_fetch_row(source_res);
     //check the count of master node, if not 1, then report invalid
     if (source_res->row_count != 1)
     {
-        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
         mysql_free_result(source_res);
         return NULL;
     }
@@ -4248,6 +4241,7 @@ int mysql_slave_transfer_status(
     List<Item>    field_list;
     Protocol *    protocol= thd->protocol;
     char timestamp[20];
+    char name[1024];
     struct tm * start;
     long time_diff;
     timestamp[0] = 0;
@@ -4274,9 +4268,18 @@ int mysql_slave_transfer_status(
     if (osc_percent_node == NULL)
     {
         mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), thd->lex->name.str);
         DBUG_RETURN(res);
     }
 
+    if (LIST_GET_LEN(osc_percent_node->slave_lst) == 0)
+    {
+        sprintf(name, "%s:Slaves", thd->lex->name.str);
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), name);
+        DBUG_RETURN(res);
+    }
+        
     slave_node = LIST_GET_FIRST(osc_percent_node->slave_lst); 
     while (slave_node)
     {
@@ -4367,6 +4370,7 @@ int mysql_master_transfer_status(
     if (osc_percent_node == NULL)
     {
         mysql_mutex_unlock(&transfer_mutex);
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), thd->lex->name.str);
         DBUG_RETURN(res);
     }
 
@@ -4444,7 +4448,10 @@ int mysql_show_transfer_status(THD* thd)
 
     osc_percent_node = inception_transfer_load_datacenter(thd, thd->lex->name.str, true);
     if (osc_percent_node == NULL)
+    {
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), thd->lex->name.str);
         DBUG_RETURN(res);
+    }
 
     if (thd->lex->type == 1)
         mysql_master_transfer_status(thd, osc_percent_node); 
@@ -4702,7 +4709,8 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
     create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL COMMENT 'binlog file name',");
     create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL COMMENT 'binlog file position',");
-    create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`))");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`),");
+    create_sql = str_append(create_sql, "KEY idx_create_time(`create_time`))");
     create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer binlog commit positions'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
@@ -4815,6 +4823,15 @@ int inception_transfer_add_instance(
 
                 slave = LIST_GET_NEXT(link, slave);
             }
+        }
+    }
+    else
+    {
+        //add master first
+        if (master_flag == 2)
+        {
+            my_error(ER_MASTER_NODE_FIRST, MYF(0));
+            goto error;
         }
     }
 
