@@ -11527,10 +11527,14 @@ mysql_dup_char_with_escape(
     char* p = src;
     while (*src)
     {
-        //"
-        if (*src == escape_char[0])
+        if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
         {
-            str_append(dest, "\\\\");//for json, so need two \\
+            str_append(dest, "\\\\");
+            str_append(dest, escape_char);
+        }
+        else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
+        {
+            str_append(dest, "\\\\");
             str_append(dest, escape_char);
         }
         //if the curr is \n or \r\n, then replace
@@ -11550,64 +11554,22 @@ mysql_dup_char_with_escape(
             str_append(dest, "<br/>");
             src++;//omit the n after "\"
         }
-        else if (*src == chr[0])
+        else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
+                ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
         {//'
-            str_append(dest, "\\");//escape the ' character
+            str_append(dest, "\\");
             str_append(dest, chr);
         }
-        else if ((*src=='\\'))
+        else if ((*src=='\\' && *(src+1) == '\\'))
         {
             //if the string is \n explictly, example aaaa \\n aaaaa
-            str_append(dest, "\\\\");// escape itself
-            // src++;//omit the n after "\"
+            str_append(dest, "\\\\\\\\");
+            src++;//omit the n after "\"
         }
         else
         {
             str_append_with_length(dest, src, 1);
         }
-        // if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
-        // {
-        //     str_append(dest, "\\\\");
-        //     str_append(dest, escape_char);
-        // }
-        // else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
-        // {
-        //     str_append(dest, "\\\\");
-        //     str_append(dest, escape_char);
-        // }
-        // //if the curr is \n or \r\n, then replace
-        // else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
-        // {
-        //     str_append(dest, "<br/>");
-        // }
-        // else if ((*src=='\\' && *(src+1) == 'n'))
-        // {
-        //     //if the string is \n explictly, example aaaa \\n aaaaa
-        //     str_append(dest, "<br/>");
-        //     src++;//omit the n after "\"
-        // }
-        // else if ((*src=='\\' && *(src+1) == 'n'))
-        // {
-        //     //if the string is \n explictly, example aaaa \\n aaaaa
-        //     str_append(dest, "<br/>");
-        //     src++;//omit the n after "\"
-        // }
-        // else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
-        //         ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
-        // {//'
-        //     str_append(dest, "\\");
-        //     str_append(dest, chr);
-        // }
-        // else if ((*src=='\\' && *(src+1) == '\\'))
-        // {
-        //     //if the string is \n explictly, example aaaa \\n aaaaa
-        //     str_append(dest, "\\\\\\\\");
-        //     src++;//omit the n after "\"
-        // }
-        // else
-        // {
-        //     str_append_with_length(dest, src, 1);
-        // }
 
         src++;
     }
