@@ -103,6 +103,7 @@ struct str_struct
 	char	str_buf[NAME_CHAR_LEN];
 	char*	str;
 	int		str_len;
+	int		cur_len;
 };
 
 typedef struct select_info_struct select_info_t;

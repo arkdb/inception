@@ -276,6 +276,7 @@ str_init(str_t* str)
 {
     str->str = str->str_buf;
     str->str_len = NAME_CHAR_LEN;
+    str->cur_len = 0;
     memset(str->str, 0, NAME_CHAR_LEN);
 
     return str;
@@ -296,23 +297,25 @@ str_relloc(str_t* str, int namelen)
         my_free(str->str);
 
     str->str_len = buflen;
+    str->cur_len = strlen(select_item_tmp);
     str->str = select_item_tmp;
     return str;
 }
 
+/*only use to append one char*/
 str_t*
-str_append(
+str_append_1(
     str_t*  str,
     const char* new_string
 )
 {
-    int    namelen;
+    if (str->cur_len + 10 >= str->str_len)
+        str_relloc(str, str->cur_len + 10);
 
-    namelen = strlen(str->str) + strlen(new_string) + 1;
-    if (namelen >= str->str_len)
-        str_relloc(str, namelen);
-
-    strcat(str->str, new_string);
+//    strcat(str->str, new_string);
+    str->str[str->cur_len] = new_string[0];
+    str->str[str->cur_len+1] = '\0';
+    str->cur_len ++;
     return str;
 }
 
@@ -325,18 +328,30 @@ str_append_with_length(
 {
     int    namelen;
 
-    namelen = strlen(str->str) + len + 1;
+    namelen = str->cur_len + len + 1;
     if (namelen >= str->str_len)
         str_relloc(str, namelen);
 
-    strncat(str->str, new_string, len);
+    memcpy(str->str + str->cur_len, new_string, len);
+    str->str[str->cur_len + len] = '\0';
+    str->cur_len += len;
     return str;
+}
+
+str_t*
+str_append(
+    str_t*  str,
+    const char* new_string
+)
+{
+    return str_append_with_length(str, new_string, strlen(new_string));
 }
 
 str_t*
 str_truncate_0(str_t* str)
 {
     str->str[0] = '\0';
+    str->cur_len = 0;
     return str;
 }
 
@@ -350,6 +365,7 @@ str_truncate(str_t* str, int endlen)
         endlen = len;
 
     str->str[len - endlen] = '\0';
+    str->cur_len = len - endlen;
     return str;
 }
 
@@ -11529,13 +11545,15 @@ mysql_dup_char_with_escape(
     {
         if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
         {
-            str_append(dest, "\\\\");
-            str_append(dest, escape_char);
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, escape_char);
         }
         else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
         {
-            str_append(dest, "\\\\");
-            str_append(dest, escape_char);
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, escape_char);
         }
         //if the curr is \n or \r\n, then replace
         else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
@@ -11557,18 +11575,21 @@ mysql_dup_char_with_escape(
         else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
                 ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
         {//'
-            str_append(dest, "\\");
-            str_append(dest, chr);
+            str_append_1(dest, "\\");
+            str_append_1(dest, chr);
         }
         else if ((*src=='\\' && *(src+1) == '\\'))
         {
             //if the string is \n explictly, example aaaa \\n aaaaa
-            str_append(dest, "\\\\\\\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
             src++;//omit the n after "\"
         }
         else
         {
-            str_append_with_length(dest, src, 1);
+            str_append_1(dest, src);
         }
 
         src++;
@@ -11625,12 +11646,13 @@ int mysql_get_field_string_for_tranfer(
         case MYSQL_TYPE_BIT:
         case MYSQL_TYPE_NEWDECIMAL:
             {
-		str_truncate_0(dupcharfield);
+		//str_truncate_0(dupcharfield);
                 if (qutor_flag)
                     str_append(backup_sql, "\'");
                 res=field->val_str(&buffer);
-                mysql_dup_char_with_escape(res->c_ptr(), dupcharfield, (char*)"\'", (char*)"\"");
-                str_append(backup_sql, str_get(dupcharfield));
+                mysql_dup_char_with_escape(res->c_ptr(), backup_sql, (char*)"\'", (char*)"\"");
+                //str_append(backup_sql, str_get(dupcharfield));
+                //str_append(backup_sql, "Hello");
                 qutor_end =1;
                 append_flag = FALSE;
                 break;
