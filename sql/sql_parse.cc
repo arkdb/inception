@@ -4187,6 +4187,7 @@ inception_transfer_load_datacenter(
     str_init(&datacenter->sql_buffer);
     str_init(&datacenter->dupchar_buffer);
     strcpy(datacenter->hostname, instance_ip);
+    datacenter->mysql = NULL;
     datacenter->binlog_file[0] = '\0';
     datacenter->cbinlog_file[0] = '\0';
     if (binlog_file != NULL)
@@ -4227,6 +4228,7 @@ inception_transfer_load_datacenter(
         slave_dc->binlog_file[0] = '\0';
         slave_dc->binlog_position = 0;
         slave_dc->valid = true;
+        slave_dc->mysql = NULL;
         slave_dc->mysql_port = strtoll(source_row[4], NULL, 10);
         strcpy(slave_dc->datacenter_name, datacenter_name);
         strcpy(slave_dc->instance_name, source_row[1]);
@@ -4903,7 +4905,7 @@ MYSQL* inception_init_binlog_connection(
 }
 
 MYSQL* inception_get_connection(
-    MYSQL* mysql, 
+    MYSQL* mysql_in, 
     char* hostname, 
     int port, 
     char* username, 
@@ -4911,11 +4913,12 @@ MYSQL* inception_get_connection(
     int timeout
 )
 {
+    MYSQL* mysql;
     ulong client_flag= CLIENT_REMEMBER_OPTIONS ;
     uint net_timeout= timeout;
     bool reconnect= TRUE;
 
-    mysql_init(mysql);
+    mysql = mysql_init(mysql_in);
     mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
@@ -4959,6 +4962,8 @@ int inception_transfer_delete_table_object(
         my_hash_delete(&datacenter->table_cache, (uchar*)tableinfo);
         mysql_table_info_free(tableinfo);
     }
+
+    return false;
 }
 
 table_info_t*
@@ -5534,22 +5539,26 @@ inception_transfer_query_event(
 }
 
 MYSQL_RES*
-inception_transfer_execute_read(
+inception_transfer_execute_datacenter_read(
     THD* thd,
     char* sql, 
-    char* hostname,
-    int mysql_port,
-    char* username,
-    char* password,
+    transfer_cache_t* datacenter,
     int timeout
 )
 {
-    MYSQL mysql_space;
     MYSQL_RES *     source_res1=NULL;
     MYSQL* mysql;
 
-    mysql = inception_get_connection(&mysql_space, hostname, 
-        mysql_port, username, password, timeout);
+    if (!datacenter->mysql)
+    {
+        mysql = inception_get_connection(NULL, datacenter->hostname, 
+            datacenter->mysql_port, datacenter->username, datacenter->password, timeout);
+    }
+    else
+    {
+        mysql = datacenter->mysql;
+    }
+
     if (mysql == NULL ||
         mysql_real_query(mysql, sql, strlen(sql)) ||
         (source_res1 = mysql_store_result(mysql)) == NULL)
@@ -5558,10 +5567,10 @@ inception_transfer_execute_read(
             return NULL;
         my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
         mysql_close(mysql);
+        datacenter->mysql = NULL;//clear
         return NULL;
     }
 
-    mysql_close(mysql);
     return source_res1;
 }
 
@@ -5596,8 +5605,7 @@ inception_transfer_get_slaves_position(
 retry_fetch1:
         retry_count ++;
         sprintf (tmp, "SHOW MASTER STATUS");
-        source_res1 = inception_transfer_execute_read(thd, tmp, slave->hostname, 
-            slave->mysql_port, datacenter->username, datacenter->password, 2);
+        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, slave, 2);
         if (source_res1 == NULL && retry_count <= 2)
             goto retry_fetch1;
         if (retry_count == 3)
@@ -5622,8 +5630,7 @@ retry_fetch1:
 retry_fetch2:
         retry_count ++;
         sprintf (tmp, "select from_unixtime(unix_timestamp());");
-        source_res1 = inception_transfer_execute_read(thd, tmp, slave->hostname, 
-            slave->mysql_port, datacenter->username, datacenter->password, 2);
+        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, slave, 2);
         if (source_res1 == NULL && retry_count <= 2)
             goto retry_fetch2;
         if (retry_count == 3)

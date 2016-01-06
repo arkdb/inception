@@ -372,6 +372,7 @@ public:
 typedef struct transfer_cache_struct transfer_cache_t;
 struct transfer_cache_struct
 {
+    MYSQL* mysql;
     char    hostname[HOSTNAME_LENGTH + 1];
     int     mysql_port;
     char    username[USERNAME_CHAR_LENGTH + 1];
