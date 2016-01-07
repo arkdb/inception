@@ -4225,11 +4225,13 @@ inception_transfer_load_datacenter(
     {
         slave_dc = (transfer_cache_t*)my_malloc(sizeof(transfer_cache_t) , MY_ZEROFILL);
         strcpy(slave_dc->hostname, source_row[3]);
+        strcpy(slave_dc->username, datacenter->username);
+        strcpy(slave_dc->password, datacenter->password);
+        slave_dc->mysql_port = strtoll(source_row[4], NULL, 10);
         slave_dc->binlog_file[0] = '\0';
         slave_dc->binlog_position = 0;
         slave_dc->valid = true;
         slave_dc->mysql = NULL;
-        slave_dc->mysql_port = strtoll(source_row[4], NULL, 10);
         strcpy(slave_dc->datacenter_name, datacenter_name);
         strcpy(slave_dc->instance_name, source_row[1]);
         str_init(&slave_dc->errmsg);
@@ -5543,6 +5545,8 @@ inception_transfer_execute_datacenter_read(
     THD* thd,
     char* sql, 
     transfer_cache_t* datacenter,
+    char* username,
+    char* password,
     int timeout
 )
 {
@@ -5552,7 +5556,8 @@ inception_transfer_execute_datacenter_read(
     if (!datacenter->mysql)
     {
         mysql = inception_get_connection(NULL, datacenter->hostname, 
-            datacenter->mysql_port, datacenter->username, datacenter->password, timeout);
+            datacenter->mysql_port, username, password, timeout);
+        datacenter->mysql = mysql;
     }
     else
     {
@@ -5605,7 +5610,8 @@ inception_transfer_get_slaves_position(
 retry_fetch1:
         retry_count ++;
         sprintf (tmp, "SHOW MASTER STATUS");
-        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, slave, 2);
+        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, 
+                      slave, datacenter->username, datacenter->password, 2);
         if (source_res1 == NULL && retry_count <= 2)
             goto retry_fetch1;
         if (retry_count == 3)
@@ -5630,7 +5636,8 @@ retry_fetch1:
 retry_fetch2:
         retry_count ++;
         sprintf (tmp, "select from_unixtime(unix_timestamp());");
-        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, slave, 2);
+        source_res1 = inception_transfer_execute_datacenter_read(thd, tmp, 
+                      slave, datacenter->username, datacenter->password, 2);
         if (source_res1 == NULL && retry_count <= 2)
             goto retry_fetch2;
         if (retry_count == 3)
