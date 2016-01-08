@@ -15395,6 +15395,12 @@ inception_show_param:
         lex->name= $6;
         lex->type = $2;
     }
+    | GET_SYM DATACENTER_SYM LIST_SYM
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DATACENTER;
+    }
     ;
 
 inception_op_type:
@@ -15463,8 +15469,18 @@ inception:
             lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_TRANSFER;
             lex->sql_command = SQLCOM_INCEPTION;
             lex->name= $6;
-            Lex->ident= $9;
+            lex->ident= $9;
             lex->comment = $11;
+        }
+        | INCEPTION_SYM START_SYM TRANSFER_SYM FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_TRANSFER;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->name= $6;
+            lex->ident.str= NULL;
+            lex->comment.str= NULL;
         }
         | INCEPTION_SYM SET TRANSFER_SYM POSITION_SYM '(' TEXT_STRING_sys ',' 
         ulong_num ')' FOR_SYM DATACENTER_SYM ident

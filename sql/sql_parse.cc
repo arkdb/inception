@@ -897,6 +897,7 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_BINLOG_TRANSFER ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TRANSFER_STATUS||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DATACENTER||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
     
@@ -4422,7 +4423,8 @@ int mysql_master_transfer_status(
     {
         time_diff = ((long)(time(0) - osc_percent_node->last_master_timestamp) - 
             osc_percent_node->clock_diff_with_master);
-        protocol->store((longlong)(osc_percent_node->last_master_timestamp ? max(0L, time_diff) : 0));
+        protocol->store((longlong)(osc_percent_node->last_master_timestamp 
+              ? max(0L, time_diff) : 0));
     }
     else
     {
@@ -4433,7 +4435,8 @@ int mysql_master_transfer_status(
     slave_dc = LIST_GET_FIRST(osc_percent_node->slave_lst);
     while (slave_dc) 
     {
-        sprintf(tmp, "%s:%d(%s)", slave_dc->hostname, slave_dc->mysql_port, (slave_dc->valid ? "Yes": "No"));    
+        sprintf(tmp, "%s:%d(%s:%s)", slave_dc->hostname, 
+            slave_dc->mysql_port, slave_dc->instance_name, (slave_dc->valid ? "Yes": "No"));    
         str_append(str, tmp);
         str_append(str, ", ");
         slave_dc = LIST_GET_NEXT(link, slave_dc);
@@ -4447,6 +4450,59 @@ int mysql_master_transfer_status(
     protocol->write();
 
     my_eof(thd);
+    DBUG_RETURN(res);
+}
+
+int mysql_show_datacenter_list(THD* thd)
+{
+    DBUG_ENTER("mysql_show_transfer_status");
+    int res= 0;
+    transfer_cache_t* osc_percent_node;
+    List<Item>    field_list;
+    MYSQL* mysql;
+    char* tmp;
+    Protocol *    protocol= thd->protocol;
+    MYSQL_RES *     source_res;
+    MYSQL_ROW       source_row;
+
+    field_list.push_back(new Item_empty_string("Datacenter_name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Running", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    tmp = "SHOW DATABASES";
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+        DBUG_RETURN(true);
+
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(true);
+    }
+
+    source_row = mysql_fetch_row(source_res);
+    while (source_row)
+    {
+        osc_percent_node = inception_transfer_load_datacenter(thd, source_row[0], true);
+        if (osc_percent_node != NULL)
+        {
+            protocol->prepare_for_resend();
+            protocol->store(osc_percent_node->datacenter_name, system_charset_info);
+            protocol->store(osc_percent_node->transfer_on?"Yes":"No", system_charset_info);
+            protocol->write();
+        }
+        source_row = mysql_fetch_row(source_res);
+    }
+
+    mysql_free_result(source_res);
+    my_eof(thd);
+
     DBUG_RETURN(res);
 }
 
@@ -6624,8 +6680,11 @@ int inception_transfer_start_replicate(
         return true;
     }
 
-    strcpy(datacenter->username, username);
-    strcpy(datacenter->password, password);
+    if (username != NULL && password != NULL)
+    {
+        strcpy(datacenter->username, username);
+        strcpy(datacenter->password, password);
+    }
 
     //if binlog position is null, then start with 'show master status' position
     //but first, should read the max binlog position from transfer_data, from where
@@ -6655,7 +6714,8 @@ int inception_transfer_start_replicate(
                 mysql_free_result(source_res1);
             //todo: free the mysql handle
             mysql =inception_get_connection(&mysql_space, 
-                datacenter->hostname, datacenter->mysql_port, username, password, 10);
+                datacenter->hostname, datacenter->mysql_port, 
+                datacenter->username, datacenter->password, 10);
             if (mysql == NULL)
             {
                 thd->clear_error();
@@ -6940,6 +7000,8 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_execute_inception_binlog_transfer(thd);
         case INCEPTION_COMMAND_SHOW_TRANSFER_STATUS:
             return mysql_show_transfer_status(thd);
+        case INCEPTION_COMMAND_SHOW_DATACENTER:
+            return mysql_show_datacenter_list(thd);
 
         default:
             return false;
