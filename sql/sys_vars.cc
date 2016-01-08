@@ -1029,21 +1029,31 @@ static Sys_var_ulong Sys_server_id(
     GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
     VALID_RANGE(0, UINT_MAX32), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
 static Sys_var_ulong Sys_inception_transfer_event_sequence_sync(
     "inception_transfer_event_sequence_sync",
     "sync the event id every this number",
     GLOBAL_VAR(inception_transfer_event_sequence_sync), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(100, UINT_MAX32), DEFAULT(10000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
 static Sys_var_ulong Sys_inception_transfer_trx_sequence_sync(
     "inception_transfer_trx_sequence_sync",
     "sync the transaction id every this number",
     GLOBAL_VAR(inception_transfer_trx_sequence_sync), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(10, UINT_MAX32), DEFAULT(1000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
 static Sys_var_ulong Sys_inception_transfer_binlog_expire_days(
     "inception_transfer_binlog_expire_days",
     "transfer binlog expire days",
     GLOBAL_VAR(inception_transfer_binlog_expire_days), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, UINT_MAX32), DEFAULT(7), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+
+static Sys_var_ulong Sys_inception_transfer_slave_sync(
+    "inception_transfer_slave_sync",
+    "slave binlog position sync every this number",
+    GLOBAL_VAR(inception_transfer_slave_sync), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, UINT_MAX32), DEFAULT(16), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));

@@ -245,7 +245,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creati
 ulong mysql_read_event_for_transfer(MYSQL* mysql);
 void free_tables_to_lock(Master_info*	mi);
 int mysql_get_field_string_for_tranfer(Master_info* mi,  Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag);
-
+void mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field);
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
     MYSQL_ROWS *tmp=0;
@@ -4773,7 +4773,7 @@ int inception_transfer_instance_table_create(
         //insert the init data when create the table first
         str_truncate(create_sql, str_get_len(create_sql));
         create_sql = str_append(create_sql, "INSERT INTO ");
-        sprintf (tmp, "`%s`.`%s` values('EID', 1), ('TID', 1)", datacenter, "transfer_sequence");
+        sprintf (tmp, "`%s`.`%s` values('EID', 0), ('TID', 0)", datacenter, "transfer_sequence");
         create_sql = str_append(create_sql, tmp);
         if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
         {
@@ -5179,10 +5179,22 @@ int inception_transfer_next_sequence(
         //check the count of master node, if not 1, then report invalid
         while (source_row)
         {
-            if (!strcasecmp(INCEPTION_TRANSFER_EIDNAME, source_row[0]))
-                eventid = strtoll(source_row[1], NULL, 10);
-            if (!strcasecmp(INCEPTION_TRANSFER_TIDNAME, source_row[0]))
-                trxid = strtoll(source_row[1], NULL, 10);
+            if (thd->event_id == 0)
+            {
+                if (!strcasecmp(INCEPTION_TRANSFER_EIDNAME, source_row[0]))
+                    eventid = strtoll(source_row[1], NULL, 10);
+            }
+            else
+                eventid = thd->event_id;
+
+            if (thd->transaction_id == 0)
+            {
+                if (!strcasecmp(INCEPTION_TRANSFER_TIDNAME, source_row[0]))
+                    trxid = strtoll(source_row[1], NULL, 10);
+            }
+            else
+                trxid = thd->transaction_id;
+
             source_row = mysql_fetch_row(source_res);
         }
     }
@@ -5194,54 +5206,48 @@ int inception_transfer_next_sequence(
 
     if (type == INCEPTION_TRANSFER_EIDENUM)
     {
-        if (eventid != 0)
+        if (eventid > thd->event_id)
+            thd->event_id = eventid;
+        if (thd->event_id % inception_transfer_event_sequence_sync==0)
         {
-            if (eventid > thd->event_id)
-                thd->event_id = eventid;
-            if (thd->event_id % inception_transfer_event_sequence_sync==0)
+            mysql = thd->get_transfer_connection();
+            if (mysql == NULL)
             {
-                mysql = thd->get_transfer_connection();
-                if (mysql == NULL)
-                {
-                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                    return true;
-                }
-                thd->event_id = eventid;
-                sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
-                    datacenter_name, inception_transfer_event_sequence_sync + 
-                    thd->event_id, INCEPTION_TRANSFER_EIDNAME);
-                if (mysql_real_query(mysql, sql, strlen(sql)))
-                {
-                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                    return true;
-                }
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                return true;
+            }
+            thd->event_id = eventid;
+            sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
+                datacenter_name, inception_transfer_event_sequence_sync + 
+                thd->event_id, INCEPTION_TRANSFER_EIDNAME);
+            if (mysql_real_query(mysql, sql, strlen(sql)))
+            {
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                return true;
             }
         }
         thd->event_id = thd->event_id + 1;
     }
     else if (type == INCEPTION_TRANSFER_TIDENUM)
     {
-        if (trxid != 0)
+        if (trxid > thd->transaction_id)
+            thd->transaction_id = trxid;
+        if (thd->transaction_id % inception_transfer_trx_sequence_sync==0)
         {
-            if (trxid > thd->transaction_id)
-                thd->transaction_id = trxid;
-            if (thd->transaction_id % inception_transfer_trx_sequence_sync==0)
+            mysql = thd->get_transfer_connection();
+            if (mysql == NULL)
             {
-                mysql = thd->get_transfer_connection();
-                if (mysql == NULL)
-                {
-                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                    return true;
-                }
-                thd->transaction_id = trxid;
-                sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
-                    datacenter_name, inception_transfer_trx_sequence_sync + 
-                    thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
-                if (mysql_real_query(mysql, sql, strlen(sql)))
-                {
-                    my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                    return true;
-                }
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                return true;
+            }
+            thd->transaction_id = trxid;
+            sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
+                datacenter_name, inception_transfer_trx_sequence_sync + 
+                thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
+            if (mysql_real_query(mysql, sql, strlen(sql)))
+            {
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
+                return true;
             }
         }
 
@@ -5332,6 +5338,311 @@ error:
     DBUG_RETURN(error);
 }
 
+int inception_tranfer_write_alter_table(
+    THD* thd,
+    str_t* sql_buffer
+)
+{
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+    table_info_t*   table_info;
+    field_info_t* field_info;
+    int first=1;
+    Create_field* field;
+
+    while (alter_info_ptr->flags)
+    {
+        if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
+            alter_info_ptr->flags & Alter_info::ALTER_COLUMN_ORDER)
+        {
+            List_iterator<Create_field> fields(alter_info_ptr->create_list);
+            str_append(sql_buffer, "\"ADDCOLUMN\":[");
+            field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
+            first=1;
+            while ((field=fields++))
+            {
+                if (field->change != NULL)
+                    continue;
+
+                if (first==0)
+                    str_append(sql_buffer, ",");
+                str_append(sql_buffer, "{");
+                mysql_set_cache_new_column_type(field_info, field);
+                str_append(sql_buffer, "\"field_name\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field->field_name);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"data_type\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->data_type);
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, "}");
+                first = 0;
+            }
+
+            str_append(sql_buffer, "],");
+            my_free(field_info);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_COLUMN;
+            alter_info_ptr->flags &= ~Alter_info::ALTER_COLUMN_ORDER;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            int keyfirst=1;
+            int colfirst=1;
+            Key* key;
+            Key_part_spec* col1;
+            List_iterator<Key> key_iterator(alter_info_ptr->key_list);
+            str_append(sql_buffer, "\"ADDINDEX\":[");
+            keyfirst=1;
+            while ((key=key_iterator++))
+            {
+                if (keyfirst==0)
+                    str_append(sql_buffer, ",");
+                    
+                str_append(sql_buffer, "{");
+                List_iterator<Key_part_spec> col_it(key->columns);
+                str_append(sql_buffer, "\"index_name\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, key->name.str);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"column_name\":[");
+                colfirst=1;
+                while ((col1= col_it++))
+                {
+                    if (colfirst==0)
+                        str_append(sql_buffer, ",");
+                    str_append(sql_buffer, "\"");
+                    str_append(sql_buffer, col1->field_name.str);
+                    str_append(sql_buffer, "\"");
+                    colfirst=0;
+                }
+                str_append(sql_buffer, "]");
+                str_append(sql_buffer, "}");
+                keyfirst=0;
+            }
+            str_append(sql_buffer, "],");
+            alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_INDEX;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            Alter_drop*  field;
+            List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
+            str_append(sql_buffer, "\"DROPCOLUMN\":[");
+            int keyfirst=1;
+
+            while ((field=fields++))
+            {
+                if (field->type != Alter_drop::COLUMN)
+                    continue;
+
+                if (keyfirst==0)
+                    str_append(sql_buffer, ",");
+                    
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field->name);
+                str_append(sql_buffer, "\"");
+                keyfirst=0;
+            }
+            str_append(sql_buffer, "],");
+            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_COLUMN;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
+        {
+            str_append(sql_buffer, "\"RENAME\":{");
+            str_append(sql_buffer, "\"db_name\":");
+            str_append(sql_buffer, "\"");
+            str_append(sql_buffer, thd->lex->select_lex.db);
+            str_append(sql_buffer, "\",");
+            str_append(sql_buffer, "\"table_name\":");
+            str_append(sql_buffer, "\"");
+            str_append(sql_buffer, thd->lex->name.str);
+            str_append(sql_buffer, "\"");
+            str_append(sql_buffer, "},");
+            alter_info_ptr->flags &= ~Alter_info::ALTER_RENAME;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            List_iterator<Create_field> fields(alter_info_ptr->create_list);
+            str_append(sql_buffer, "\"CHANGECOLUMN\":[");
+            field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
+            first=1;
+            while ((field=fields++))
+            {
+                if (field->change == NULL)
+                    continue;
+
+                if (first==0)
+                    str_append(sql_buffer, ",");
+                str_append(sql_buffer, "{");
+                mysql_set_cache_new_column_type(field_info, field);
+                str_append(sql_buffer, "\"origin_field_name\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field->change);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"field_name\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field->field_name);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"data_type\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->data_type);
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, "}");
+                first = 0;
+            }
+
+            str_append(sql_buffer, "],");
+            my_free(field_info);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
+            Alter_drop* field;
+            str_append(sql_buffer, "\"DROPINDEX\":[");
+            int keyfirst=1;
+            while ((field=fields++))
+            {
+                if (field->type != Alter_drop::KEY)
+                    continue;
+
+                if (keyfirst==0)
+                    str_append(sql_buffer, ",");
+                    
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field->name);
+                str_append(sql_buffer, "\"");
+                keyfirst=0;
+            }
+            str_append(sql_buffer, "],");
+
+            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    str_append(sql_buffer, "\"OTHERS\":\"Be ignored\"");
+    return false;
+}
+
+int inception_transfer_write_DDL(
+    Master_info* mi, 
+    Log_event* ev, 
+    transfer_cache_t* datacenter,
+    str_t * sql_buffer
+)
+{
+    TABLE_LIST* table;
+    THD* thd;
+    THD* query_thd;
+    table_info_t* table_info;
+    field_info_t* field_info;
+    int optype=0;
+    int first=1;
+    int switch_flag=1;
+    thd = mi->thd;
+    query_thd = thd->query_thd;
+    optype = query_thd->lex->sql_command;
+    SELECT_LEX *select_lex= &query_thd->lex->select_lex;
+    switch (optype)
+    {
+    case SQLCOM_ALTER_TABLE:
+        {
+            inception_tranfer_write_alter_table(query_thd, sql_buffer);
+            break;
+        }
+    case SQLCOM_RENAME_TABLE:
+        {
+            str_append(sql_buffer, "\"RENAME\":[");
+            for (table=query_thd->lex->query_tables; table; table=table->next_global)
+            {
+                if (!first)
+                    str_append(sql_buffer, ",");
+                if (switch_flag==1)
+                {
+                    str_append(sql_buffer, "{\"from\":{");
+                    switch_flag= 2;
+                }
+                else
+                {
+                    str_append(sql_buffer, "\"to\":{");
+                    switch_flag = 1;
+                }
+
+                str_append(sql_buffer, "\"dbname\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, table->db);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"tablename\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, table->table_name);
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, "}");
+                if (switch_flag==1)
+                {
+                    str_append(sql_buffer, "}");
+                }
+                first = 0;
+            }
+            str_append(sql_buffer, "]");
+            break;
+        }
+    case SQLCOM_CREATE_TABLE:
+        {
+            TABLE_LIST *create_table= select_lex->table_list.first;
+            table_info = inception_transfer_get_table_object(mi->thd, 
+            (char*)create_table->db, (char*)create_table->table_name, 
+            mi->datacenter);
+            if (table_info == NULL)
+                return false;
+            str_append(sql_buffer, "\"NEW\":[");
+            field_info = LIST_GET_FIRST(table_info->field_lst);
+            first=1;
+            while (field_info)
+            {
+                if (!first)
+                    str_append(sql_buffer, ",");
+
+                str_append(sql_buffer, "{");
+                str_append(sql_buffer, "\"field_name\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->field_name);
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"nullable\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->nullable ? "Yes":"No");
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"primary_key\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->primary_key? "Yes":"No");
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"primary_key\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->primary_key? "Yes":"No");
+                str_append(sql_buffer, "\",");
+                str_append(sql_buffer, "\"data_type\":");
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, field_info->data_type);
+                str_append(sql_buffer, "\"");
+                str_append(sql_buffer, "}");
+
+                first = 0;
+                field_info = LIST_GET_NEXT(link, field_info);
+            }
+            str_append(sql_buffer, "]");
+            break;
+        }
+    default:
+        break;
+    }
+
+    return false;
+}
+
 int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_cache_t* datacenter)
 {
     char   tmp_buf[2560];
@@ -5345,6 +5656,9 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     str_truncate_0(backup_sql);
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
+    if(inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
+        DBUG_RETURN(true);
     query_thd = thd->query_thd;
     optype = query_thd->lex->sql_command;
     switch (optype)
@@ -5355,8 +5669,11 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
       case SQLCOM_ALTER_TABLE:
         optype_str = (char*)"ALTERTABLE";
         break;
-      case SQLCOM_UPDATE:
-        optype_str = (char*)"UPDATE";
+      case SQLCOM_RENAME_TABLE:
+        optype_str = (char*)"RENAME";
+        break;
+      case SQLCOM_CREATE_TABLE:
+        optype_str = (char*)"CREATETABLE";
         break;
     }
 
@@ -5377,6 +5694,7 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     else
     {
         str_append(backup_sql, "{");
+        inception_transfer_write_DDL(mi, ev, datacenter, backup_sql);
         str_append(backup_sql, "}");
     }
 
@@ -5475,8 +5793,10 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
             switch (query_thd->lex->sql_command)
             {
                 case SQLCOM_CREATE_TABLE:
+                    err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
                     break;
                 case SQLCOM_ALTER_TABLE:
+                case SQLCOM_RENAME_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
                     //free the table object
                     inception_transfer_delete_table_object(query_thd, mi->datacenter);
@@ -5488,7 +5808,10 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                     break;
             }
 
-            if (!err && (optype == SQLCOM_ALTER_TABLE || optype == SQLCOM_TRUNCATE))
+            if (!err && (optype == SQLCOM_ALTER_TABLE 
+                  || optype == SQLCOM_TRUNCATE
+                  || optype == SQLCOM_RENAME_TABLE
+                  || optype == SQLCOM_CREATE_TABLE))
             {
                 mi->datacenter->cbinlog_position = ev->log_pos;
                 strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
@@ -5596,6 +5919,9 @@ inception_transfer_get_slaves_position(
     datacenter = mi->datacenter;
     thd = mi->thd;
 
+    if (thd->transaction_id % inception_transfer_slave_sync != 0)
+        return false;
+
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while (slave)
     {
@@ -5630,7 +5956,7 @@ retry_fetch1:
             strcpy(slave->cbinlog_file, source_row[0]);
             slave->cbinlog_position = strtoul(source_row[1], 0, 10);
         }
-	mysql_free_result(source_res1);
+        mysql_free_result(source_res1);
 
         retry_count=0;
 retry_fetch2:
@@ -5653,7 +5979,7 @@ retry_fetch2:
         source_row = mysql_fetch_row(source_res1);
         if (source_row != NULL)
             strcpy(slave->current_time, source_row[0]);
-	mysql_free_result(source_res1);
+        mysql_free_result(source_res1);
 
         slave = slave_next;
     }
