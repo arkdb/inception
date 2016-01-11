@@ -193,6 +193,7 @@ const char *xa_state_names[]={
 
 extern const char *osc_recursion_method[];
 
+int mysql_get_command_type(int sql_command, char* command_type);
 int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
 int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
 int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
@@ -840,6 +841,7 @@ int mysql_send_all_results(THD* thd)
     List<Item>    field_list;
     int      id = 1;
     char            tmp_buf[256];
+    char            command_type[256];
 
     DBUG_ENTER("mysql_send_all_results");
     thd->thread_state = INCEPTION_STATE_SEND;
@@ -868,6 +870,7 @@ int mysql_send_all_results(THD* thd)
     field_list.push_back(new Item_empty_string("backup_dbname", FN_REFLEN));
     field_list.push_back(new Item_empty_string("execute_time", FN_REFLEN));
     field_list.push_back(new Item_empty_string("sqlsha1", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("command", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -918,6 +921,8 @@ int mysql_send_all_results(THD* thd)
             protocol->store(sql_cache_node->backup_dbname, system_charset_info);
             protocol->store(sql_cache_node->execute_time, system_charset_info);
             protocol->store(sql_cache_node->sqlsha1, system_charset_info);
+            mysql_get_command_type(sql_cache_node->optype, command_type);
+            protocol->store(command_type, system_charset_info);
 
             if (protocol->write())
                 break;
@@ -944,6 +949,7 @@ int mysql_send_all_results(THD* thd)
         protocol->store("None", system_charset_info);
         protocol->store("None", system_charset_info);
         protocol->store("0", system_charset_info);//execute time
+        protocol->store("None", system_charset_info);
         protocol->store("None", system_charset_info);
 
         protocol->write();
@@ -6367,6 +6373,8 @@ mysql_load_tables(
 
     for (table= tables->first; table; table= table->next_local)
     {
+        if (table->effective_algorithm != VIEW_ALGORITHM_UNDEFINED)
+            continue;
         tableinfo = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
         //如果有自连接，或者在不同层次使用了同一个表，那么以上层主准
         if (tableinfo)
@@ -7613,6 +7621,63 @@ mysql_check_item(
     }
 
     return 0;
+}
+
+int mysql_get_command_type(int sql_command, char* command_type)
+{
+    switch (sql_command)
+    {
+    case SQLCOM_CHANGE_DB:
+        sprintf(command_type, "CHANGE_DB");
+        break;
+    case SQLCOM_SET_OPTION:
+        sprintf(command_type, "SET_OPTION");
+        break;
+    case SQLCOM_CREATE_DB:
+        sprintf(command_type, "CREATE_DB");
+        break;
+    case SQLCOM_INSERT:
+        sprintf(command_type, "INSERT");
+        break;
+    case SQLCOM_DELETE:
+    case SQLCOM_DELETE_MULTI:
+        sprintf(command_type, "DELETE");
+        break;
+    case SQLCOM_UPDATE:
+    case SQLCOM_UPDATE_MULTI:
+        sprintf(command_type, "UPDATE");
+        break;
+    case SQLCOM_SELECT:
+        sprintf(command_type, "SELECT");
+        break;
+    case SQLCOM_CREATE_TABLE:
+        sprintf(command_type, "CREATE_TABLE");
+        break;
+    case SQLCOM_ALTER_TABLE:
+        sprintf(command_type, "ALTER_TABLE");
+        break;
+    case SQLCOM_INSERT_SELECT:
+        sprintf(command_type, "INSERT_SELECT");
+        break;
+    case SQLCOM_INCEPTION:
+        sprintf(command_type, "INCEPTION");
+        break;
+    case SQLCOM_CREATE_INDEX:
+    case SQLCOM_RENAME_TABLE:
+    case SQLCOM_DROP_INDEX:
+        sprintf(command_type, "NONALTER_ALTER");
+        break;
+    case SQLCOM_TRUNCATE:
+        sprintf(command_type, "TRUNCATE");
+        break;
+    case SQLCOM_DROP_TABLE:
+        sprintf(command_type, "DROP_TABLE");
+        break;
+    default:
+        sprintf(command_type, "OTHERS");
+        break;
+    }
+    return false;
 }
 
 int mysql_check_command(THD *thd)
