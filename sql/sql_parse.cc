@@ -898,6 +898,7 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_BINLOG_TRANSFER ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TRANSFER_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DATACENTER||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DO_IGNORE||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
     
@@ -2545,7 +2546,7 @@ int thd_parse_options(
         inception_get_type(thd) == INCEPTION_TYPE_PRINT)
     {
         if (thd->thd_sinfo->user[0] == '\0' ||
-            thd->thd_sinfo->password == '\0' )
+            thd->thd_sinfo->password[0] == '\0' )
         {
             my_error(ER_SQL_INVALID_SOURCE, MYF(0));
             goto ERROR;
@@ -2553,12 +2554,12 @@ int thd_parse_options(
     }
 
     //只能设置一个操作类型
-    // if (global_source.query_print + global_source.check +
-    //     global_source.execute + global_source.split != 1)
-    // {
-    //     my_error(ER_SQL_INVALID_SOURCE, MYF(0));
-    //     goto ERROR;
-    // }
+    if (global_source.query_print + global_source.check +
+        global_source.execute + global_source.split != 1)
+    {
+        my_error(ER_SQL_INVALID_SOURCE, MYF(0));
+        goto ERROR;
+    }
 
     thd->thd_sinfo->ignore_warnings = global_source.ignore_warnings;
     strcpy(thd->thd_sinfo->host, global_source.host);
@@ -4189,6 +4190,7 @@ inception_transfer_load_datacenter(
     str_init(&datacenter->dupchar_buffer);
     strcpy(datacenter->hostname, instance_ip);
     datacenter->mysql = NULL;
+    datacenter->doempty = -1;
     datacenter->binlog_file[0] = '\0';
     datacenter->cbinlog_file[0] = '\0';
     if (binlog_file != NULL)
@@ -4453,20 +4455,20 @@ int mysql_master_transfer_status(
     DBUG_RETURN(res);
 }
 
-int mysql_show_datacenter_list(THD* thd)
+int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int type)
 {
-    DBUG_ENTER("mysql_show_transfer_status");
     int res= 0;
-    transfer_cache_t* osc_percent_node;
     List<Item>    field_list;
     MYSQL* mysql;
-    char* tmp;
+    char tmp[1024];
     Protocol *    protocol= thd->protocol;
     MYSQL_RES *     source_res;
     MYSQL_ROW       source_row;
 
-    field_list.push_back(new Item_empty_string("Datacenter_name", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("Running", FN_REFLEN));
+    DBUG_ENTER("mysql_show_datacenter_do_ignore_list");
+
+    field_list.push_back(new Item_empty_string("Database_name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Table_name", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4474,7 +4476,58 @@ int mysql_show_datacenter_list(THD* thd)
         DBUG_RETURN(true);
     }
 
-    tmp = "SHOW DATABASES";
+    sprintf(tmp, "select db_name, table_name from `%s`.transfer_filter \
+           where type = '%s'", datacenter_name, type == DO_SYM ? "Do" : "Ignore");
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+        DBUG_RETURN(true);
+
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(true);
+    }
+
+    source_row = mysql_fetch_row(source_res);
+    while (source_row)
+    {
+        protocol->prepare_for_resend();
+        protocol->store(source_row[0], system_charset_info);
+        protocol->store(source_row[1], system_charset_info);
+        protocol->write();
+        source_row = mysql_fetch_row(source_res);
+    }
+
+    mysql_free_result(source_res);
+    my_eof(thd);
+
+    DBUG_RETURN(res);
+}
+
+int mysql_show_datacenter_list(THD* thd)
+{
+    int res= 0;
+    transfer_cache_t* osc_percent_node;
+    List<Item>    field_list;
+    MYSQL* mysql;
+    char tmp[32];
+    Protocol *    protocol= thd->protocol;
+    MYSQL_RES *     source_res;
+    MYSQL_ROW       source_row;
+
+    DBUG_ENTER("mysql_show_transfer_status");
+    field_list.push_back(new Item_empty_string("Datacenter_name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Running", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    sprintf(tmp, "SHOW DATABASES");
     mysql = thd->get_transfer_connection();
     if (mysql == NULL)
         DBUG_RETURN(true);
@@ -4495,6 +4548,19 @@ int mysql_show_datacenter_list(THD* thd)
             protocol->prepare_for_resend();
             protocol->store(osc_percent_node->datacenter_name, system_charset_info);
             protocol->store(osc_percent_node->transfer_on?"Yes":"No", system_charset_info);
+            if (osc_percent_node->transfer_on)
+            {
+                long time_diff;
+                time_diff = ((long)(time(0) - osc_percent_node->last_master_timestamp) - 
+                    osc_percent_node->clock_diff_with_master);
+                protocol->store((longlong)(osc_percent_node->last_master_timestamp 
+                      ? max(0L, time_diff) : 0));
+            }
+            else
+            {
+                protocol->store((longlong)0);
+            }
+
             protocol->write();
         }
         source_row = mysql_fetch_row(source_res);
@@ -4724,13 +4790,20 @@ int inception_transfer_instance_table_create(
     sprintf (tmp, "`%s`.`%s`(", datacenter, "instances");
     create_sql = str_append(create_sql, tmp);
     create_sql = str_append(create_sql, "id int unsigned auto_increment primary key, ");
-    create_sql = str_append(create_sql, "instance_name varchar(64) comment 'instance name', ");
-    create_sql = str_append(create_sql, "instance_role varchar(64) comment 'instance role, include master and slave ', ");
-    create_sql = str_append(create_sql, "instance_ip varchar(64) comment 'instance ip', ");
-    create_sql = str_append(create_sql, "instance_port int comment 'instance port', ");
-    create_sql = str_append(create_sql, "binlog_file varchar(64) comment 'binlog file name', ");
-    create_sql = str_append(create_sql, "binlog_position int comment 'binlog file position') ");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer instance set'");
+    create_sql = str_append(create_sql, "instance_name varchar(64) "
+        "comment 'instance name', ");
+    create_sql = str_append(create_sql, "instance_role varchar(64) "
+        "comment 'instance role, include master and slave ', ");
+    create_sql = str_append(create_sql, "instance_ip varchar(64) "
+        "comment 'instance ip', ");
+    create_sql = str_append(create_sql, "instance_port int comment "
+        "'instance port', ");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) "
+        "comment 'binlog file name', ");
+    create_sql = str_append(create_sql, "binlog_position int comment "
+        "'binlog file position') ");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 "
+        "comment 'transfer instance set'");
 
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
@@ -4746,18 +4819,25 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "CREATE TABLE ");
     sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_data");
     create_sql = str_append(create_sql, tmp);
-    create_sql = str_append(create_sql, "id bigint unsigned not null comment 'id but not auto increment', ");
-    create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'transaction id', ");
+    create_sql = str_append(create_sql, "id bigint unsigned not null "
+        "comment 'id but not auto increment', ");
+    create_sql = str_append(create_sql, "tid bigint unsigned not null "
+        "comment 'transaction id', ");
     create_sql = str_append(create_sql, "dbname varchar(64) comment 'dbname', ");
     create_sql = str_append(create_sql, "tablename varchar(64) comment 'tablename', ");
-    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
-    create_sql = str_append(create_sql, "instance_name varchar(64) comment 'the source instance of this event', ");
-    create_sql = str_append(create_sql, "optype varchar(64) DEFAULT NULL COMMENT 'operation type, include insert, update...',");
-    create_sql = str_append(create_sql, "data longtext comment 'binlog transfer data, format json', ");
+    create_sql = str_append(create_sql, "create_time timestamp not null "
+        "default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "instance_name varchar(64) "
+        "comment 'the source instance of this event', ");
+    create_sql = str_append(create_sql, "optype varchar(64) DEFAULT "
+        "NULL COMMENT 'operation type, include insert, update...',");
+    create_sql = str_append(create_sql, "data longtext comment 'binlog "
+        "transfer data, format json', ");
     create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`), ");
     create_sql = str_append(create_sql, "KEY `idx_dbtablename` (`dbname`,`tablename`), ");
     create_sql = str_append(create_sql, "KEY `idx_create_time` (`create_time`))");
-    create_sql = str_append(create_sql, "engine innodb charset utf8mb4 comment 'binlog transfer data'");
+    create_sql = str_append(create_sql, "engine innodb charset utf8mb4 "
+        "comment 'binlog transfer data'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
@@ -4771,14 +4851,20 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "CREATE TABLE ");
     sprintf (tmp, "`%s`.`%s`(", datacenter, "master_positions");
     create_sql = str_append(create_sql, tmp);
-    create_sql = str_append(create_sql, "id bigint unsigned not null comment 'id but not auto increment', ");
-    create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'transaction id', ");
-    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
-    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL COMMENT 'binlog file name',");
-    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL COMMENT 'binlog file position',");
+    create_sql = str_append(create_sql, "id bigint unsigned not null "
+        "comment 'id but not auto increment', ");
+    create_sql = str_append(create_sql, "tid bigint unsigned not null "
+        "comment 'transaction id', ");
+    create_sql = str_append(create_sql, "create_time timestamp not null "
+        "default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL "
+        "COMMENT 'binlog file name',");
+    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL "
+        "COMMENT 'binlog file position',");
     create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`),");
     create_sql = str_append(create_sql, "KEY idx_create_time(`create_time`))");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer binlog commit positions'");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
+        "'transfer binlog commit positions'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
@@ -4793,13 +4879,17 @@ int inception_transfer_instance_table_create(
     sprintf (tmp, "`%s`.`%s`(", datacenter, "slave_positions");
     create_sql = str_append(create_sql, tmp);
     create_sql = str_append(create_sql, "id bigint unsigned auto_increment primary key, ");
-    create_sql = str_append(create_sql, "create_time timestamp not null default current_timestamp comment 'the create time of event ', ");
+    create_sql = str_append(create_sql, "create_time timestamp not null default "
+        "current_timestamp comment 'the create time of event ', ");
     create_sql = str_append(create_sql, "instance_ip varchar(64) comment 'instance ip', ");
     create_sql = str_append(create_sql, "instance_port int comment 'instance port', ");
-    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL COMMENT 'binlog file name',");
-    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL COMMENT 'binlog file position',");
+    create_sql = str_append(create_sql, "binlog_file varchar(64) DEFAULT NULL "
+        "COMMENT 'binlog file name',");
+    create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL "
+        "COMMENT 'binlog file position',");
     create_sql = str_append(create_sql, "KEY idx_create_time(`create_time`))");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'transfer binlog commit positions'");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
+        "'transfer binlog commit positions'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
@@ -4814,8 +4904,10 @@ int inception_transfer_instance_table_create(
     sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_sequence");
     create_sql = str_append(create_sql, tmp);
     create_sql = str_append(create_sql, "idname varchar(64) comment 'id name', ");
-    create_sql = str_append(create_sql, "sequence bigint unsigned not null comment 'sequence') ");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'sequence management'");
+    create_sql = str_append(create_sql, "sequence bigint unsigned "
+        "not null comment 'sequence') ");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 "
+        "comment 'sequence management'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
@@ -4838,6 +4930,87 @@ int inception_transfer_instance_table_create(
         }
     }
 
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_filter");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "db_name varchar(64) comment 'db name', ");
+    create_sql = str_append(create_sql, "table_name varchar(64) comment 'table name', ");
+    create_sql = str_append(create_sql, "`type` varchar(64) NOT NULL DEFAULT '' "
+        "COMMENT 'blacklist/whitelist,do or ignore', ");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`db_name`,`table_name`,`type`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment 'use to "
+        "filter the replicate'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int inception_transfer_add_do_ignore(
+    THD* thd, 
+    int adddrop,
+    char* tablename,
+    ulong do_ignore, 
+    char* datacenter_name,
+    char* dbname
+)
+{
+    char tmp[1024];
+    transfer_cache_t* datacenter;
+    MYSQL* mysql;
+
+    if (inception_transfer_instance_table_create(thd, datacenter_name))
+        return true;
+
+    datacenter = inception_transfer_load_datacenter(thd, datacenter_name, true);
+    if (datacenter && datacenter->transfer_on)
+    {
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter_name);
+        goto error;
+    }
+
+    if (datacenter) 
+    {
+        if (adddrop == ADD)
+        {
+            sprintf(tmp, "INSERT INTO `%s`.`transfer_filter`(db_name, table_name, type) values\
+                ('%s', '%s', '%s')", datacenter_name, dbname, 
+                tablename, do_ignore==DO_SYM? "Do":"Ignore");
+        }
+        else
+        {
+            sprintf(tmp, "DELETE FROM `%s`.`transfer_filter` where db_name ='%s' and \
+                table_name = '%s' and type = '%s'", datacenter_name, dbname, 
+                tablename, do_ignore==DO_SYM? "Do":"Ignore");
+        }
+    }
+    else
+    {
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        return true;
+    }
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        goto error;
+    }
+
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+        goto error;
+    }
+
+error:
     return false;
 }
 
@@ -5024,6 +5197,89 @@ int inception_transfer_delete_table_object(
     return false;
 }
 
+int inception_get_table_do_ignore(
+    THD* thd,
+    transfer_cache_t* datacenter,
+    table_info_t*   tableinfo,
+    char*  dbname,
+    char*  tablename
+)
+{
+    MYSQL* mysql;
+    char sql[256];
+    MYSQL_RES *     source_res=NULL;
+    int doignore=INCEPTION_DO_UNKNOWN;
+
+    if ((tableinfo && tableinfo->doignore == INCEPTION_DO_UNKNOWN) || !tableinfo)
+    {
+        mysql = thd->get_transfer_connection();
+        if (mysql == NULL)
+        {
+            thd->clear_error();
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+            return INCEPTION_DO_UNKNOWN;
+        }
+
+        if (datacenter->doempty == -1)
+        {
+            sprintf(sql, "select count(*) from `%s`.transfer_filter where type='Do'", 
+                datacenter->datacenter_name);
+            if (mysql_real_query(mysql, sql, strlen(sql)) ||
+                (source_res = mysql_store_result(mysql)) == NULL)
+            {
+                thd->clear_error();
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                return INCEPTION_DO_UNKNOWN;
+            }
+            datacenter->doempty = atoi(mysql_fetch_row(source_res)[0]) > 0 ? 0:1;
+        }
+
+        if (!datacenter->doempty)
+        {
+            sprintf(sql, "select * from `%s`.transfer_filter where '%s' like "
+                "db_name and type='Do' and '%s' like table_name", 
+                datacenter->datacenter_name, dbname, tablename);
+            if (mysql_real_query(mysql, sql, strlen(sql)) ||
+                (source_res = mysql_store_result(mysql)) == NULL)
+            {
+                thd->clear_error();
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                return INCEPTION_DO_UNKNOWN;
+            }
+
+            if (source_res->row_count > 0)
+                doignore = INCEPTION_DO_DO;
+            else 
+                doignore = INCEPTION_DO_IGNORE;
+            mysql_free_result(source_res);
+        }
+        else
+        {
+            sprintf(sql, "select * from `%s`.transfer_filter where '%s' like "
+                "db_name and type='Ignore' and '%s' like table_name", 
+                datacenter->datacenter_name, dbname, tablename);
+            if (mysql_real_query(mysql, sql, strlen(sql)) ||
+                (source_res = mysql_store_result(mysql)) == NULL)
+            {
+                thd->clear_error();
+                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                return INCEPTION_DO_UNKNOWN;
+            }
+            if (source_res->row_count > 0)
+                doignore = INCEPTION_DO_IGNORE;
+            else
+                doignore = INCEPTION_DO_DO;
+            mysql_free_result(source_res);
+        }
+    }
+    else
+    {
+        doignore = tableinfo->doignore;
+    }
+
+    return doignore;
+}
+
 table_info_t*
 inception_transfer_get_table_object(
     THD*  thd,
@@ -5038,6 +5294,7 @@ inception_transfer_get_table_object(
     my_hash_value_type hash_value;
     char key[256];
     int key_length;
+    int doignore=INCEPTION_DO_UNKNOWN;
 
     sprintf(key, "%s%s", dbname, tablename);
     key_length = strlen(key);
@@ -5046,6 +5303,9 @@ inception_transfer_get_table_object(
     tableinfo = (table_info_t*)my_hash_search_using_hash_value(&datacenter->table_cache, 
         hash_value, (uchar*) key, key_length);
 
+    doignore = inception_get_table_do_ignore(thd, datacenter, tableinfo, dbname, tablename);
+    if (doignore == INCEPTION_DO_UNKNOWN)
+        return NULL;
     // tableinfo = mysql_get_table_object_from_cache(thd, dbname, tablename);
     //解决表已经删除，但后面又用到了，则直接判断这个标记
     //而不是重新从远程载入这个表对象，删除表的时候只打标记
@@ -5053,9 +5313,12 @@ inception_transfer_get_table_object(
         return NULL;
 
     if (tableinfo != NULL)
+    {
+        if (INCEPTION_DO_UNKNOWN != doignore)
+            tableinfo->doignore = doignore;
         return tableinfo;
+    }
 
-            //todo: free the mysql handle
     mysql = inception_get_connection(&mysql_space, 
         datacenter->hostname, datacenter->mysql_port, 
         datacenter->username, datacenter->password, 10);
@@ -5072,11 +5335,14 @@ inception_transfer_get_table_object(
         if (my_hash_insert(&datacenter->table_cache, (uchar*) tableinfo))
         {
             mysql_table_info_free(tableinfo);
+            my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Cache table to hash failed");
+            mysql_close(mysql);
             return NULL;
         }
 
         // mysql_add_table_object(thd, tableinfo);
         mysql_alloc_record(tableinfo, mysql);
+        tableinfo->doignore = doignore;
     }
 
     mysql_close(mysql);
@@ -5091,21 +5357,40 @@ inception_transfer_table_map(
 {
     Table_map_log_event* tab_map_ev;
     table_info_t*   table_info;
-    int err;
 
     tab_map_ev = (Table_map_log_event*)ev;
-    err = mysql_parse_table_map_log_event(mi, ev);
-    if (err)
+    if (mysql_parse_table_map_log_event(mi, ev))
         sql_print_error("transfer parse table map event failed, db: %s, table: %s", 
-		(char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
+		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
     table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
     if (!table_info)
         sql_print_error("transfer load table failed, db: %s, table: %s", 
-		(char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
+		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
+    if (table_info == NULL || mi->thd->is_error())
+    {
+        mi->table_info = NULL;
+        return true;
+    }
 
     mi->table_info = table_info;
+    //check compatiable
+    for (RPL_TABLE_LIST *ptr= mi->tables_to_lock ; ptr != NULL ; 
+        ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global))
+    {
+        if (mi->table_info && strcasecmp(ptr->db, mi->table_info->db_name) == 0
+          && strcasecmp(ptr->table_name , mi->table_info->table_name) == 0)
+        {
+            if ((static_cast<RPL_TABLE_LIST*>(ptr)->m_tabledef).size() != 
+                LIST_GET_LEN(table_info->field_lst))
+            {
+                sql_print_information("load table failed, column num not matching, inception ignore "
+                    "it, db: %s, table: %s", table_info->db_name, table_info->table_name);
+                table_info->doignore = INCEPTION_DO_IGNORE;
+            }
+        }
+    }
 
     return false;
 }
@@ -5330,6 +5615,10 @@ int inception_transfer_write_row(
     DBUG_ENTER("inception_transfer_write_row");
     write_ev = (Write_rows_log_event*)ev;
 
+    if ((mi->table_info && mi->table_info->doignore == INCEPTION_DO_IGNORE) ||
+        mi->table_info == NULL)
+        DBUG_RETURN(error);
+        
     do
     {
         str_truncate_0(backup_sql);
@@ -5402,7 +5691,6 @@ int inception_tranfer_write_alter_table(
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
     Alter_info* alter_info_ptr = &alter_info;
-    table_info_t*   table_info;
     field_info_t* field_info;
     int first=1;
     Create_field* field;
@@ -5581,7 +5869,7 @@ int inception_tranfer_write_alter_table(
         }
     }
 
-    str_append(sql_buffer, "\"OTHERS\":\"Be ignored\"");
+    str_append(sql_buffer, "\"OTHERS\":\"Be ignored or nothing\"");
     return false;
 }
 
@@ -5800,7 +6088,7 @@ inception_transfer_set_errmsg(
     skr= my_time(0);
     localtime_r(&skr, &transfer->stop_time_space);
     transfer->stop_time = &transfer->stop_time_space;
-    sql_print_error(str_get(&transfer->errmsg));
+    sql_print_error((const char*)(str_get(&transfer->errmsg)));
 }
 
 int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
@@ -6591,6 +6879,21 @@ error:
     return NULL;
 }
 
+int inception_reset_datacenter_do_ignore(
+    transfer_cache_t* datacenter
+)
+{
+    table_info_t* table_info;
+    for (uint i=0; i < datacenter->table_cache.records; i++)
+    {
+        table_info = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
+        table_info->doignore = INCEPTION_DO_UNKNOWN;
+    }
+
+    datacenter->doempty = -1;
+    return false; 
+}
+
 int inception_transfer_stop_replicate(
     char* datacenter_name    
 )
@@ -6647,6 +6950,8 @@ int inception_transfer_stop_replicate(
         DBUG_ASSERT(error == ETIMEDOUT || error == 0);
     }
 
+    //reset the ignore info
+    inception_reset_datacenter_do_ignore(datacenter);
     mysql_mutex_unlock(&datacenter->run_lock);
     return false;
 }
@@ -6962,6 +7267,11 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
         case INCEPTION_BINLOG_START_SLAVE:
             return inception_transfer_start_stop_slave(thd, thd->lex->ident.str, 
                 thd->lex->name.str, false);
+        case INCEPTION_BINLOG_ADD_DO_IGNORE:
+            return inception_transfer_add_do_ignore(thd, thd->lex->server_options.port,
+                thd->lex->name.str, thd->lex->type, 
+                thd->lex->comment.str, thd->lex->ident.str);
+
         default:
             return false;
     }
@@ -7002,6 +7312,8 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_show_transfer_status(thd);
         case INCEPTION_COMMAND_SHOW_DATACENTER:
             return mysql_show_datacenter_list(thd);
+        case INCEPTION_COMMAND_SHOW_DO_IGNORE:
+            return mysql_show_datacenter_do_ignore_list(thd, thd->lex->name.str, thd->lex->type);
 
         default:
             return false;
@@ -12015,7 +12327,6 @@ int mysql_get_field_string_for_tranfer(
     uchar buff[MAX_FIELD_WIDTH];
     String buffer((char*) buff,sizeof(buff),&my_charset_bin);
     String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
-    str_t* dupcharfield = &mi->datacenter->dupchar_buffer;
 
     if (null_arr[field_index])
     {

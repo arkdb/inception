@@ -1731,7 +1731,8 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
         opt_natural_language_mode opt_query_expansion
         opt_ev_status opt_ev_on_completion ev_on_completion opt_ev_comment
         ev_alter_on_schedule_completion opt_ev_rename_to opt_ev_sql_stmt
-        trg_action_time trg_event inception_transfer_master_slave inception_op_type
+        trg_action_time trg_event inception_transfer_master_slave inception_op_type 
+        inception_do_ignore inception_add_delete
 
 /*
   Bit field of MYSQL_START_TRANS_OPT_* flags.
@@ -15401,11 +15402,28 @@ inception_show_param:
         lex->sql_command = SQLCOM_INCEPTION;
         lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DATACENTER;
     }
+    | GET_SYM inception_do_ignore LIST_SYM FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DO_IGNORE;
+        lex->type = $2;
+        lex->name= $6;
+    }
     ;
 
 inception_op_type:
          RESET_SYM { $$=1; }
          | STOP_SYM { $$=2; }
+         ;
+
+inception_do_ignore:
+         DO_SYM { $$=DO_SYM; }
+         | IGNORE_SYM { $$=IGNORE_SYM; }
+         ;
+inception_add_delete:
+         ADD { $$=ADD ; }
+         | DROP { $$=DROP; }
          ;
 
 inception:
@@ -15531,6 +15549,19 @@ inception:
                             system_charset_info);
           if (Lex->wild == NULL)
               MYSQL_YYABORT;
+        }
+        | INCEPTION_SYM inception_add_delete inception_do_ignore TABLE_SYM '(' TEXT_STRING_sys 
+        ',' TEXT_STRING_sys ')' FOR_SYM DATACENTER_SYM ident 
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_ADD_DO_IGNORE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->server_options.port= $2;
+            lex->type = $3;
+            lex->ident= $6;
+            lex->name= $8;
+            lex->comment = $12;
         }
         ;
 

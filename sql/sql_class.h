@@ -184,6 +184,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_BINLOG_TRANSFER         9
 #define INCEPTION_COMMAND_SHOW_TRANSFER_STATUS    10
 #define INCEPTION_COMMAND_SHOW_DATACENTER         11
+#define INCEPTION_COMMAND_SHOW_DO_IGNORE          12
 
 #define LIST_PROCESS_HOST_LEN 64
 
@@ -195,11 +196,16 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_BINLOG_STOP_TRANSFER    6
 #define INCEPTION_BINLOG_STOP_SLAVE       7
 #define INCEPTION_BINLOG_START_SLAVE       8
+#define INCEPTION_BINLOG_ADD_DO_IGNORE     9
 
 #define INCEPTION_TRANSFER_EIDNAME      "EID"
 #define INCEPTION_TRANSFER_TIDNAME      "TID"
 #define INCEPTION_TRANSFER_EIDENUM      1
 #define INCEPTION_TRANSFER_TIDENUM      2
+
+#define INCEPTION_DO_UNKNOWN               0
+#define INCEPTION_DO_DO                    1
+#define INCEPTION_DO_IGNORE                2
 
 
 // typedef struct datacenter_struct datacenter_t;
@@ -266,6 +272,9 @@ struct table_info_struct
     int     isdeleted;//表示是不是已经删除，删除表的时候会置为1
     int     table_size;
     int     have_pk;//用来表示这个表上面有没有主键
+
+    //for transfer 
+    int doignore; //0:need to recheck, 1: do, 2: ignore
 
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;
@@ -408,6 +417,7 @@ struct transfer_cache_struct
     str_t sql_buffer;
     str_t dupchar_buffer;
     HASH table_cache;
+    int doempty;
 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
