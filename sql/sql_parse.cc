@@ -5216,7 +5216,7 @@ int inception_get_table_do_ignore(
         if (mysql == NULL)
         {
             thd->clear_error();
-            my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+            my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), "Connection the master failed");
             return INCEPTION_DO_UNKNOWN;
         }
 
@@ -5227,8 +5227,7 @@ int inception_get_table_do_ignore(
             if (mysql_real_query(mysql, sql, strlen(sql)) ||
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
-                thd->clear_error();
-                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
                 return INCEPTION_DO_UNKNOWN;
             }
             datacenter->doempty = atoi(mysql_fetch_row(source_res)[0]) > 0 ? 0:1;
@@ -5242,8 +5241,7 @@ int inception_get_table_do_ignore(
             if (mysql_real_query(mysql, sql, strlen(sql)) ||
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
-                thd->clear_error();
-                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
                 return INCEPTION_DO_UNKNOWN;
             }
 
@@ -5261,8 +5259,7 @@ int inception_get_table_do_ignore(
             if (mysql_real_query(mysql, sql, strlen(sql)) ||
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
-                thd->clear_error();
-                my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
+                my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
                 return INCEPTION_DO_UNKNOWN;
             }
             if (source_res->row_count > 0)
@@ -5344,6 +5341,12 @@ inception_transfer_get_table_object(
         mysql_alloc_record(tableinfo, mysql);
         tableinfo->doignore = doignore;
     }
+    else if (mysql_errno(mysql) == 1051/*ER_BAD_TABLE_ERROR*/ || 
+            mysql_errno(mysql) == 1146/*ER_NO_SUCH_TABLE*/)
+    {
+        //If table not existed, omit it
+        thd->clear_error();
+    }
 
     mysql_close(mysql);
     return tableinfo;
@@ -5368,7 +5371,7 @@ inception_transfer_table_map(
     if (!table_info)
         sql_print_error("transfer load table failed, db: %s, table: %s", 
 		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
-    if (table_info == NULL || mi->thd->is_error())
+    if (mi->thd->is_error())
     {
         mi->table_info = NULL;
         return true;
