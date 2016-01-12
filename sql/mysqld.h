@@ -180,6 +180,7 @@ extern bool inception_check_timestamp_default;
 extern bool inception_enable_column_charset;
 extern bool inception_check_autoincrement_name;
 extern bool inception_merge_alter_table;
+extern bool inception_enable_subselect;
 extern bool inception_check_column_default_value;
 extern bool inception_enable_identifer_keyword;
 extern bool inception_enable_sql_statistic;

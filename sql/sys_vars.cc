@@ -816,6 +816,12 @@ static Sys_var_mybool Sys_inception_merge_alter_table(
     GLOBAL_VAR(inception_merge_alter_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_enable_subselect(
+    "inception_enable_subselect",
+    "enable the subselect in dml",
+    GLOBAL_VAR(inception_enable_subselect),
+    CMD_LINE(OPT_ARG), DEFAULT(FALSE));
+
 static Sys_var_mybool Sys_inception_check_column_default_value(
     "inception_check_column_default_value",
     "check default value when for column",

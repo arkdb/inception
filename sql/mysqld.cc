@@ -585,6 +585,7 @@ bool inception_check_timestamp_default=0;
 bool inception_enable_column_charset=0;
 bool inception_check_autoincrement_name=0;
 bool inception_merge_alter_table=0;
+bool inception_enable_subselect=0;
 bool inception_check_column_default_value=0;
 bool inception_enable_identifer_keyword=0;
 bool inception_enable_sql_statistic=0;

@@ -129,7 +129,8 @@
 #define ER_NOT_SUPPORTED_ITEM_TYPE          2626
 #define ER_INVALID_IDENT                    2627
 #define ER_DB_EXISTS                        2628
-#define ER_ERROR_LAST                       2629
+#define ER_SUBSELECT_IN_DML                 2629
+#define ER_ERROR_LAST                       2630
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

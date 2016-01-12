@@ -1903,6 +1903,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_NAMES_MUST_UTF8:
     case ER_TEXT_NOT_NULLABLE_ERROR:
     case ER_INVALID_IDENT:
+    case ER_SUBSELECT_IN_DML:
         return INCEPTION_RULES;
 
     case ER_DB_EXISTS:
@@ -1996,6 +1997,11 @@ mysql_check_inception_variables(
 
     case ER_SELECT_ONLY_STAR:
         if (inception_enable_select_star)
+            return false;
+        break;
+
+    case ER_SUBSELECT_IN_DML:
+        if (inception_enable_subselect)
             return false;
         break;
 
@@ -3806,6 +3812,13 @@ int mysql_check_delete(THD *thd)
     {
         for (table=thd->lex->query_tables; table; table=table->next_global)
         {
+            if (table->is_view_or_derived())
+            {
+                my_error(ER_SUBSELECT_IN_DML, MYF(0));
+                mysql_errmsg_append(thd);
+                continue;
+            }
+
             table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
             if (table_info == NULL) {
                 tablenotexisted=true;
@@ -4259,6 +4272,12 @@ int mysql_check_update(THD *thd)
     {
         for (table=thd->lex->query_tables; table; table=table->next_global)
         {
+            if (table->is_view_or_derived())
+            {
+                my_error(ER_SUBSELECT_IN_DML, MYF(0));
+                mysql_errmsg_append(thd);
+                continue;
+            }
             table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
             if (table_info == NULL) {
                 tablenotexisted=true;
@@ -4306,6 +4325,12 @@ int mysql_check_table_existed(THD* thd)
 
     for (table=all_tables; table; table=table->next_global, nr++)
     {
+        if (table->is_view_or_derived())
+        {
+            my_error(ER_SUBSELECT_IN_DML, MYF(0));
+            mysql_errmsg_append(thd);
+            continue;
+        }
         table_info = mysql_get_table_object_from_cache(thd, table->db, table->table_name);
         if (table_info == NULL) {
             my_error(ER_TABLE_NOT_EXISTED_ERROR, MYF(0), table->table_name);
@@ -4327,6 +4352,12 @@ int mysql_check_table_new_cache(THD* thd)
 
     for (table=all_tables; table; table=table->next_global, nr++)
     {
+        if (table->is_view_or_derived())
+        {
+            my_error(ER_SUBSELECT_IN_DML, MYF(0));
+            mysql_errmsg_append(thd);
+            continue;
+        }
         table_info = mysql_get_table_object(thd, table->db, table->table_name, FALSE);
         if (table_info != NULL && table_info->new_cache) {
             return true;
@@ -6373,8 +6404,12 @@ mysql_load_tables(
 
     for (table= tables->first; table; table= table->next_local)
     {
-        if (table->effective_algorithm != VIEW_ALGORITHM_UNDEFINED)
+        if (table->is_view_or_derived())
+        {
+            my_error(ER_SUBSELECT_IN_DML, MYF(0));
+            mysql_errmsg_append(thd);
             continue;
+        }
         tableinfo = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
         //如果有自连接，或者在不同层次使用了同一个表，那么以上层主准
         if (tableinfo)
