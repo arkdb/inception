@@ -5392,6 +5392,7 @@ inception_transfer_table_map(
                     "it, db: %s, table: %s", table_info->db_name, table_info->table_name);
                 table_info->doignore = INCEPTION_DO_IGNORE;
             }
+            return false;
         }
     }
 
@@ -5967,10 +5968,6 @@ int inception_transfer_write_DDL(
                 str_append(sql_buffer, "\"");
                 str_append(sql_buffer, field_info->primary_key? "Yes":"No");
                 str_append(sql_buffer, "\",");
-                str_append(sql_buffer, "\"primary_key\":");
-                str_append(sql_buffer, "\"");
-                str_append(sql_buffer, field_info->primary_key? "Yes":"No");
-                str_append(sql_buffer, "\",");
                 str_append(sql_buffer, "\"data_type\":");
                 str_append(sql_buffer, "\"");
                 str_append(sql_buffer, field_info->data_type);
@@ -6199,6 +6196,7 @@ inception_transfer_query_event(
         //only when transaction is to commit, then update the binlog position
         mi->datacenter->cbinlog_position = ev->log_pos;
         strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+        free_tables_to_lock(mi);
         DBUG_RETURN(false);
     }
 
@@ -6394,6 +6392,7 @@ inception_transfer_write_Xid(
     strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
 
     inception_transfer_get_slaves_position(mi);
+    free_tables_to_lock(mi);
     return false;
 }
 
