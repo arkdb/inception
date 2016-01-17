@@ -140,13 +140,13 @@ void free_tables_to_lock(Master_info*	mi)
 {
     RPL_TABLE_LIST *tables_to_lock;
     uint tables_to_lock_count;
-    DBUG_ENTER("Relay_log_info::clear_tables_to_lock()");
+    DBUG_ENTER("clear_tables_to_lock()");
 
     tables_to_lock = mi->tables_to_lock;
     tables_to_lock_count = mi->tables_to_lock_count;
       
 #ifndef DBUG_OFF
-      uint i=0;
+    uint i=0;
     for (TABLE_LIST *ptr= mi->tables_to_lock ; ptr ; ptr= ptr->next_global, i++) ;
     DBUG_ASSERT(i == mi->tables_to_lock_count);
 #endif  
@@ -167,10 +167,7 @@ void free_tables_to_lock(Master_info*	mi)
         copying into the slave's table.
         */
         if (tables_to_lock->m_conv_table)
-        {
             free_blobs(tables_to_lock->m_conv_table);
-            free_tmp_table(mi->thd, tables_to_lock->m_conv_table);
-        }
 
         tables_to_lock= static_cast<RPL_TABLE_LIST*>(tables_to_lock->next_global);
         mi->tables_to_lock_count--;

@@ -777,8 +777,7 @@ table_def::create_conversion_table(
   field_info = LIST_GET_FIRST(target_table->field_lst);
   while(field_info)
   {
-    Create_field *field_def=
-      (Create_field*) alloc_root(mem_root, sizeof(Create_field));
+    Create_field *field_def= (Create_field*) my_malloc(sizeof(Create_field), MY_ZEROFILL);
     if (field_list.push_back(field_def))
       DBUG_RETURN(NULL);
 
@@ -841,6 +840,11 @@ table_def::create_conversion_table(
   }
 
   TABLE *conv_table= create_virtual_tmp_table(thd, field_list, mem_root);
+  Create_field *field_def;
+  List_iterator_fast<Create_field> it(field_list);
+  while ((field_def= it++))
+      my_free(field_def);
+
   DBUG_RETURN(conv_table);
 }
 
