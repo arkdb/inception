@@ -2599,7 +2599,10 @@ mysql_table_info_free(
         LIST_REMOVE(link, table_info->field_lst, field_info);
 
         if (field_info->field)
+        {
             delete field_info->field;
+            field_info->field = NULL;
+        }
 
         free(field_info);
         field_info = next_field_info;
@@ -5542,6 +5545,7 @@ int inception_transfer_next_sequence(
 
             source_row = mysql_fetch_row(source_res);
         }
+        mysql_free_result(source_res);
     }
     else
     {
