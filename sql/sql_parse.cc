@@ -4759,6 +4759,7 @@ int mysql_check_create_table(THD *thd)
         strcpy(table_info->db_name, create_table->db);
         strcpy(table_info->table_name, create_table->table_name);
         mysql_add_table_object(thd, table_info);
+        table_info->new_cache = true;
         DBUG_RETURN(FALSE);
     }
 
@@ -5382,6 +5383,7 @@ int mysql_check_add_column(THD *thd)
 int mysql_check_rename_table(THD *thd)
 {
     table_info_t* table_info;
+    table_info_t* table_info_new;
     char            tmp_buf[256];
     DBUG_ENTER("mysql_check_rename_table");
 
@@ -5389,9 +5391,10 @@ int mysql_check_rename_table(THD *thd)
             thd->lex->query_tables->table_name, TRUE);
     if (table_info == NULL)
         DBUG_RETURN(TRUE);
-
     //new table is existed, then report error message
-    if (mysql_table_is_existed(thd, thd->lex->select_lex.db, thd->lex->name.str))
+    table_info_new = mysql_get_table_object(thd, thd->lex->select_lex.db,
+            thd->lex->name.str, FALSE);
+    if (table_info_new != NULL)
     {
         my_error(ER_TABLE_EXISTS_ERROR, MYF(0), thd->lex->name.str);
         mysql_errmsg_append(thd);
