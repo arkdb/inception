@@ -6101,13 +6101,26 @@ void inception_transfer_set_thd_db(THD *thd, const char *db, uint32 db_len)
 void
 inception_transfer_set_errmsg(
     THD * thd,
-    transfer_cache_t* transfer
+    transfer_cache_t* transfer,
+    int errcode,
+    const char* errmsg_in
 )
 {
     time_t skr;
+    char errmsg[4*1024];
 
-    if (!thd->is_error())
-        return;
+    //save the error message first
+    if (errcode != 0)
+    {
+        strcpy(errmsg, errmsg_in);
+        thd->clear_error();
+        my_error(errcode, MYF(0), errmsg);
+    }
+    else
+    {
+        if (!thd->is_error())
+            return;
+    }
 
     str_truncate(&transfer->errmsg, str_get_len(&transfer->errmsg));
     str_append(&transfer->errmsg, thd->get_stmt_da()->message());
@@ -6115,7 +6128,7 @@ inception_transfer_set_errmsg(
     skr= my_time(0);
     localtime_r(&skr, &transfer->stop_time_space);
     transfer->stop_time = &transfer->stop_time_space;
-    sql_print_error((const char*)(str_get(&transfer->errmsg)));
+    sql_print_error("%s", str_get(&transfer->errmsg));
 }
 
 int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
@@ -6153,8 +6166,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         {
             sql_print_error("transfer parse query event error: %s, SQL: %s", 
                 thd->get_stmt_da()->message(), query_thd->query());
-            my_error(ER_TRANSFER_INTERRUPT, MYF(0), thd->get_stmt_da()->message());
-            inception_transfer_set_errmsg(thd, mi->datacenter);
+            inception_transfer_set_errmsg(thd, mi->datacenter, 
+                ER_TRANSFER_INTERRUPT, thd->get_stmt_da()->message());
             DBUG_RETURN(true);
         }
         else
@@ -6314,7 +6327,7 @@ retry_fetch1:
             goto retry_fetch1;
         if (retry_count == 3)
         {
-            inception_transfer_set_errmsg(thd, slave);
+            inception_transfer_set_errmsg(thd, slave, 0, NULL);
             mysql_mutex_lock(&datacenter->run_lock);
             slave->valid = false;
             mysql_mutex_unlock(&datacenter->run_lock);
@@ -6343,7 +6356,7 @@ retry_fetch2:
             mysql_mutex_lock(&datacenter->run_lock);
             slave->valid = false;
             mysql_mutex_unlock(&datacenter->run_lock);
-            inception_transfer_set_errmsg(thd, slave);
+            inception_transfer_set_errmsg(thd, slave, 0, NULL);
             slave = slave_next;
             continue;
         }
@@ -6378,7 +6391,7 @@ retry_write:
         {
             if (retry_count <= 2)
                 goto retry_write;
-            inception_transfer_set_errmsg(thd, slave);
+            inception_transfer_set_errmsg(thd, slave, 0, NULL);
             slave = slave_next;
             continue;
         }
@@ -6665,6 +6678,7 @@ pthread_handler_t inception_transfer_delete(void* arg)
     datacenter = (transfer_cache_t*)arg;
     setup_connection_thread_globals(thd);
 
+    sql_print_information("[%s] delete thread started", datacenter->datacenter_name);
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
         DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
         inception_transfer_binlog_expire_days);
@@ -6767,6 +6781,7 @@ pthread_handler_t inception_transfer_thread(void* arg)
     datacenter->abort_slave = false;
     datacenter->transfer_on = 1;
 
+    sql_print_information("[%s] transfer started", datacenter->datacenter_name);
     if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
         goto error; 
 
@@ -6792,9 +6807,8 @@ reconnect:
         }
         if (failover)
             goto failover;
-        thd->clear_error();
-        my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT, "Connection the master failed");
         sql_print_information("[%s] connect master failed, hostname: %s, port: %d", 
 		        datacenter->datacenter_name, datacenter->hostname, datacenter->mysql_port);
         goto error; 
@@ -6812,7 +6826,7 @@ reconnect:
         }
         if (failover)
             goto failover;
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 0, NULL);
         sql_print_information("[%s] connect master failed, posible at get version, " 
             "register slave or dump", datacenter->datacenter_name);
         goto error; 
@@ -6834,9 +6848,7 @@ reconnect:
                 mysql_errno(mysql) == ER_MASTER_FATAL_ERROR_READING_BINLOG ||
                 mysql_errno(mysql) == ER_OUT_OF_RESOURCES)
             {
-                thd->clear_error();
-                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                inception_transfer_set_errmsg(thd, mi->datacenter);
+                inception_transfer_set_errmsg(thd, mi->datacenter, ER_TRANSFER_INTERRUPT, mysql_error(mysql));
                 goto failover;
             }
 
@@ -6854,7 +6866,7 @@ failover:
             {
                 sql_print_information("[%s] failover the master failed",
                     datacenter->datacenter_name);
-            	  inception_transfer_set_errmsg(thd, mi->datacenter);
+            	  inception_transfer_set_errmsg(thd, mi->datacenter, 0, NULL);
                 goto error;
             }
             else
@@ -6883,7 +6895,7 @@ failover:
             sql_print_information("[%s] read the event error, last "
 		            "position is: %s:%d", datacenter->datacenter_name, 
                 binlog_file, binlog_position);
-            inception_transfer_set_errmsg(thd, mi->datacenter);
+            inception_transfer_set_errmsg(thd, mi->datacenter, 0, NULL);
             goto error;
         }
         binlog_file = (char*)mi->get_master_log_name();
@@ -6895,7 +6907,7 @@ failover:
             sql_print_information("[%s] process the event error, transaction binlog start " 
 		            "position is: %s:%d", datacenter->datacenter_name, 
                 datacenter->cbinlog_file, datacenter->cbinlog_position);
-            inception_transfer_set_errmsg(thd, mi->datacenter);
+            inception_transfer_set_errmsg(thd, mi->datacenter, 0, NULL);
             delete evlog;
             goto error; 
         }
@@ -11165,10 +11177,10 @@ int inception_transfer_execute_store_simple(
     thd = mi->thd;
     if ((mysql= thd->get_transfer_connection()) == NULL)
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
         DBUG_RETURN(TRUE);
     }
 
@@ -11176,10 +11188,10 @@ int inception_transfer_execute_store_simple(
     {
         //if failed, execute the rollback to release locks, otherwise other connection can not
         //continue to execute dml to this table
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
             mysql_error(mysql), sql);
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
         DBUG_RETURN(TRUE);
     }
 
@@ -11203,19 +11215,19 @@ int inception_transfer_execute_store_with_transaction(
     thd = mi->thd;
     if ((mysql= thd->get_transfer_connection()) == NULL)
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), thd->get_stmt_da()->message());
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
         DBUG_RETURN(TRUE);
     }
 
     if (mysql_real_query(mysql, "BEGIN", strlen("BEGIN")))
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("write the datacenter failed, begin transaction failed: %s", 
             mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         DBUG_RETURN(true);
     }
 
@@ -11242,10 +11254,10 @@ int inception_transfer_execute_store_with_transaction(
 
     if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("write the datacenter failed, insert failed: %s", 
             mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         goto rollback;
     }
 
@@ -11254,10 +11266,10 @@ int inception_transfer_execute_store_with_transaction(
 rollback:
     if (mysql_real_query(mysql, "ROLLBACK", strlen("ROLLBACK")))
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("write the datacenter failed, commit failed: %s", 
             mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         DBUG_RETURN(true);
     }
     DBUG_RETURN(true);
@@ -11265,10 +11277,10 @@ rollback:
 commit:
     if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
     {
-        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("write the datacenter failed, commit failed: %s", 
             mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter);
+        inception_transfer_set_errmsg(thd, mi->datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         DBUG_RETURN(true);
     }
 
