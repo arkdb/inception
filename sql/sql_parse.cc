@@ -4169,13 +4169,17 @@ inception_transfer_load_datacenter(
         datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res = mysql_store_result(mysql)) == NULL)
+    {
+    	thd->close_all_connections();
         return NULL;
+    }
 
     source_row = mysql_fetch_row(source_res);
     //check the count of master node, if not 1, then report invalid
     if (source_res->row_count != 1)
     {
         mysql_free_result(source_res);
+    	thd->close_all_connections();
         return NULL;
     }
 
@@ -4223,9 +4227,15 @@ inception_transfer_load_datacenter(
     sprintf (tmp, "select * from `%s`.`instances` where \
         instance_role in ('slave')", datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+    	thd->close_all_connections();
         return NULL;
+    }
     if ((source_res = mysql_store_result(mysql)) == NULL)
+    {
+    	thd->close_all_connections();
         return NULL;
+    }
     source_row = mysql_fetch_row(source_res);
     while(source_row)
     {
@@ -4489,6 +4499,7 @@ int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int ty
         (source_res = mysql_store_result(mysql)) == NULL)
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+    	thd->close_all_connections();
         DBUG_RETURN(true);
     }
 
@@ -4503,6 +4514,7 @@ int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int ty
     }
 
     mysql_free_result(source_res);
+    thd->close_all_connections();
     my_eof(thd);
 
     DBUG_RETURN(res);
@@ -4570,6 +4582,7 @@ int mysql_show_datacenter_list(THD* thd)
     }
 
     mysql_free_result(source_res);
+    thd->close_all_connections();
     my_eof(thd);
 
     DBUG_RETURN(res);
@@ -5014,6 +5027,7 @@ int inception_transfer_add_do_ignore(
     }
 
 error:
+    thd->close_all_connections();
     return false;
 }
 
@@ -5101,8 +5115,10 @@ int inception_transfer_add_instance(
         LIST_REMOVE(link, global_transfer_cache.transfer_lst, datacenter);
         my_free(datacenter);
     }
+
 error:
     mysql_mutex_unlock(&transfer_mutex);
+    thd->close_all_connections();
 
     return false;
 }
@@ -5220,6 +5236,7 @@ int inception_get_table_do_ignore(
         {
             thd->clear_error();
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), "Connection the master failed");
+    	    thd->close_all_connections();
             return INCEPTION_DO_UNKNOWN;
         }
 
@@ -5231,6 +5248,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+    	    	thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
             datacenter->doempty = atoi(mysql_fetch_row(source_res)[0]) > 0 ? 0:1;
@@ -5245,6 +5263,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+    	    	thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
 
@@ -5263,6 +5282,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+    	    	thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
             if (source_res->row_count > 0)
@@ -5277,6 +5297,7 @@ int inception_get_table_do_ignore(
         doignore = tableinfo->doignore;
     }
 
+    	    	thd->close_all_connections();
     return doignore;
 }
 
@@ -6884,6 +6905,7 @@ failover:
 error:
     sql_print_information("[%s] transfer stopped", datacenter->datacenter_name);
     datacenter->thread_stage = transfer_stopped;
+    thd->close_all_connections();
     thd->release_resources();
     mysql_cond_broadcast(&datacenter->stop_cond);
     skr= my_time(0);
@@ -6893,7 +6915,6 @@ error:
     mysql_mutex_lock(&LOCK_thread_count);
     remove_global_thread(thd);
     mysql_mutex_unlock(&LOCK_thread_count);
-    mysql_close(mysql);
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7030,6 +7051,7 @@ int inception_transfer_start_replicate(
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             mysql_mutex_unlock(&transfer_mutex);
+            thd->close_all_connections();
             return true;
         }
 
@@ -7047,6 +7069,7 @@ int inception_transfer_start_replicate(
                 thd->clear_error();
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Connection the master failed");
                 mysql_mutex_unlock(&transfer_mutex);
+                thd->close_all_connections();
                 return true;
             }
             sprintf (tmp, "SHOW MASTER STATUS");
@@ -7054,7 +7077,7 @@ int inception_transfer_start_replicate(
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
                 mysql_mutex_unlock(&transfer_mutex);
-                mysql_close(mysql);
+                thd->close_all_connections();
                 return true;
             }
 
@@ -7062,7 +7085,7 @@ int inception_transfer_start_replicate(
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
                 mysql_mutex_unlock(&transfer_mutex);
-                mysql_close(mysql);
+                thd->close_all_connections();
                 return true;
             }
             mysql_close(mysql);
@@ -7074,6 +7097,7 @@ int inception_transfer_start_replicate(
             my_error(ER_TRANSFER_INTERRUPT, MYF(0), "Master binlog is OFF");
             mysql_free_result(source_res1);
             mysql_mutex_unlock(&transfer_mutex);
+            thd->close_all_connections();
             return true;
         }
 
@@ -7144,6 +7168,7 @@ int inception_transfer_set_instance_position(
     {
         mysql_mutex_unlock(&transfer_mutex); 
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        thd->close_all_connections();
         return NULL;
     }
 
@@ -7152,11 +7177,13 @@ int inception_transfer_set_instance_position(
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         mysql_mutex_unlock(&transfer_mutex); 
+        thd->close_all_connections();
         return true;
     }
 
     LIST_REMOVE(link, global_transfer_cache.transfer_lst, transfer_node);
     mysql_mutex_unlock(&transfer_mutex); 
+    thd->close_all_connections();
 
     return false;
 }
@@ -7261,9 +7288,11 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
                 else
                     my_error(mysql_errno(mysql), MYF(0));
 
+    	        thd->close_all_connections();
                 return true;
             }
 
+    	    thd->close_all_connections();
             if (inception_transfer_instance_table_create(thd, thd->lex->name.str))
                 return true;
             break;
@@ -11150,6 +11179,7 @@ int inception_transfer_execute_store_simple(
         my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
         sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
             mysql_error(mysql), sql);
+        inception_transfer_set_errmsg(thd, mi->datacenter);
         DBUG_RETURN(TRUE);
     }
 
