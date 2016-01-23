@@ -12416,7 +12416,14 @@ int mysql_get_field_string_for_tranfer(
                 if (qutor_flag)
                     str_append(backup_sql, "\'");
                 res=field->val_str(&buffer);
-                mysql_dup_char_with_escape(res->c_ptr(), backup_sql, (char*)"\'", (char*)"\"");
+                if (res->length() >= 100 * 1024)
+                {
+                    sql_print_warning("[%s] Column field length(%d) too long, skip it", 
+                        mi->datacenter->datacenter_name, res->length());
+                    str_append(backup_sql, "Inception Gate: Column field too long, skip it");
+                }
+                else
+                    mysql_dup_char_with_escape(res->c_ptr(), backup_sql, (char*)"\'", (char*)"\"");
                 //str_append(backup_sql, str_get(dupcharfield));
                 //str_append(backup_sql, "Hello");
                 qutor_end =1;
