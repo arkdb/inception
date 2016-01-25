@@ -6331,6 +6331,7 @@ retry_fetch1:
             mysql_mutex_lock(&datacenter->run_lock);
             slave->valid = false;
             mysql_mutex_unlock(&datacenter->run_lock);
+            mysql_free_result(source_res1);
             slave = slave_next;
             continue;
         }
@@ -6358,6 +6359,7 @@ retry_fetch2:
             mysql_mutex_unlock(&datacenter->run_lock);
             inception_transfer_set_errmsg(thd, slave, 0, NULL);
             slave = slave_next;
+            mysql_free_result(source_res1);
             continue;
         }
 
@@ -6670,6 +6672,7 @@ pthread_handler_t inception_transfer_delete(void* arg)
     char sql[1024];
     char sql1[1024];
     char sql2[1024];
+    ulong inception_transfer_binlog_expire_days_local=0;
 
     my_thread_init();
     thd= new THD;
@@ -6678,7 +6681,11 @@ pthread_handler_t inception_transfer_delete(void* arg)
     datacenter = (transfer_cache_t*)arg;
     setup_connection_thread_globals(thd);
 
-    sql_print_information("[%s] delete thread started", datacenter->datacenter_name);
+retry:
+    sql_print_information("[%s] delete thread started/continue, binlog expire days[%ld day]", 
+        datacenter->datacenter_name, inception_transfer_binlog_expire_days);
+
+    inception_transfer_binlog_expire_days_local = inception_transfer_binlog_expire_days;
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
         DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
         inception_transfer_binlog_expire_days);
@@ -6688,8 +6695,15 @@ pthread_handler_t inception_transfer_delete(void* arg)
     sprintf(sql2, "DELETE FROM `%s`.master_positions where create_time < \
         DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
         inception_transfer_binlog_expire_days);
+
     while (datacenter->transfer_on)
     {
+        if (inception_transfer_binlog_expire_days_local != 
+            inception_transfer_binlog_expire_days)
+        {
+            goto retry;
+        }
+
         mysql = thd->get_transfer_connection();
         if (mysql == NULL)
         {
@@ -6848,7 +6862,8 @@ reconnect:
                 mysql_errno(mysql) == ER_MASTER_FATAL_ERROR_READING_BINLOG ||
                 mysql_errno(mysql) == ER_OUT_OF_RESOURCES)
             {
-                inception_transfer_set_errmsg(thd, mi->datacenter, ER_TRANSFER_INTERRUPT, mysql_error(mysql));
+                inception_transfer_set_errmsg(thd, mi->datacenter, 
+                    ER_TRANSFER_INTERRUPT, mysql_error(mysql));
                 goto failover;
             }
 
