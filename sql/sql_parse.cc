@@ -10465,8 +10465,6 @@ int mysql_execute_alter_table_osc(
         thd->variables.inception_osc_max_running);
     oscargv[count++] = strdup(cmd_line);
 
-    oscargv[count++] = strdup("--check-replication-filters");
-    oscargv[count++] = strdup("--check-alter");
     oscargv[count++] = strdup("--recurse=1");
 
     oscargv[count++] = strdup("--check-interval");
@@ -10478,6 +10476,12 @@ int mysql_execute_alter_table_osc(
         
     if (!thd->variables.inception_osc_drop_old_table)
         oscargv[count++] = strdup("--no-drop-old-table");
+
+    if (!thd->variables.inception_osc_check_replication_filters)
+        oscargv[count++] = strdup("--no-check-replication-filters");
+
+    if (!thd->variables.inception_osc_check_alter)
+        oscargv[count++] = strdup("--no-check-alter");
 
     oscargv[count++] = strdup("--alter-foreign-keys-method=auto");
     oscargv[count++] = strdup("--execute");

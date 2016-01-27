@@ -994,6 +994,18 @@ static Sys_var_mybool Sys_inception_check_identifier(
     GLOBAL_VAR(inception_check_identifier),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_osc_check_replication_filters(
+    "inception_osc_check_replication_filters",
+    "Abort if any replication filter is set on any server. The tool looks for server options that filter replication.",
+    SESSION_VAR(inception_osc_check_replication_filters),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
+static Sys_var_mybool Sys_inception_osc_check_alter(
+    "inception_osc_check_alter",
+    "Parses the --alter specified and tries to  warn of possible unintended behavior.",
+    SESSION_VAR(inception_osc_check_alter),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
 const char *osc_recursion_method[]= {"processlist", "hosts", "none", NullS};
 static Sys_var_enum Sys_inception_osc_recursion_method(
     "inception_osc_recursion_method",
