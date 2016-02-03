@@ -198,6 +198,8 @@ extern ulong inception_transfer_trx_sequence_sync;
 extern ulong inception_transfer_event_sequence_sync;
 extern ulong inception_transfer_binlog_expire_days;
 extern ulong inception_transfer_slave_sync;
+extern ulong inception_transfer_worker_queue_length;
+extern ulong inception_transfer_parallel_workers;
 // extern ulong inception_osc_critical_connected;
 // extern ulong inception_osc_critical_running;
 // extern ulong inception_osc_max_connected;

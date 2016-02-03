@@ -379,6 +379,35 @@ public:
     int   wait ();
 };
 
+typedef struct mts_thread_queue_struct mts_thread_queue_t;
+struct mts_thread_queue_struct
+{
+    mysql_mutex_t       element_lock;
+    str_t               sql_buffer;
+    volatile int        valid;
+    int                 commit_event;
+    str_t               commit_sql_buffer;
+};
+
+typedef struct mts_thread_struct mts_thread_t;
+struct mts_thread_struct
+{
+    mts_thread_queue_t* thread_queue;
+    volatile int        enqueue_index;
+    volatile int        dequeue_index;
+    void*               datacenter;
+};
+
+typedef struct mts_struct mts_t;
+struct mts_struct
+{
+    //只要有一个线程有问题，就需要其它线程也退出
+    int                 mts_running;
+    mts_thread_t*       mts_thread;
+    mysql_cond_t        mts_cond;
+    mysql_mutex_t       mts_lock;
+};
+
 typedef struct transfer_cache_struct transfer_cache_t;
 struct transfer_cache_struct
 {
@@ -411,13 +440,15 @@ struct transfer_cache_struct
     mysql_mutex_t run_lock;
     THD* thd;
     LIST_NODE_T(transfer_cache_t) link;
-    // datacenter->sql_buffer = String("", 0, system_charset_info);
-    // String* sql_buffer("", 0, system_charset_info);
-    // String *sql_buffer;
     str_t sql_buffer;
+    str_t* mts_sql_buffer;
+    mts_thread_queue_t* current_element;
+    mts_thread_t* current_thread;
     str_t dupchar_buffer;
     HASH table_cache;
     int doempty;
+
+    mts_t* mts;
 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
