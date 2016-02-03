@@ -255,6 +255,7 @@ int mysql_get_field_string_for_tranfer(Master_info* mi,  Field* field, str_t* ba
 void mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field);
 int inception_mts_get_commit_positions( Master_info* mi, Log_event* ev);
 int inception_stop_transfer( transfer_cache_t* datacenter);
+bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -5763,6 +5764,8 @@ retry:
     {
         //queue is full, wait to consume
         datacenter->thread_stage = transfer_wait_dequeue;
+        if (inception_transfer_killed(datacenter->thd, datacenter))
+            return NULL;
         // sleep(1);
         goto retry;
     }
@@ -5790,6 +5793,11 @@ int inception_transfer_write_row(
     do
     {
         backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info);
+        if (backup_sql == NULL)
+        {
+            error=true;
+            goto error;
+        }
         str_truncate_0(backup_sql);
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
@@ -6553,6 +6561,8 @@ inception_transfer_write_Xid(
     char tmp_buf[1024];
 
     backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info);
+    if (backup_sql == NULL)
+        return true;
     str_truncate_0(backup_sql);
 
     //still the privise trx, but is another event
@@ -6894,6 +6904,7 @@ pthread_handler_t inception_mts_thread(void* arg)
         mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % datacenter->queue_length;
     }
 
+    thd->close_all_connections();
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -6983,6 +6994,52 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name)
     return false;
 }
 
+int inception_create_mts(
+    transfer_cache_t* datacenter
+)
+{
+    pthread_t threadid;
+    mts_t*          mts;
+    int i,j;
+    mts_thread_queue_t* mts_queue;
+    mts_thread_t*   mts_thread;
+
+    if (datacenter->parallel_workers > 1)
+    {
+        mts = (mts_t*)my_malloc(sizeof(mts_t) , MY_ZEROFILL);
+        mts->mts_thread = (mts_thread_t*)my_malloc(
+            sizeof(mts_thread_t) * datacenter->parallel_workers, MY_ZEROFILL);
+        datacenter->mts = mts;
+        mysql_mutex_init(NULL, &mts->mts_lock, MY_MUTEX_INIT_FAST);
+        mysql_cond_init(NULL, &mts->mts_cond, NULL);
+        for(i = 0; i < datacenter->parallel_workers; i++)
+        {
+            mts_thread = &mts->mts_thread[i];
+            mts_thread->thread_queue = (mts_thread_queue_t*)my_malloc(
+                sizeof(mts_thread_queue_t)*datacenter->queue_length, MY_ZEROFILL);
+            mts_thread->dequeue_index = 0;
+            mts_thread->enqueue_index = 0;
+            mts_thread->datacenter = datacenter;
+            for (j = 0; j < datacenter->queue_length; j++)
+            {
+                mts_queue = &mts_thread->thread_queue[j];
+                mysql_mutex_init(NULL, &mts_queue->element_lock, MY_MUTEX_INIT_FAST);
+                mts_queue->valid = false;
+                str_init(&mts_queue->sql_buffer);
+                str_init(&mts_queue->commit_sql_buffer);
+            }
+
+            if (mysql_thread_create(0, &threadid, &connection_attrib,
+                inception_mts_thread, (void*)mts_thread))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 pthread_handler_t inception_transfer_thread(void* arg)
 {
     pthread_t threadid;
@@ -7036,7 +7093,8 @@ pthread_handler_t inception_transfer_thread(void* arg)
         goto error; 
 
     if (mysql_thread_create(0, &threadid, &connection_attrib,
-        inception_transfer_delete, (void*)datacenter))
+        inception_transfer_delete, (void*)datacenter) ||
+        inception_create_mts(datacenter))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter->datacenter_name);
         goto error; 
@@ -7327,10 +7385,6 @@ int inception_transfer_start_replicate(
     MYSQL_RES *     source_res1=NULL;
     MYSQL_ROW       source_row;
     transfer_cache_t* datacenter;
-    mts_t*          mts;
-    int i,j;
-    mts_thread_queue_t* mts_queue;
-    mts_thread_t*   mts_thread;
 
     mysql_mutex_lock(&transfer_mutex);
     datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
@@ -7446,41 +7500,6 @@ int inception_transfer_start_replicate(
     datacenter->transfer_on = TRUE;
     datacenter->parallel_workers = inception_transfer_parallel_workers;
     datacenter->queue_length = inception_transfer_worker_queue_length;
-    if (datacenter->parallel_workers > 1)
-    {
-        mts = (mts_t*)my_malloc(sizeof(mts_t) , MY_ZEROFILL);
-        mts->mts_thread = (mts_thread_t*)my_malloc(
-            sizeof(mts_thread_t) * datacenter->parallel_workers, MY_ZEROFILL);
-        datacenter->mts = mts;
-        mysql_mutex_init(NULL, &mts->mts_lock, MY_MUTEX_INIT_FAST);
-        mysql_cond_init(NULL, &mts->mts_cond, NULL);
-        for(i = 0; i < datacenter->parallel_workers; i++)
-        {
-            mts_thread = &mts->mts_thread[i];
-            mts_thread->thread_queue = (mts_thread_queue_t*)my_malloc(
-                sizeof(mts_thread_queue_t)*datacenter->queue_length, MY_ZEROFILL);
-            mts_thread->dequeue_index = 0;
-            mts_thread->enqueue_index = 0;
-            mts_thread->datacenter = datacenter;
-            for (j = 0; j < datacenter->queue_length; j++)
-            {
-                mts_queue = &mts_thread->thread_queue[j];
-                mysql_mutex_init(NULL, &mts_queue->element_lock, MY_MUTEX_INIT_FAST);
-                mts_queue->valid = false;
-                str_init(&mts_queue->sql_buffer);
-                str_init(&mts_queue->commit_sql_buffer);
-            }
-
-            if (mysql_thread_create(0, &threadid, &connection_attrib,
-                inception_mts_thread, (void*)mts_thread))
-            {
-                datacenter->transfer_on = FALSE;
-                mysql_mutex_unlock(&transfer_mutex);
-                my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter_name);
-                return true;
-            }
-        }
-    }
 
     mysql_mutex_unlock(&transfer_mutex);
     //start replicate
@@ -11536,7 +11555,6 @@ int inception_transfer_execute_store_simple(
 )
 {
     MYSQL*  mysql;
-    str_t * backup_sql;
     THD*  thd;
 
     DBUG_ENTER("inception_transfer_execute_store_simple");
