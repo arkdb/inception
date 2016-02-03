@@ -1607,6 +1607,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  TEXT_SYM
 %token  THAN_SYM
 %token  THEN_SYM                      /* SQL-2003-R */
+%token  THREADS_SYM/* SQL-2003-R */
 %token  TIMESTAMP                     /* SQL-2003-R */
 %token  TIMESTAMP_ADD
 %token  TIMESTAMP_DIFF
@@ -15408,6 +15409,13 @@ inception_show_param:
         lex->sql_command = SQLCOM_INCEPTION;
         lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DO_IGNORE;
         lex->type = $2;
+        lex->name= $6;
+    }
+    | GET_SYM THREADS_SYM STATUS_SYM  FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_THREAD_STATUS;
         lex->name= $6;
     }
     ;

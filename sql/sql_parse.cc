@@ -207,6 +207,8 @@ enum transfer_stage_type {
     transfer_read_events,
     transfer_make_next_id,
     transfer_write_datacenter,
+    transfer_wait_dequeue,
+    transfer_enqueue_reserve,
     transfer_stopped 
 };
 
@@ -217,6 +219,8 @@ const char* transfer_stage_type_array[]=
     "transfer_read_events",
     "transfer_make_next_id",
     "transfer_write_datacenter",
+    "transfer_wait_dequeue",
+    "transfer_enqueue_reserve",
     "transfer_stopped"
 };
 
@@ -905,6 +909,7 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TRANSFER_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DATACENTER||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DO_IGNORE||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_THREAD_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
     
@@ -4474,6 +4479,65 @@ int mysql_master_transfer_status(
     DBUG_RETURN(res);
 }
 
+int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
+{
+    int res= 0;
+    List<Item>    field_list;
+    MYSQL* mysql;
+    char tmp[1024];
+    Protocol *    protocol= thd->protocol;
+    MYSQL_RES *     source_res;
+    MYSQL_ROW       source_row;
+    int i;
+    mts_thread_t*   mts_thread;
+    mts_thread_queue_t* mts_element;
+    transfer_cache_t* osc_percent_node;
+    transfer_cache_t* datacenter;
+
+    DBUG_ENTER("mysql_show_datacenter_threads_status");
+
+    field_list.push_back(new Item_empty_string("Thread_Name", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Enqueue_Index", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("Dequeue_Index", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("Queue_Length", 20, MYSQL_TYPE_LONG));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    mysql_mutex_lock(&transfer_mutex); 
+
+    //load the datacenter again, to confirm is is existed still
+    datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
+    if (datacenter == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex);
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), thd->lex->name.str);
+        DBUG_RETURN(res);
+    }
+
+    for (i=0; i < inception_transfer_parallel_workers; i++)
+    {
+        mts_thread = &datacenter->mts->mts_thread[i];
+        protocol->prepare_for_resend();
+        sprintf(tmp, "%p", mts_thread);
+        protocol->store(tmp, system_charset_info);
+        protocol->store(mts_thread->enqueue_index);
+        protocol->store(mts_thread->dequeue_index);
+        protocol->store((int)((mts_thread->dequeue_index+
+              inception_transfer_worker_queue_length - mts_thread->enqueue_index) % 
+            inception_transfer_worker_queue_length));
+
+        protocol->write();
+
+    }
+    mysql_mutex_unlock(&transfer_mutex);
+    my_eof(thd);
+    DBUG_RETURN(res);
+}
+
 int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int type)
 {
     int res= 0;
@@ -5670,6 +5734,7 @@ inception_mts_get_sql_buffer(
     if (inception_transfer_parallel_workers == 1)
         return &datacenter->sql_buffer;
 
+    datacenter->thread_stage = transfer_enqueue_reserve;
     mts = datacenter->mts;
 
     index = inception_mts_get_hash_value(datacenter, table_info);
@@ -5693,6 +5758,7 @@ retry:
     else
     {
         //queue is full, wait to consume
+        datacenter->thread_stage = transfer_wait_dequeue;
         sleep(1);
         goto retry;
     }
@@ -7606,6 +7672,8 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_show_datacenter_list(thd);
         case INCEPTION_COMMAND_SHOW_DO_IGNORE:
             return mysql_show_datacenter_do_ignore_list(thd, thd->lex->name.str, thd->lex->type);
+        case INCEPTION_COMMAND_SHOW_THREAD_STATUS:
+            return mysql_show_datacenter_threads_status(thd, thd->lex->name.str);
 
         default:
             return false;

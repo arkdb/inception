@@ -587,6 +587,7 @@ static SYMBOL symbols[] = {
   { "TEXT",		SYM(TEXT_SYM)},
   { "THAN",             SYM(THAN_SYM)},
   { "THEN",		SYM(THEN_SYM)},
+  { "THREADS",		SYM(THREADS_SYM)},
   { "TIME",		SYM(TIME_SYM)},
   { "TIMESTAMP",	SYM(TIMESTAMP)},
   { "TIMESTAMPADD",     SYM(TIMESTAMP_ADD)},
