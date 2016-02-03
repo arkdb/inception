@@ -448,6 +448,8 @@ struct transfer_cache_struct
     str_t dupchar_buffer;
     HASH table_cache;
     int doempty;
+    int parallel_workers;
+    int queue_length;
 
     mts_t* mts;
 
