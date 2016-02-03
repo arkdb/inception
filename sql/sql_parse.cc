@@ -4526,8 +4526,8 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         protocol->store(tmp, system_charset_info);
         protocol->store(mts_thread->enqueue_index);
         protocol->store(mts_thread->dequeue_index);
-        protocol->store((int)((mts_thread->dequeue_index+
-              inception_transfer_worker_queue_length - mts_thread->enqueue_index) % 
+        protocol->store((int)((mts_thread->enqueue_index+
+              inception_transfer_worker_queue_length - mts_thread->dequeue_index) % 
             inception_transfer_worker_queue_length));
 
         protocol->write();
@@ -5745,7 +5745,7 @@ retry:
     //queue is not full
     dequeue_index = mts_thread->dequeue_index;
     enqueue_index = mts_thread->enqueue_index;
-    if (dequeue_index != enqueue_index + 1)
+    if ((enqueue_index+1) % inception_transfer_worker_queue_length != dequeue_index)
     {
         mts_queue = &mts_thread->thread_queue[mts_thread->enqueue_index];
         datacenter->mts_sql_buffer = &mts_queue->sql_buffer;
@@ -6685,7 +6685,7 @@ bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter)
 {
   DBUG_ENTER("inception_transfer_killed");
 
-  DBUG_RETURN(datacenter->abort_slave || abort_loop || thd->killed);
+  DBUG_RETURN(datacenter->abort_slave || abort_loop || (thd != NULL && thd->killed));
 }
 
 int inception_transfer_failover(Master_info* mi)
