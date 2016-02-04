@@ -4517,6 +4517,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
     field_list.push_back(new Item_return_int("Dequeue_Index", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Queue_Length", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Thread_Stage", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4556,6 +4557,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
                     mts_thread->dequeue_index) % datacenter->queue_length)+1);
             protocol->store(transfer_stage_type_array[mts_thread->thread_stage], 
                 system_charset_info);
+            protocol->store(mts_thread->event_count/((long)(time(0)-datacenter->start_time)));
 
             protocol->write();
         }
@@ -5774,6 +5776,7 @@ inception_mts_get_sql_buffer(
     index = inception_mts_get_hash_value(datacenter, table_info, commit_flag);
 
     mts_thread = &mts->mts_thread[index];
+    mts_thread->event_count += 1;
     
 retry:
     //queue is not full
