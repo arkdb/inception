@@ -923,6 +923,7 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DATACENTER||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DO_IGNORE||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_THREAD_STATUS||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TABLE_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
         DBUG_RETURN(TRUE);
     
@@ -4515,6 +4516,12 @@ int mysql_show_datacenter_table_status(THD* thd, char* datacenter_name)
     field_list.push_back(new Item_return_int("Thread_Ref_Count", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Thread_Sequence", 20, MYSQL_TYPE_LONG));
 
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
     mysql_mutex_lock(&transfer_mutex); 
     //load the datacenter again, to confirm is is existed still
     datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
@@ -4534,6 +4541,7 @@ int mysql_show_datacenter_table_status(THD* thd, char* datacenter_name)
 
     for (uint i=0; i < datacenter->table_cache.records; i++)
     {
+        protocol->prepare_for_resend();
         table_info = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
         protocol->store(table_info->db_name, system_charset_info);
         protocol->store(table_info->table_name, system_charset_info);
@@ -4560,7 +4568,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
 
     DBUG_ENTER("mysql_show_datacenter_threads_status");
 
-    field_list.push_back(new Item_empty_string("Thread_Name", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Thread_Sequence", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Enqueue_Index", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Dequeue_Index", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Queue_Length", 20, MYSQL_TYPE_LONG));
@@ -4597,8 +4605,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         {
             mts_thread = &datacenter->mts->mts_thread[i];
             protocol->prepare_for_resend();
-            sprintf(tmp, "%p", mts_thread);
-            protocol->store(tmp, system_charset_info);
+            protocol->store(i);
             protocol->store(mts_thread->enqueue_index);
             protocol->store(mts_thread->dequeue_index);
             protocol->store((int)((mts_thread->enqueue_index+ datacenter->queue_length - 
@@ -5789,15 +5796,22 @@ inception_mts_get_hash_value(
 )
 {
     char key[1024] ;
+    char* p;
     int key_length;
-    my_hash_value_type hash_value;
+    my_hash_value_type hash_value=0;
     if (commit_flag)
-        sprintf(key, "%s%sCommit", table_info->db_name, table_info->table_name);
+        sprintf(key, "%s%sXID", table_info->db_name, table_info->table_name);
     else
         sprintf(key, "%s%s", table_info->db_name, table_info->table_name);
 
+    p = key;
     key_length = strlen(key);
-    hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
+    while (*p)
+    {
+        hash_value = hash_value + (int)*p;
+        p++;
+    }
+    //hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
     return int(hash_value % datacenter->parallel_workers);
 }
 
@@ -7357,6 +7371,8 @@ int inception_reset_datacenter_do_ignore(
     {
         table_info = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
         table_info->doignore = INCEPTION_DO_UNKNOWN;
+        table_info->mts_ref_count = 0;
+        table_info->mts_index = 0;
     }
 
     datacenter->doempty = -1;
