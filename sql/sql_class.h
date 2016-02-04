@@ -450,6 +450,10 @@ struct transfer_cache_struct
     int doempty;
     int parallel_workers;
     int queue_length;
+    //for qps stat
+    time_t start_time;
+    longlong events_count;
+    longlong trx_count;
 
     mts_t* mts;
 

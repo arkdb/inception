@@ -4399,6 +4399,8 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Parallel_Workers", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Worker_Queue_Length", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_return_int("Trxs_Per_Second", 20, MYSQL_TYPE_LONGLONG));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4476,6 +4478,8 @@ int mysql_master_transfer_status(
     protocol->store((longlong)osc_percent_node->table_cache.records);
     protocol->store(osc_percent_node->parallel_workers);
     protocol->store(osc_percent_node->queue_length);
+    protocol->store(osc_percent_node->events_count/((long)(time(0)-osc_percent_node->start_time)));
+    protocol->store(osc_percent_node->trx_count/((long)(time(0)-osc_percent_node->start_time)));
     mysql_mutex_unlock(&transfer_mutex);
 
     protocol->write();
@@ -6564,6 +6568,7 @@ inception_transfer_write_Xid(
     if (backup_sql == NULL)
         return true;
     str_truncate_0(backup_sql);
+    mi->datacenter->trx_count += 1;
 
     if (mi->datacenter->parallel_workers == 1)
     {
@@ -6610,29 +6615,35 @@ int inception_transfer_binlog_process(
     switch(ev->get_type_code())
     {
     case QUERY_EVENT:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_query_event(mi, ev);
         break;
 
     case XID_EVENT:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_write_Xid(mi, ev);
         break;
         
     case TABLE_MAP_EVENT:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_table_map(mi, ev);
         break;
 
     case WRITE_ROWS_EVENT_V1:
     case WRITE_ROWS_EVENT:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_write_row(mi, ev, SQLCOM_INSERT);
         break;
 
     case UPDATE_ROWS_EVENT:
     case UPDATE_ROWS_EVENT_V1:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_write_row(mi, ev, SQLCOM_UPDATE);
         break;
 
     case DELETE_ROWS_EVENT:
     case DELETE_ROWS_EVENT_V1:
+        mi->datacenter->events_count += 1;
         err = inception_transfer_write_row(mi, ev, SQLCOM_DELETE);
         break;
 
@@ -7093,6 +7104,9 @@ pthread_handler_t inception_transfer_thread(void* arg)
     mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
     datacenter->abort_slave = false;
     datacenter->transfer_on = 1;
+    datacenter->start_time = time(0);
+    datacenter->trx_count = 0;
+    datacenter->events_count = 0;
 
     sql_print_information("[%s] transfer started", datacenter->datacenter_name);
     if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
@@ -7313,6 +7327,8 @@ int inception_stop_transfer(
     mysql_mutex_lock(&datacenter->run_lock);
     thd = datacenter->thd;
     datacenter->abort_slave=1;
+    datacenter->trx_count = 0;
+    datacenter->events_count = 0;
     sql_print_information("[%s] inception transfer has been stopped",
         datacenter->datacenter_name);
     while (datacenter->transfer_on)                        // Should always be true
