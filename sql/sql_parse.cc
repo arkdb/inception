@@ -209,7 +209,13 @@ enum transfer_stage_type {
     transfer_write_datacenter,
     transfer_wait_dequeue,
     transfer_enqueue_reserve,
-    transfer_stopped 
+    transfer_stopped ,
+    //mts stage
+    transfer_mts_not_start,
+    transfer_mts_wait_queue,
+    transfer_mts_stopped,
+    transfer_mts_write_datacenter,
+    transfer_mts_dequeue
 };
 
 const char* transfer_stage_type_array[]=
@@ -221,7 +227,13 @@ const char* transfer_stage_type_array[]=
     "transfer_write_datacenter",
     "transfer_wait_dequeue",
     "transfer_enqueue_reserve",
-    "transfer_stopped"
+    "transfer_stopped",
+    //mts stage
+    "transfer_mts_not_start",
+    "transfer_mts_wait_queue",
+    "transfer_mts_stopped",
+    "transfer_mts_write_datacenter",
+    "transfer_mts_dequeue"
 };
 
 extern const char *osc_recursion_method[];
@@ -4504,6 +4516,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
     field_list.push_back(new Item_return_int("Enqueue_Index", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Dequeue_Index", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Queue_Length", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Thread_Stage", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4529,18 +4542,23 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         DBUG_RETURN(true);
     }
 
-    for (i=0; i < datacenter->parallel_workers; i++)
+    if (datacenter->parallel_workers > 1)
     {
-        mts_thread = &datacenter->mts->mts_thread[i];
-        protocol->prepare_for_resend();
-        sprintf(tmp, "%p", mts_thread);
-        protocol->store(tmp, system_charset_info);
-        protocol->store(mts_thread->enqueue_index);
-        protocol->store(mts_thread->dequeue_index);
-        protocol->store((int)((mts_thread->enqueue_index+ datacenter->queue_length - 
-                mts_thread->dequeue_index) % datacenter->queue_length));
+        for (i=0; i < datacenter->parallel_workers; i++)
+        {
+            mts_thread = &datacenter->mts->mts_thread[i];
+            protocol->prepare_for_resend();
+            sprintf(tmp, "%p", mts_thread);
+            protocol->store(tmp, system_charset_info);
+            protocol->store(mts_thread->enqueue_index);
+            protocol->store(mts_thread->dequeue_index);
+            protocol->store((int)((mts_thread->enqueue_index+ datacenter->queue_length - 
+                    mts_thread->dequeue_index) % datacenter->queue_length)+1);
+            protocol->store(transfer_stage_type_array[mts_thread->thread_stage], 
+                system_charset_info);
 
-        protocol->write();
+            protocol->write();
+        }
     }
 
     mysql_mutex_unlock(&transfer_mutex);
@@ -6873,6 +6891,7 @@ pthread_handler_t inception_mts_thread(void* arg)
             else
             {
                 //queue is not ready
+                mts_thread->thread_stage = transfer_mts_wait_queue;
                 mysql_mutex_lock(&mts->mts_lock);
                 mysql_cond_wait(&mts->mts_cond, &mts->mts_lock);
                 mysql_mutex_unlock(&mts->mts_lock);
@@ -6884,6 +6903,7 @@ pthread_handler_t inception_mts_thread(void* arg)
             if (inception_transfer_killed(datacenter->thd, datacenter))
                 break;
             //queue is empty
+            mts_thread->thread_stage = transfer_mts_wait_queue;
             mysql_mutex_lock(&mts->mts_lock);
             mysql_cond_wait(&mts->mts_cond, &mts->mts_lock);
             mysql_mutex_unlock(&mts->mts_lock);
@@ -6891,6 +6911,7 @@ pthread_handler_t inception_mts_thread(void* arg)
         }
 
         //如果内容不是空的，才执行，如果是空的，则说明是COMMIT语句，多线程就不需要这个了
+        mts_thread->thread_stage = transfer_mts_write_datacenter;
         if (str_get_len(sql_buffer) > 0 && 
             mysql_real_query(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
         {
@@ -6915,12 +6936,14 @@ pthread_handler_t inception_mts_thread(void* arg)
             }
         }
 
+        mts_thread->thread_stage = transfer_mts_dequeue;
         mysql_mutex_lock(&element->element_lock);
         element->valid = false;
         mysql_mutex_unlock(&element->element_lock);
         mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % datacenter->queue_length;
     }
 
+    mts_thread->thread_stage = transfer_mts_stopped;
     thd->close_all_connections();
     my_thread_end();
     pthread_exit(0);
@@ -7037,6 +7060,7 @@ int inception_create_mts(
             mts_thread->dequeue_index = 0;
             mts_thread->enqueue_index = 0;
             mts_thread->datacenter = datacenter;
+            mts_thread->thread_stage = transfer_mts_not_start;
             for (j = 0; j < datacenter->queue_length; j++)
             {
                 mts_queue = &mts_thread->thread_queue[j];

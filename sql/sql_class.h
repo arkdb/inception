@@ -397,6 +397,7 @@ struct mts_thread_struct
     volatile int        enqueue_index;
     volatile int        dequeue_index;
     void*               datacenter;
+    volatile int        thread_stage;
 };
 
 typedef struct mts_struct mts_t;
