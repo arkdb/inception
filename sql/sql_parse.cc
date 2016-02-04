@@ -6565,18 +6565,21 @@ inception_transfer_write_Xid(
         return true;
     str_truncate_0(backup_sql);
 
-    //still the privise trx, but is another event
-    if(inception_transfer_next_sequence(mi, 
-        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
-        return true;
+    if (mi->datacenter->parallel_workers == 1)
+    {
+        //still the privise trx, but is another event
+        if(inception_transfer_next_sequence(mi, 
+            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+            return true;
+        str_append(backup_sql, "INSERT INTO ");
+        sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
+          tablename, create_time, instance_name, optype , data) VALUES \
+          (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', 'COMMIT', '')", 
+            mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
+            ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
+        str_append(backup_sql, tmp_buf);
+    }
 
-    str_append(backup_sql, "INSERT INTO ");
-    sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
-      tablename, create_time, instance_name, optype , data) VALUES \
-      (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', 'COMMIT', '')", 
-        mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
-        ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
-    str_append(backup_sql, tmp_buf);
     inception_mts_get_commit_positions(mi, ev);
     if (inception_transfer_execute_store_with_transaction(mi, ev, str_get(backup_sql)))
         return true;
@@ -6876,7 +6879,9 @@ pthread_handler_t inception_mts_thread(void* arg)
             continue;
         }
 
-        if (mysql_real_query(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
+        //如果内容不是空的，才执行，如果是空的，则说明是COMMIT语句，多线程就不需要这个了
+        if (str_get_len(sql_buffer) > 0 && 
+            mysql_real_query(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
         {
             inception_transfer_set_errmsg(thd, datacenter, 
                 ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
@@ -6886,6 +6891,7 @@ pthread_handler_t inception_mts_thread(void* arg)
             break;
             //error exit, notify other threads;
         }
+
         if (element->commit_event)
         {
             if (mysql_real_query(mysql, str_get(commit_sql_buffer), 
