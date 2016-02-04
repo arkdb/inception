@@ -186,6 +186,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_SHOW_DATACENTER         11
 #define INCEPTION_COMMAND_SHOW_DO_IGNORE          12
 #define INCEPTION_COMMAND_SHOW_THREAD_STATUS      13
+#define INCEPTION_COMMAND_SHOW_TABLE_STATUS      14
 
 #define LIST_PROCESS_HOST_LEN 64
 
@@ -276,6 +277,8 @@ struct table_info_struct
 
     //for transfer 
     int doignore; //0:need to recheck, 1: do, 2: ignore
+    longlong mts_ref_count;
+    int mts_index;
 
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;

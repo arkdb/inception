@@ -229,11 +229,11 @@ const char* transfer_stage_type_array[]=
     "transfer_enqueue_reserve",
     "transfer_stopped",
     //mts stage
-    "transfer_mts_not_start",
-    "transfer_mts_wait_queue",
-    "transfer_mts_stopped",
-    "transfer_mts_write_datacenter",
-    "transfer_mts_dequeue"
+    "mts_not_start",
+    "mts_wait_queue",
+    "mts_stopped",
+    "mts_write_datacenter",
+    "mts_dequeue"
 };
 
 extern const char *osc_recursion_method[];
@@ -4500,6 +4500,54 @@ int mysql_master_transfer_status(
     DBUG_RETURN(res);
 }
 
+int mysql_show_datacenter_table_status(THD* thd, char* datacenter_name)
+{
+    int res= 0;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+    transfer_cache_t* datacenter;
+    table_info_t* table_info;
+
+    DBUG_ENTER("mysql_show_datacenter_table_status");
+
+    field_list.push_back(new Item_empty_string("Db_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Table_Name", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Thread_Ref_Count", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_return_int("Thread_Sequence", 20, MYSQL_TYPE_LONG));
+
+    mysql_mutex_lock(&transfer_mutex); 
+    //load the datacenter again, to confirm is is existed still
+    datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
+    if (datacenter == NULL)
+    {
+        mysql_mutex_unlock(&transfer_mutex);
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        DBUG_RETURN(true);
+    }
+
+    if (!datacenter->transfer_on)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NONRUNNING, MYF(0), datacenter_name);
+        DBUG_RETURN(true);
+    }
+
+    for (uint i=0; i < datacenter->table_cache.records; i++)
+    {
+        table_info = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
+        protocol->store(table_info->db_name, system_charset_info);
+        protocol->store(table_info->table_name, system_charset_info);
+        protocol->store(table_info->mts_ref_count);
+        protocol->store(table_info->mts_index);
+
+        protocol->write();
+    }
+
+    mysql_mutex_unlock(&transfer_mutex);
+    my_eof(thd);
+    DBUG_RETURN(res);
+}
+
 int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
 {
     int res= 0;
@@ -5773,7 +5821,13 @@ inception_mts_get_sql_buffer(
     datacenter->thread_stage = transfer_enqueue_reserve;
     mts = datacenter->mts;
 
+
     index = inception_mts_get_hash_value(datacenter, table_info, commit_flag);
+    if (!commit_flag)
+    {
+        table_info->mts_index = index;
+        table_info->mts_ref_count += 1;
+    }
 
     mts_thread = &mts->mts_thread[index];
     mts_thread->event_count += 1;
@@ -7800,6 +7854,8 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_show_datacenter_do_ignore_list(thd, thd->lex->name.str, thd->lex->type);
         case INCEPTION_COMMAND_SHOW_THREAD_STATUS:
             return mysql_show_datacenter_threads_status(thd, thd->lex->name.str);
+        case INCEPTION_COMMAND_SHOW_TABLE_STATUS:
+            return mysql_show_datacenter_table_status(thd, thd->lex->name.str);
 
         default:
             return false;

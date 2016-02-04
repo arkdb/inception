@@ -15418,6 +15418,13 @@ inception_show_param:
         lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_THREAD_STATUS;
         lex->name= $6;
     }
+    | GET_SYM TABLE_SYM STATUS_SYM  FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_TABLE_STATUS;
+        lex->name= $6;
+    }
     ;
 
 inception_op_type:
