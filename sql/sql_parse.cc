@@ -5734,13 +5734,18 @@ int inception_transfer_next_sequence(
 int
 inception_mts_get_hash_value(
     transfer_cache_t* datacenter,
-    table_info_t* table_info
+    table_info_t* table_info,
+    int commit_flag
 )
 {
     char key[1024] ;
     int key_length;
     my_hash_value_type hash_value;
-    sprintf(key, "%s%s", table_info->db_name, table_info->table_name);
+    if (commit_flag)
+        sprintf(key, "%s%sCommit", table_info->db_name, table_info->table_name);
+    else
+        sprintf(key, "%s%s", table_info->db_name, table_info->table_name);
+
     key_length = strlen(key);
     hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
     return int(hash_value % datacenter->parallel_workers);
@@ -5749,7 +5754,8 @@ inception_mts_get_hash_value(
 str_t*
 inception_mts_get_sql_buffer(
     transfer_cache_t* datacenter,
-    table_info_t* table_info
+    table_info_t* table_info,
+    int commit_flag
 )
 {
     mts_t* mts;
@@ -5765,7 +5771,7 @@ inception_mts_get_sql_buffer(
     datacenter->thread_stage = transfer_enqueue_reserve;
     mts = datacenter->mts;
 
-    index = inception_mts_get_hash_value(datacenter, table_info);
+    index = inception_mts_get_hash_value(datacenter, table_info, commit_flag);
 
     mts_thread = &mts->mts_thread[index];
     
@@ -5814,7 +5820,7 @@ int inception_transfer_write_row(
         
     do
     {
-        backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info);
+        backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, false);
         if (backup_sql == NULL)
         {
             error=true;
@@ -6582,7 +6588,7 @@ inception_transfer_write_Xid(
     str_t* backup_sql;
     char tmp_buf[1024];
 
-    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info);
+    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, true);
     if (backup_sql == NULL)
         return true;
     str_truncate_0(backup_sql);
