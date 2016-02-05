@@ -4416,6 +4416,7 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_return_int("Worker_Queue_Length", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Trxs_Per_Second", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Master_Gtid_Mode", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4495,6 +4496,7 @@ int mysql_master_transfer_status(
     protocol->store(osc_percent_node->queue_length);
     protocol->store(osc_percent_node->events_count/((long)(time(0)-osc_percent_node->start_time)));
     protocol->store(osc_percent_node->trx_count/((long)(time(0)-osc_percent_node->start_time)));
+    protocol->store(osc_percent_node->gtid_on ? "ON":"OFF", system_charset_info);
     mysql_mutex_unlock(&transfer_mutex);
 
     protocol->write();
@@ -6463,7 +6465,6 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                   || optype == SQLCOM_CREATE_TABLE))
             {
                 mi->datacenter->cbinlog_position = ev->log_pos;
-                mi->datacenter->event_seq_in_trx = 0;
                 strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
             }
         }
@@ -6491,6 +6492,10 @@ inception_transfer_query_event(
 
     if (strcasecmp(query_log->query, "BEGIN") == 0)
     {
+        if (mi->datacenter->gno)
+            mi->datacenter->gtid_on = true;
+        else
+            mi->datacenter->gtid_on = false;
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
             DBUG_RETURN(true);
@@ -6683,27 +6688,35 @@ inception_transfer_fetch_binlogsha1(
     transfer_cache_t* datacenter;
 
     datacenter = mi->datacenter;
-    if (ev->get_time() != datacenter->last_event_time)
+    if (datacenter->gno != datacenter->last_gno || 
+        strcmp(datacenter->gtid, datacenter->last_gtid))
     {
-        datacenter->last_event_time = ev->get_time(); 
-        datacenter->event_seq_in_second = 0;
+        datacenter->last_gno = datacenter->gno;
+        strcpy(datacenter->last_gtid, datacenter->gtid);
+        datacenter->event_seq_in_trx = 0;
     }
     else
     {
-        datacenter->event_seq_in_second += 1;
+        datacenter->event_seq_in_trx += 1;
     }
-
-    //reset this value at trx commit(Xid) and ddl
-    datacenter->event_seq_in_trx += 1;
 
     binlog_file = (char*)mi->get_master_log_name();
     binlog_position = mi->get_master_log_pos();
-    sprintf(tmp_buf, "%ld%d%lld%lld", ev->get_time(), ev->server_id, 
-        datacenter->event_seq_in_trx, datacenter->event_seq_in_second);
+    if (datacenter->gno == 0)
+    {
+        sprintf(tmp_buf, "%ld#%s#%d", ev->get_time(), binlog_file, binlog_position);
+    }
+    else
+    {
+        sprintf(tmp_buf, "%ld#%d#%s#%lld#%lld", ev->get_time(), ev->unmasked_server_id, 
+            datacenter->gtid, datacenter->gno, datacenter->event_seq_in_trx);
+    }
+
     String str(tmp_buf, system_charset_info);
     calculate_password(&str, m_hashed_password_buffer);
     strcpy(datacenter->binlog_hash, m_hashed_password_buffer);
-    strcpy(datacenter->current_element->binlog_hash, m_hashed_password_buffer);
+    if (datacenter->current_element)
+        strcpy(datacenter->current_element->binlog_hash, m_hashed_password_buffer);
 }
 
 void
@@ -6760,7 +6773,7 @@ inception_transfer_write_Xid(
     strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
 
     inception_transfer_get_slaves_position(mi);
-    mi->datacenter->event_seq_in_trx = 0;
+    mi->datacenter->gno = 0;
     free_tables_to_lock(mi);
     return false;
 }
@@ -6773,6 +6786,7 @@ int inception_transfer_binlog_process(
 {
     int err = 0;
     THD* thd;
+    Gtid_log_event* gtid;
 
     DBUG_ENTER("inception_transfer_binlog_process");
 
@@ -6782,6 +6796,13 @@ int inception_transfer_binlog_process(
 
     switch(ev->get_type_code())
     {
+    case GTID_LOG_EVENT:
+        gtid = (Gtid_log_event*)ev;
+        gtid->get_sid()->to_string(datacenter->gtid);
+        datacenter->gno = gtid->get_gno();
+        mi->datacenter->events_count += 1;
+        break;
+
     case QUERY_EVENT:
         mi->datacenter->events_count += 1;
         err = inception_transfer_query_event(mi, ev);
@@ -12548,6 +12569,10 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
 
     case HEARTBEAT_LOG_EVENT:
         inc_pos = 0;
+        break;
+    // case GTID_LOG_EVENT:
+    //     inc_pos = 0;
+    //     break;
     default:
         inc_pos= event_len;
         break;

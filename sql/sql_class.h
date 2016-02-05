@@ -464,7 +464,6 @@ struct transfer_cache_struct
     //use to guarantees the integrity of replication when failover from master to slave
     //and use to guarantees binlog event sequence uniqueness to distinct the replication
     longlong event_seq_in_trx;
-    longlong event_seq_in_second;
     //use to fetch the event_seq_in_second, if current event time 
     //is not eq with last, then event_seq_in_second=0, else event_seq_in_second+=1
     time_t last_event_time;
@@ -473,6 +472,11 @@ struct transfer_cache_struct
 
     char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
     char datacenter_epoch[CRYPT_MAX_PASSWORD_SIZE + 1];
+    char gtid[128];
+    rpl_gno gno;
+    char last_gtid[128];
+    rpl_gno last_gno;
+    int gtid_on;
  
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
