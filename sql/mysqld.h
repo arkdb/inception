@@ -196,7 +196,7 @@ extern char* inception_datacenter_user;
 extern char* inception_datacenter_password;
 extern ulong inception_transfer_trx_sequence_sync;
 extern ulong inception_transfer_event_sequence_sync;
-extern ulong inception_transfer_binlog_expire_days;
+extern ulong inception_transfer_binlog_expire_hours;
 extern ulong inception_transfer_slave_sync;
 extern ulong inception_transfer_worker_queue_length;
 extern ulong inception_transfer_parallel_workers;

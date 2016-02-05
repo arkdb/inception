@@ -5012,7 +5012,8 @@ int inception_transfer_instance_table_create(
         "transfer data, format json', ");
     create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`), ");
     create_sql = str_append(create_sql, "KEY `idx_dbtablename` (`dbname`,`tablename`), ");
-    create_sql = str_append(create_sql, "KEY `idx_create_time` (`create_time`))");
+    create_sql = str_append(create_sql, "KEY `idx_create_time` (`create_time`),");
+    create_sql = str_append(create_sql, "UNIQUE KEY `uniq_binlog_hash` (`binlog_hash`))");
     create_sql = str_append(create_sql, "engine innodb charset utf8mb4 "
         "comment 'binlog transfer data'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
@@ -7093,7 +7094,7 @@ pthread_handler_t inception_transfer_delete(void* arg)
     MYSQL* mysql = NULL;
     char sql[1024];
     char sql1[1024];
-    ulong inception_transfer_binlog_expire_days_local=0;
+    ulong inception_transfer_binlog_expire_hours_local=0;
 
     my_thread_init();
     thd= new THD;
@@ -7103,20 +7104,20 @@ pthread_handler_t inception_transfer_delete(void* arg)
     setup_connection_thread_globals(thd);
 
 retry:
-    sql_print_information("[%s] delete thread started/continue, binlog expire days[%ld day]", 
-        datacenter->datacenter_name, inception_transfer_binlog_expire_days);
+    sql_print_information("[%s] delete thread started/continue, binlog expire after [%ld hours]", 
+        datacenter->datacenter_name, inception_transfer_binlog_expire_hours);
 
-    inception_transfer_binlog_expire_days_local = inception_transfer_binlog_expire_days;
+    inception_transfer_binlog_expire_hours_local = inception_transfer_binlog_expire_hours;
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days);
+        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_hours);
     sprintf(sql1, "DELETE FROM `%s`.slave_positions where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days);
+        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 10000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_hours);
     while (datacenter->transfer_on)
     {
-        if (inception_transfer_binlog_expire_days_local != 
-            inception_transfer_binlog_expire_days)
+        if (inception_transfer_binlog_expire_hours_local != 
+            inception_transfer_binlog_expire_hours)
         {
             goto retry;
         }
