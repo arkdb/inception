@@ -268,6 +268,8 @@ void mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   f
 int inception_mts_get_commit_positions( Master_info* mi, Log_event* ev);
 int inception_stop_transfer( transfer_cache_t* datacenter);
 bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
+void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
+int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -4599,23 +4601,25 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         DBUG_RETURN(true);
     }
 
-    if (datacenter->parallel_workers > 1)
+    for (i=0; i < datacenter->parallel_workers; i++)
     {
-        for (i=0; i < datacenter->parallel_workers; i++)
-        {
-            mts_thread = &datacenter->mts->mts_thread[i];
-            protocol->prepare_for_resend();
-            protocol->store(i);
-            protocol->store(mts_thread->enqueue_index);
-            protocol->store(mts_thread->dequeue_index);
+        mts_thread = &datacenter->mts->mts_thread[i];
+        protocol->prepare_for_resend();
+        protocol->store(i);
+        protocol->store(mts_thread->enqueue_index);
+        protocol->store(mts_thread->dequeue_index);
+
+        if (mts_thread->enqueue_index != mts_thread->dequeue_index)
             protocol->store((int)((mts_thread->enqueue_index+ datacenter->queue_length - 
                     mts_thread->dequeue_index) % datacenter->queue_length)+1);
-            protocol->store(transfer_stage_type_array[mts_thread->thread_stage], 
-                system_charset_info);
-            protocol->store(mts_thread->event_count/((long)(time(0)-datacenter->start_time)));
+        else
+            protocol->store(0);
 
-            protocol->write();
-        }
+        protocol->store(transfer_stage_type_array[mts_thread->thread_stage], 
+            system_charset_info);
+        protocol->store(mts_thread->event_count/((long)(time(0)-datacenter->start_time)));
+
+        protocol->write();
     }
 
     mysql_mutex_unlock(&transfer_mutex);
@@ -5000,6 +5004,8 @@ int inception_transfer_instance_table_create(
         "default current_timestamp comment 'the create time of event ', ");
     create_sql = str_append(create_sql, "instance_name varchar(64) "
         "comment 'the source instance of this event', ");
+    create_sql = str_append(create_sql, "binlog_hash varchar(64) DEFAULT NULL "
+        "COMMENT 'binlog_hash, use to distinct',");
     create_sql = str_append(create_sql, "optype varchar(64) DEFAULT "
         "NULL COMMENT 'operation type, include insert, update...',");
     create_sql = str_append(create_sql, "data longtext comment 'binlog "
@@ -5032,8 +5038,11 @@ int inception_transfer_instance_table_create(
         "COMMENT 'binlog file name',");
     create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL "
         "COMMENT 'binlog file position',");
-    create_sql = str_append(create_sql, "PRIMARY KEY (`id`,`tid`),");
-    create_sql = str_append(create_sql, "KEY idx_create_time(`create_time`))");
+    create_sql = str_append(create_sql, "datacenter_epoch varchar(64) DEFAULT NULL "
+        "COMMENT 'datacenter_epoch',");
+    create_sql = str_append(create_sql, "thread_sequence varchar(64) DEFAULT NULL "
+        "COMMENT 'thread_sequence',");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`datacenter_epoch`,`thread_sequence`))");
     create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
         "'transfer binlog commit positions'");
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
@@ -5650,12 +5659,15 @@ int inception_transfer_generate_write_record(
     else if (optype == SQLCOM_UPDATE)
         optype_str = (char*)"UPDATE";
 
-    str_append(backup_sql, "INSERT INTO ");
+    inception_transfer_fetch_binlogsha1(mi, ev);
+    str_append(backup_sql, "INSERT IGNORE INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
-      tablename, create_time, instance_name, optype , data) VALUES \
-      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
-        thd->event_id, thd->transaction_id, mi->table_info->db_name, mi->table_info->table_name, 
-        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
+      tablename, create_time, instance_name, binlog_hash, optype , data) VALUES \
+      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', '%s', ", 
+        datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+        mi->table_info->db_name, mi->table_info->table_name, 
+        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, 
+        datacenter->binlog_hash, optype_str);
     str_append(backup_sql, tmp_buf);
 
     str_append(backup_sql, "'");
@@ -5829,7 +5841,7 @@ inception_mts_get_sql_buffer(
     int dequeue_index;
     int enqueue_index;
 
-    if (datacenter->parallel_workers == 1)
+    if (datacenter->parallel_workers == 0)
         return &datacenter->sql_buffer;
 
     datacenter->thread_stage = transfer_enqueue_reserve;
@@ -6293,13 +6305,15 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
         break;
     }
 
-    str_append(backup_sql, "INSERT INTO ");
+    inception_transfer_fetch_binlogsha1(mi, ev);
+    str_append(backup_sql, "INSERT IGNORE INTO ");
     sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
-      tablename, create_time, instance_name, optype , data) VALUES \
-      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', ", datacenter->datacenter_name, 
-        thd->event_id, thd->transaction_id, query_thd->lex->query_tables->db, 
-        query_thd->lex->query_tables->table_name, 
-        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, optype_str);
+      tablename, create_time, instance_name, binlog_hash, optype , data) VALUES \
+      (%lld, %lld, '%s', '%s', from_unixtime(%ld), '%s:%d', '%s', '%s', ", 
+        datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+        query_thd->lex->query_tables->db, query_thd->lex->query_tables->table_name, 
+        ev->get_time()+ev->exec_time, datacenter->hostname, datacenter->mysql_port, 
+        mi->datacenter->binlog_hash, optype_str);
     str_append(backup_sql,tmp_buf);
 
     str_append(backup_sql, "'");
@@ -6650,6 +6664,42 @@ retry_write:
     return false;
 }
 
+void
+inception_transfer_fetch_binlogsha1(
+    Master_info* mi,
+    Log_event* ev
+)
+{
+    char tmp_buf[1024];
+    char* binlog_file;
+    int binlog_position;
+    char m_hashed_password_buffer[CRYPT_MAX_PASSWORD_SIZE + 1];
+    transfer_cache_t* datacenter;
+
+    datacenter = mi->datacenter;
+    binlog_file = (char*)mi->get_master_log_name();
+    binlog_position = mi->get_master_log_pos();
+    sprintf(tmp_buf, "%ld%s%d", ev->get_time()+ev->exec_time, binlog_file, binlog_position);
+    String str(tmp_buf, system_charset_info);
+    calculate_password(&str, m_hashed_password_buffer);
+    strcpy(datacenter->binlog_hash, m_hashed_password_buffer);
+    strcpy(datacenter->current_element->binlog_hash, m_hashed_password_buffer);
+}
+
+void
+inception_transfer_fetch_epoch(
+    transfer_cache_t* datacenter
+)
+{
+    char tmp_buf[1024];
+    char m_hashed_password_buffer[CRYPT_MAX_PASSWORD_SIZE + 1];
+
+    sprintf(tmp_buf, "%ld%s", time(0), datacenter->datacenter_name);
+    String str(tmp_buf, system_charset_info);
+    calculate_password(&str, m_hashed_password_buffer);
+    strcpy(datacenter->datacenter_epoch, m_hashed_password_buffer);
+}
+
 int 
 inception_transfer_write_Xid(
     Master_info* mi,
@@ -6665,18 +6715,20 @@ inception_transfer_write_Xid(
     str_truncate_0(backup_sql);
     mi->datacenter->trx_count += 1;
 
-    if (mi->datacenter->parallel_workers == 1)
+    if (mi->datacenter->parallel_workers == 0)
     {
         //still the privise trx, but is another event
+        inception_transfer_fetch_binlogsha1(mi, ev);
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
             return true;
-        str_append(backup_sql, "INSERT INTO ");
+        str_append(backup_sql, "INSERT IGNORE INTO ");
         sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
-          tablename, create_time, instance_name, optype , data) VALUES \
-          (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', 'COMMIT', '')", 
+          tablename, create_time, instance_name, binlog_hash, optype , data) VALUES \
+          (%lld, %lld, '', '', from_unixtime(%ld), '%s:%d', '%s', 'COMMIT', '')", 
             mi->datacenter->datacenter_name, mi->thd->event_id, mi->thd->transaction_id, 
-            ev->get_time()+ev->exec_time, mi->datacenter->hostname, mi->datacenter->mysql_port);
+            ev->get_time()+ev->exec_time, mi->datacenter->hostname, 
+            mi->datacenter->mysql_port, mi->datacenter->binlog_hash);
         str_append(backup_sql, tmp_buf);
     }
 
@@ -6932,7 +6984,7 @@ pthread_handler_t inception_mts_thread(void* arg)
     str_t* sql_buffer = NULL;
     str_t* commit_sql_buffer =NULL;
     mts_t* mts;
-
+    my_ulonglong affected_rows;
     my_thread_init();
     thd= new THD;
     thd->thread_stack= (char*) &thd;
@@ -7000,6 +7052,12 @@ pthread_handler_t inception_mts_thread(void* arg)
             break;
             //error exit, notify other threads;
         }
+        if (str_get_len(sql_buffer) > 0)
+        {
+            affected_rows = mysql_affected_rows(mysql);
+            if (affected_rows == 0)
+                sql_print_information("MTS Binlog SHA1 duplicate: %s", element->binlog_hash);
+        }
 
         if (element->commit_event)
         {
@@ -7035,7 +7093,6 @@ pthread_handler_t inception_transfer_delete(void* arg)
     MYSQL* mysql = NULL;
     char sql[1024];
     char sql1[1024];
-    char sql2[1024];
     ulong inception_transfer_binlog_expire_days_local=0;
 
     my_thread_init();
@@ -7056,10 +7113,6 @@ retry:
     sprintf(sql1, "DELETE FROM `%s`.slave_positions where create_time < \
         DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
         inception_transfer_binlog_expire_days);
-    sprintf(sql2, "DELETE FROM `%s`.master_positions where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld DAY) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_days);
-
     while (datacenter->transfer_on)
     {
         if (inception_transfer_binlog_expire_days_local != 
@@ -7075,8 +7128,7 @@ retry:
             continue;
         }
         if (mysql_real_query(mysql, sql, strlen(sql)) ||
-            mysql_real_query(mysql, sql1, strlen(sql1)) ||
-            mysql_real_query(mysql, sql2, strlen(sql2)))
+            mysql_real_query(mysql, sql1, strlen(sql1)))
         {
             sleep(1);
             continue;
@@ -7121,7 +7173,7 @@ int inception_create_mts(
     mts_thread_queue_t* mts_queue;
     mts_thread_t*   mts_thread;
 
-    if (datacenter->parallel_workers > 1)
+    if (datacenter->parallel_workers > 0)
     {
         mts = (mts_t*)my_malloc(sizeof(mts_t) , MY_ZEROFILL);
         mts->mts_thread = (mts_thread_t*)my_malloc(
@@ -7147,12 +7199,17 @@ int inception_create_mts(
                 str_init(&mts_queue->commit_sql_buffer);
             }
 
-            if (mysql_thread_create(0, &threadid, &connection_attrib,
+            if (inception_mts_insert_commit_positions(datacenter, mts_thread) ||
+                mysql_thread_create(0, &threadid, &connection_attrib,
                 inception_mts_thread, (void*)mts_thread))
             {
                 return true;
             }
         }
+    }
+    else
+    {
+        return inception_mts_insert_commit_positions(datacenter, NULL);
     }
 
     return false;
@@ -7209,7 +7266,9 @@ pthread_handler_t inception_transfer_thread(void* arg)
     datacenter->trx_count = 0;
     datacenter->events_count = 0;
 
-    sql_print_information("[%s] transfer started", datacenter->datacenter_name);
+    inception_transfer_fetch_epoch(datacenter);
+    sql_print_information("[%s] transfer started, start position: %s : %d", 
+        datacenter->datacenter_name, binlog_file, binlog_position);
     if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
         goto error; 
 
@@ -7267,6 +7326,8 @@ reconnect:
 
         datacenter->thread_stage = transfer_wait_master_send;
         datacenter->last_master_timestamp = 0;
+        if (datacenter->parallel_workers > 0)
+            mysql_cond_broadcast(&datacenter->mts->mts_cond);
         event_len = mysql_read_event_for_transfer(mi, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
 
@@ -7542,11 +7603,11 @@ int inception_transfer_start_replicate(
         MYSQL* mysql;
             
         mysql = thd->get_transfer_connection();
-        sprintf(tmp, "select binlog_file,binlog_position from `%s`.`master_positions` m,\
-            `%s`.`transfer_data` t where t.id=m.id and m.id=(select max(id) \
-              from `%s`.`master_positions`) and t.instance_name='%s:%d';", 
-            datacenter_name, datacenter_name, datacenter_name, datacenter->hostname,
-            datacenter->mysql_port);
+        sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
+            where datacenter_epoch=(select datacenter_epoch from \
+              `%s`.master_positions where id=(select max(id) from \
+               `%s`.master_positions)) and id > 0 order by id limit 1;",
+            datacenter_name, datacenter_name, datacenter_name);
         if (mysql_real_query(mysql, tmp, strlen(tmp)))
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
@@ -11686,7 +11747,7 @@ int inception_transfer_execute_store_simple(
 
     DBUG_ENTER("inception_transfer_execute_store_simple");
 
-    if (mi->datacenter->parallel_workers > 1)
+    if (mi->datacenter->parallel_workers > 0)
     {
         inception_mts_enqueue(mi->datacenter, false);
         DBUG_RETURN(false);
@@ -11717,6 +11778,54 @@ int inception_transfer_execute_store_simple(
     DBUG_RETURN(false);
 }
 
+int inception_mts_insert_commit_positions(
+    transfer_cache_t* datacenter,
+    mts_thread_t* mts_thread
+)
+{
+    THD* thd;
+    char tmp_buf[1024];
+    MYSQL* mysql;
+
+    DBUG_ENTER("inception_mts_insert_commit_positions");
+
+    thd = datacenter->thd;
+    if ((mysql= thd->get_transfer_connection()) == NULL)
+    {
+       	sql_print_warning("write the datacenter failed, get connection failed: %s", 
+            thd->get_stmt_da()->message());
+        inception_transfer_set_errmsg(thd, datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
+        DBUG_RETURN(TRUE);
+    }
+
+    if (mts_thread == NULL)
+    {
+        sprintf(tmp_buf, "INSERT IGNORE INTO `%s`.`master_positions` (id, tid, create_time, \
+          binlog_file, binlog_position, datacenter_epoch, thread_sequence) values \
+          (0, 0, now(), '', 0, '%s', '%p')", datacenter->datacenter_name,
+            datacenter->datacenter_epoch, datacenter);
+    }
+    else
+    {
+        sprintf(tmp_buf, "INSERT IGNORE INTO `%s`.`master_positions` (id, tid, create_time, \
+          binlog_file, binlog_position, datacenter_epoch, thread_sequence) values \
+          (0, 0, now(), '', 0, '%s', '%p')", datacenter->datacenter_name,
+            datacenter->datacenter_epoch, mts_thread);
+    }
+
+    if (mysql_real_query(mysql, tmp_buf, strlen(tmp_buf)))
+    {
+       	sql_print_warning("write the datacenter failed, get connection failed: %s", 
+            mysql_error(mysql));
+        inception_transfer_set_errmsg(thd, datacenter, 
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
+        DBUG_RETURN(TRUE);
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
 int inception_mts_get_commit_positions(
     Master_info* mi,
     Log_event* ev
@@ -11727,18 +11836,19 @@ int inception_mts_get_commit_positions(
     transfer_cache_t* datacenter;
 
     datacenter = mi->datacenter;
-    if (mi->datacenter->parallel_workers == 1)
+    if (mi->datacenter->parallel_workers == 0)
         return false;
 
     thd = mi->thd;
     str_t *backup_sql = &datacenter->current_element->commit_sql_buffer;
     str_truncate_0(backup_sql);
-    str_append(backup_sql, "INSERT INTO ");
-    sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
-      create_time, binlog_file, binlog_position) VALUES \
-      (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
-        datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
-        ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
+    str_append(backup_sql, "UPDATE ");
+    sprintf(tmp_buf, "`%s`.`master_positions` set id=%lld, tid=%lld, \
+        create_time=from_unixtime(%ld), binlog_file='%s', binlog_position=%lld \
+        where datacenter_epoch = '%s' and thread_sequence='%p'", datacenter->datacenter_name,
+        thd->event_id, thd->transaction_id, ev->get_time()+ev->exec_time, 
+        (char*)mi->get_master_log_name(), mi->get_master_log_pos(), 
+        datacenter->datacenter_epoch, datacenter->current_thread);
     str_append(backup_sql, tmp_buf);
     return false;
 }
@@ -11753,10 +11863,12 @@ int inception_transfer_execute_store_with_transaction(
     str_t *backup_sql = &mi->datacenter->sql_buffer;
     THD*  thd;
     char tmp_buf[1024];
+    transfer_cache_t* datacenter;
 
+    datacenter = mi->datacenter;
     DBUG_ENTER("inception_transfer_execute_store_with_transaction");
 
-    if (mi->datacenter->parallel_workers > 1)
+    if (mi->datacenter->parallel_workers > 0)
     {
         inception_mts_enqueue(mi->datacenter, true);
         DBUG_RETURN(false);
@@ -11795,12 +11907,15 @@ int inception_transfer_execute_store_with_transaction(
     }
 
     str_truncate_0(backup_sql);
-    str_append(backup_sql, "INSERT INTO ");
-    sprintf(tmp_buf, "`%s`.`master_positions` (id, tid, \
-      create_time, binlog_file, binlog_position) VALUES \
-      (%lld, %lld, from_unixtime(%ld), '%s', %lld)", 
-        mi->datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
-        ev->get_time()+ev->exec_time, (char*)mi->get_master_log_name(), mi->get_master_log_pos());
+
+    str_append(backup_sql, "UPDATE ");
+    sprintf(tmp_buf, "`%s`.`master_positions` set id=%lld, tid=%lld, \
+        create_time=from_unixtime(%ld), binlog_file='%s', binlog_position=%lld \
+        where datacenter_epoch = '%s' and thread_sequence='%p'", datacenter->datacenter_name,
+        thd->event_id, thd->transaction_id, ev->get_time()+ev->exec_time, 
+        (char*)mi->get_master_log_name(), mi->get_master_log_pos(), 
+        datacenter->datacenter_epoch, datacenter);
+
     str_append(backup_sql, tmp_buf);
 
     if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))

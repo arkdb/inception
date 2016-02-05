@@ -1062,7 +1062,7 @@ static Sys_var_ulong Sys_inception_transfer_parallel_workers(
     "inception_transfer_parallel_workers",
     "multi thread transfer, the thread num",
     GLOBAL_VAR(inception_transfer_parallel_workers), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(1, 64), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    VALID_RANGE(0, 64), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
 static Sys_var_ulong Sys_inception_transfer_worker_queue_length(
     "inception_transfer_worker_queue_length",

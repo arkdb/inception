@@ -391,6 +391,7 @@ struct mts_thread_queue_struct
     volatile int        valid;
     int                 commit_event;
     str_t               commit_sql_buffer;
+    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
 };
 
 typedef struct mts_thread_struct mts_thread_t;
@@ -462,6 +463,9 @@ struct transfer_cache_struct
 
     mts_t* mts;
 
+    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
+    char datacenter_epoch[CRYPT_MAX_PASSWORD_SIZE + 1];
+ 
     // slave attributes
     // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
     volatile int valid;
