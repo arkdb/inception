@@ -461,6 +461,14 @@ struct transfer_cache_struct
     longlong events_count;
     longlong trx_count;
 
+    //use to guarantees the integrity of replication when failover from master to slave
+    //and use to guarantees binlog event sequence uniqueness to distinct the replication
+    longlong event_seq_in_trx;
+    longlong event_seq_in_second;
+    //use to fetch the event_seq_in_second, if current event time 
+    //is not eq with last, then event_seq_in_second=0, else event_seq_in_second+=1
+    time_t last_event_time;
+
     mts_t* mts;
 
     char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];

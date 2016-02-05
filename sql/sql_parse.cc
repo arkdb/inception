@@ -6278,12 +6278,16 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     THD*    query_thd;
     char*   optype_str=NULL;
     int optype=0;
-    str_t* backup_sql = &mi->datacenter->sql_buffer;
+    str_t* backup_sql;
     THD *thd;
+
+    DBUG_ENTER("inception_transfer_write_ddl_event");
+    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, true);
+    if (backup_sql == NULL)
+        DBUG_RETURN(true);
 
     thd = mi->thd;
     str_truncate_0(backup_sql);
-    DBUG_ENTER("inception_transfer_write_ddl_event");
 
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
@@ -6459,6 +6463,7 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                   || optype == SQLCOM_CREATE_TABLE))
             {
                 mi->datacenter->cbinlog_position = ev->log_pos;
+                mi->datacenter->event_seq_in_trx = 0;
                 strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
             }
         }
@@ -6678,9 +6683,23 @@ inception_transfer_fetch_binlogsha1(
     transfer_cache_t* datacenter;
 
     datacenter = mi->datacenter;
+    if (ev->get_time() != datacenter->last_event_time)
+    {
+        datacenter->last_event_time = ev->get_time(); 
+        datacenter->event_seq_in_second = 0;
+    }
+    else
+    {
+        datacenter->event_seq_in_second += 1;
+    }
+
+    //reset this value at trx commit(Xid) and ddl
+    datacenter->event_seq_in_trx += 1;
+
     binlog_file = (char*)mi->get_master_log_name();
     binlog_position = mi->get_master_log_pos();
-    sprintf(tmp_buf, "%ld%s%d", ev->get_time()+ev->exec_time, binlog_file, binlog_position);
+    sprintf(tmp_buf, "%ld%d%lld%lld", ev->get_time(), ev->server_id, 
+        datacenter->event_seq_in_trx, datacenter->event_seq_in_second);
     String str(tmp_buf, system_charset_info);
     calculate_password(&str, m_hashed_password_buffer);
     strcpy(datacenter->binlog_hash, m_hashed_password_buffer);
@@ -6741,6 +6760,7 @@ inception_transfer_write_Xid(
     strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
 
     inception_transfer_get_slaves_position(mi);
+    mi->datacenter->event_seq_in_trx = 0;
     free_tables_to_lock(mi);
     return false;
 }
