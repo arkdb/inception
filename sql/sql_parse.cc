@@ -6290,17 +6290,24 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     THD *thd;
 
     DBUG_ENTER("inception_transfer_write_ddl_event");
+
+    thd = mi->thd;
+    query_thd = thd->query_thd;
+    mi->table_info = inception_transfer_get_table_object(mi->thd, 
+                     query_thd->lex->query_tables->db, 
+                     query_thd->lex->query_tables->table_name, mi->datacenter);
+    if (mi->table_info == NULL)
+        DBUG_RETURN(false);
+       
     backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, true);
     if (backup_sql == NULL)
         DBUG_RETURN(true);
 
-    thd = mi->thd;
     str_truncate_0(backup_sql);
 
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
         DBUG_RETURN(true);
-    query_thd = thd->query_thd;
     optype = query_thd->lex->sql_command;
     switch (optype)
     {
@@ -7744,7 +7751,7 @@ int inception_transfer_start_replicate(
         sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
             where datacenter_epoch=(select datacenter_epoch from \
               `%s`.master_positions where id=(select max(id) from \
-               `%s`.master_positions)) and id > 0 order by id limit 1;",
+               `%s`.master_positions) and id>0) and id > 0 order by id limit 1;",
             datacenter_name, datacenter_name, datacenter_name);
         if (mysql_real_query(mysql, tmp, strlen(tmp)))
         {
