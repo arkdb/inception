@@ -210,6 +210,8 @@ enum transfer_stage_type {
     transfer_wait_dequeue,
     transfer_enqueue_reserve,
     transfer_stopped ,
+    transfer_waiting_threads_exit,
+    transfer_failover_waiting,
     //mts stage
     transfer_mts_not_start,
     transfer_mts_wait_queue,
@@ -228,6 +230,8 @@ const char* transfer_stage_type_array[]=
     "transfer_wait_dequeue",
     "transfer_enqueue_reserve",
     "transfer_stopped",
+    "transfer_waiting_threads_exit",
+    "transfer_failover_waiting",
     //mts stage
     "mts_not_start",
     "mts_wait_queue",
@@ -270,6 +274,8 @@ int inception_stop_transfer( transfer_cache_t* datacenter);
 bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
 void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
 int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
+int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
+int inception_wait_and_free_mts( transfer_cache_t* datacenter);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -6927,6 +6933,7 @@ int inception_transfer_failover(Master_info* mi)
     }
 
     datacenter = mi->datacenter;
+    inception_wait_mts_threads_finish(datacenter);
     mysql_mutex_lock(&transfer_mutex);
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while(slave)
@@ -7094,6 +7101,7 @@ pthread_handler_t inception_mts_thread(void* arg)
             break;
             //error exit, notify other threads;
         }
+
         if (str_get_len(sql_buffer) > 0)
         {
             affected_rows = mysql_affected_rows(mysql);
@@ -7101,7 +7109,7 @@ pthread_handler_t inception_mts_thread(void* arg)
                 sql_print_information("MTS Binlog SHA1 duplicate: %s", element->binlog_hash);
         }
 
-        if (element->commit_event)
+        if (element->commit_event && str_get_len(commit_sql_buffer) > 0)
         {
             if (mysql_real_query(mysql, str_get(commit_sql_buffer), 
                   str_get_len(commit_sql_buffer)))
@@ -7166,16 +7174,14 @@ retry:
         mysql = thd->get_transfer_connection();
         if (mysql == NULL)
         {
-            sleep(1);
             continue;
         }
+
         if (mysql_real_query(mysql, sql, strlen(sql)) ||
             mysql_real_query(mysql, sql1, strlen(sql1)))
         {
-            sleep(1);
             continue;
         }
-        sleep(1);
     }
 
     my_thread_end();
@@ -7448,6 +7454,8 @@ failover:
     }
 
 error:
+    datacenter->thread_stage = transfer_waiting_threads_exit;
+    inception_wait_and_free_mts(datacenter);
     sql_print_information("[%s] transfer stopped", datacenter->datacenter_name);
     datacenter->thread_stage = transfer_stopped;
     thd->close_all_connections();
@@ -7483,6 +7491,37 @@ int inception_reset_datacenter_do_ignore(
 }
 
 int
+inception_wait_mts_threads_finish(
+    transfer_cache_t* datacenter
+)
+{
+    mts_t* mts;
+    mts_thread_t* mts_thread;
+    int i;
+
+    if (datacenter->parallel_workers == 0)
+        return false;
+
+    datacenter->thread_stage = transfer_waiting_threads_exit;
+    mysql_cond_broadcast(&datacenter->mts->mts_cond);
+    mts = datacenter->mts;
+    for (i = 0; i < datacenter->parallel_workers; i++)
+    {
+        mts_thread = &mts->mts_thread[i];
+retry:
+        //if the thread is not exit, here to wait
+        if (mts_thread->enqueue_index != mts_thread->dequeue_index)
+        {
+            mysql_cond_broadcast(&datacenter->mts->mts_cond);
+            sleep(1);
+            goto retry;
+        }
+    }
+
+    return false;
+}
+
+int
 inception_free_mts(
     transfer_cache_t* datacenter
 )
@@ -7491,6 +7530,9 @@ inception_free_mts(
     mts_thread_t* mts_thread;
     int i,j;
     mts_thread_queue_t* element;
+
+    if (datacenter->parallel_workers == 0)
+        return false;
 
     mts = datacenter->mts;
     for (i = 0; i < datacenter->parallel_workers; i++)
@@ -7520,6 +7562,24 @@ retry:
     mysql_cond_destroy(&mts->mts_cond);
     my_free(mts);
     datacenter->mts = NULL;
+
+    return false;
+}
+
+int
+inception_wait_and_free_mts(
+    transfer_cache_t* datacenter
+)
+{
+    if (datacenter->parallel_workers == 0)
+        return false;
+
+    //notify the mts thread to exit
+    if (datacenter->mts)
+    {
+        mysql_cond_broadcast(&datacenter->mts->mts_cond);
+        inception_free_mts(datacenter);
+    }
 
     return false;
 }
@@ -7562,13 +7622,7 @@ int inception_stop_transfer(
 
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
-
-    //notify the mts thread to exit
-    if (datacenter->mts)
-    {
-        mysql_cond_broadcast(&datacenter->mts->mts_cond);
-        inception_free_mts(datacenter);
-    }
+    inception_wait_and_free_mts(datacenter);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
@@ -11884,6 +11938,10 @@ int inception_mts_get_commit_positions(
     thd = mi->thd;
     str_t *backup_sql = &datacenter->current_element->commit_sql_buffer;
     str_truncate_0(backup_sql);
+
+    if (thd->transaction_id % inception_transfer_master_sync != 0)
+        return false;
+
     str_append(backup_sql, "UPDATE ");
     sprintf(tmp_buf, "`%s`.`master_positions` set id=%lld, tid=%lld, \
         create_time=from_unixtime(%ld), binlog_file='%s', binlog_position=%lld \

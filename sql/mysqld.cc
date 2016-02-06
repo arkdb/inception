@@ -603,6 +603,7 @@ ulong inception_transfer_trx_sequence_sync=0;
 ulong inception_transfer_event_sequence_sync=0;
 ulong inception_transfer_binlog_expire_hours=0;
 ulong inception_transfer_slave_sync=0;
+ulong inception_transfer_master_sync=0;
 ulong inception_transfer_worker_queue_length=0;
 ulong inception_transfer_parallel_workers=0;
 
