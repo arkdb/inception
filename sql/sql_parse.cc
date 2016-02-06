@@ -7135,15 +7135,15 @@ pthread_handler_t inception_mts_thread(void* arg)
     return NULL;
 }
 
-pthread_handler_t inception_transfer_delete(void* arg)
+pthread_handler_t inception_transfer_delete1(void* arg)
 {
     THD *thd= NULL;
     // datacenter_t* datacenter;
     transfer_cache_t* datacenter;
     MYSQL* mysql = NULL;
     char sql[1024];
-    char sql1[1024];
     ulong inception_transfer_binlog_expire_hours_local=0;
+    my_ulonglong affected_rows;
 
     my_thread_init();
     thd= new THD;
@@ -7153,35 +7153,75 @@ pthread_handler_t inception_transfer_delete(void* arg)
     setup_connection_thread_globals(thd);
 
 retry:
-    sql_print_information("[%s] delete thread started/continue, binlog expire after [%ld hours]", 
+    sql_print_information("[%s] delete thread[1] started/continue, binlog expire after [%ld hours]", 
         datacenter->datacenter_name, inception_transfer_binlog_expire_hours);
 
     inception_transfer_binlog_expire_hours_local = inception_transfer_binlog_expire_hours;
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 10000", datacenter->datacenter_name, 
-        inception_transfer_binlog_expire_hours);
-    sprintf(sql1, "DELETE FROM `%s`.slave_positions where create_time < \
-        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 10000", datacenter->datacenter_name, 
+        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 20000", datacenter->datacenter_name, 
         inception_transfer_binlog_expire_hours);
     while (datacenter->transfer_on)
     {
         if (inception_transfer_binlog_expire_hours_local != 
             inception_transfer_binlog_expire_hours)
-        {
             goto retry;
-        }
 
-        mysql = thd->get_transfer_connection();
-        if (mysql == NULL)
-        {
+        if ((mysql = thd->get_transfer_connection()) == NULL)
             continue;
-        }
 
-        if (mysql_real_query(mysql, sql, strlen(sql)) ||
-            mysql_real_query(mysql, sql1, strlen(sql1)))
-        {
+        if (mysql_real_query(mysql, sql, strlen(sql)))
             continue;
-        }
+
+        affected_rows = mysql_affected_rows(mysql);
+        if (affected_rows == 0)
+            sleep(2);
+    }
+
+    my_thread_end();
+    pthread_exit(0);
+    return NULL;
+}
+
+pthread_handler_t inception_transfer_delete2(void* arg)
+{
+    THD *thd= NULL;
+    // datacenter_t* datacenter;
+    transfer_cache_t* datacenter;
+    MYSQL* mysql = NULL;
+    char sql[1024];
+    ulong inception_transfer_binlog_expire_hours_local=0;
+    my_ulonglong affected_rows;
+
+    my_thread_init();
+    thd= new THD;
+    thd->thread_stack= (char*) &thd;
+
+    datacenter = (transfer_cache_t*)arg;
+    setup_connection_thread_globals(thd);
+
+retry:
+    sql_print_information("[%s] delete thread[2] started/continue, binlog expire after [%ld hours]", 
+        datacenter->datacenter_name, inception_transfer_binlog_expire_hours);
+
+    inception_transfer_binlog_expire_hours_local = inception_transfer_binlog_expire_hours;
+    sprintf(sql, "DELETE FROM `%s`.slave_positions where create_time < \
+        DATE_SUB(now(), INTERVAL + %ld HOUR) limit 20000", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_hours);
+    while (datacenter->transfer_on)
+    {
+        if (inception_transfer_binlog_expire_hours_local != 
+            inception_transfer_binlog_expire_hours)
+            goto retry;
+
+        if ((mysql = thd->get_transfer_connection()) == NULL)
+            continue;
+
+        if (mysql_real_query(mysql, sql, strlen(sql)))
+            continue;
+
+        affected_rows = mysql_affected_rows(mysql);
+        if (affected_rows == 0)
+            sleep(2);
     }
 
     my_thread_end();
@@ -7321,7 +7361,9 @@ pthread_handler_t inception_transfer_thread(void* arg)
         goto error; 
 
     if (mysql_thread_create(0, &threadid, &connection_attrib,
-        inception_transfer_delete, (void*)datacenter) ||
+        inception_transfer_delete1, (void*)datacenter) ||
+        mysql_thread_create(0, &threadid, &connection_attrib,
+        inception_transfer_delete2, (void*)datacenter) ||
         inception_create_mts(datacenter))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter->datacenter_name);
