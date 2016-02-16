@@ -5047,9 +5047,9 @@ int inception_transfer_instance_table_create(
         "COMMENT 'binlog file name',");
     create_sql = str_append(create_sql, "binlog_position int(11) DEFAULT NULL "
         "COMMENT 'binlog file position',");
-    create_sql = str_append(create_sql, "datacenter_epoch varchar(64) DEFAULT NULL "
+    create_sql = str_append(create_sql, "datacenter_epoch varchar(64) NOT NULL "
         "COMMENT 'datacenter_epoch',");
-    create_sql = str_append(create_sql, "thread_sequence varchar(64) DEFAULT NULL "
+    create_sql = str_append(create_sql, "thread_sequence varchar(64) NOT NULL "
         "COMMENT 'thread_sequence',");
     create_sql = str_append(create_sql, "PRIMARY KEY (`datacenter_epoch`,`thread_sequence`))");
     create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
@@ -5123,8 +5123,8 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "CREATE TABLE ");
     sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_filter");
     create_sql = str_append(create_sql, tmp);
-    create_sql = str_append(create_sql, "db_name varchar(64) comment 'db name', ");
-    create_sql = str_append(create_sql, "table_name varchar(64) comment 'table name', ");
+    create_sql = str_append(create_sql, "db_name varchar(64) not null comment 'db name', ");
+    create_sql = str_append(create_sql, "table_name varchar(64) not null comment 'table name', ");
     create_sql = str_append(create_sql, "`type` varchar(64) NOT NULL DEFAULT '' "
         "COMMENT 'blacklist/whitelist,do or ignore', ");
     create_sql = str_append(create_sql, "PRIMARY KEY (`db_name`,`table_name`,`type`))");
@@ -5568,7 +5568,7 @@ inception_transfer_table_map(
     if (!table_info)
         sql_print_error("transfer load table failed, db: %s, table: %s", 
 		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
-    if (mi->thd->is_error())
+    if (!table_info && mi->thd->is_error())
     {
         mi->table_info = NULL;
         return true;
@@ -6932,6 +6932,7 @@ int inception_transfer_failover(Master_info* mi)
     //lock the datacenter and rewrite the cache and datacenter instances table
     //the failed instance will been omit in new instance table
     thd = mi->thd;
+    thd->clear_error();
     mysql = thd->get_transfer_connection();
     if (mysql == NULL)
     {
@@ -7025,6 +7026,24 @@ int inception_transfer_failover(Master_info* mi)
     sql_print_information("[%s] failover successfully, transfer continue for datacenter %s", 
         datacenter->datacenter_name, datacenter->datacenter_name);
 
+    sql_print_information("[%s] RENAME slave_positions TABLE", datacenter->datacenter_name);
+    sprintf(sql,  "CREATE TABLE `%s`.slave_positions_new like `%s`.slave_positions", 
+		 datacenter->datacenter_name,  datacenter->datacenter_name);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        ret = true;
+        goto error;
+    }
+
+    sprintf(sql,  "RENAME TABLE `%s`.slave_positions to `%s`.slave_positions_%d, \
+		`%s`.slave_positions_new to `%s`.slave_positions",
+        datacenter->datacenter_name, datacenter->datacenter_name, (int)datacenter->last_event_timestamp,
+	 datacenter->datacenter_name, datacenter->datacenter_name);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        ret = true;
+        goto error;
+    }
 error:
     mysql_mutex_unlock(&transfer_mutex);
     return ret;
