@@ -4500,8 +4500,16 @@ int mysql_master_transfer_status(
     protocol->store((longlong)osc_percent_node->table_cache.records);
     protocol->store(osc_percent_node->parallel_workers);
     protocol->store(osc_percent_node->queue_length);
-    protocol->store(osc_percent_node->events_count/((long)(time(0)-osc_percent_node->start_time)));
-    protocol->store(osc_percent_node->trx_count/((long)(time(0)-osc_percent_node->start_time)));
+    if (osc_percent_node->transfer_on)
+    {
+        osc_percent_node->eps = 
+          osc_percent_node->events_count/((long)(time(0)-osc_percent_node->start_time));
+        osc_percent_node->tps = 
+          osc_percent_node->trx_count/((long)(time(0)-osc_percent_node->start_time));
+    }
+
+    protocol->store(osc_percent_node->eps);
+    protocol->store(osc_percent_node->tps);
     protocol->store(osc_percent_node->gtid_on ? "ON":"OFF", system_charset_info);
     mysql_mutex_unlock(&transfer_mutex);
 

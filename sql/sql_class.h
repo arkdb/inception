@@ -460,6 +460,8 @@ struct transfer_cache_struct
     time_t start_time;
     longlong events_count;
     longlong trx_count;
+    longlong eps;
+    longlong tps;
 
     //use to guarantees the integrity of replication when failover from master to slave
     //and use to guarantees binlog event sequence uniqueness to distinct the replication
