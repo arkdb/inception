@@ -13055,6 +13055,13 @@ int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev)
         my_free(memory);
     }
 
+    if (!mi->table_info->have_pk)
+    {
+        sql_print_warning("MySQL instance(%s:%d), Table(%s:%s) have no "
+            "primary key, omit the backup", mi->thd->thd_sinfo->host, 
+            mi->thd->thd_sinfo->port, mi->table_info->db_name, mi->table_info->table_name);
+    }
+
     DBUG_RETURN(tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE);
 }
 
@@ -15702,7 +15709,17 @@ int mysql_init_sql_cache(THD* thd)
             DBUG_RETURN(ER_NO);
 
         if (!is_on || is_stmt)
+        {
+            if (!is_on)
+                sql_print_warning("MySQL instance(%s:%d) variable(log_bin) is OFF," 
+                    "Backup/Rollback turn OFF", 
+                    thd->thd_sinfo->host, thd->thd_sinfo->port);
+            if (is_stmt)
+                sql_print_warning("MySQL instance(%s:%d) variable(binlog_format)" 
+                    " is STATEMENT, Backup/Rollback turn OFF", 
+                    thd->thd_sinfo->host, thd->thd_sinfo->port);
             thd->thd_sinfo->backup = FALSE;
+        }
     }
 
     if (thd->thd_sinfo->backup && !inception_read_only && 
