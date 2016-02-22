@@ -3740,6 +3740,35 @@ static int init_server_components()
   randominit(&sql_rand,(ulong) server_start_time,(ulong) server_start_time/2);
   proc_info_hook= set_thd_stage_info;
 
+  logger.set_handlers(LOG_FILE, LOG_NONE, LOG_FILE);
+  if (log_error_file_ptr != disabled_my_option)
+    opt_error_log= 1;
+  else
+    log_error_file_ptr= const_cast<char*>("");
+
+  if (opt_error_log)
+  {
+    if (!log_error_file_ptr[0])
+      sprintf(log_error_file, "inception.err"); 
+    else
+      sprintf(log_error_file, log_error_file_ptr); 
+    log_error_file_ptr= log_error_file;
+    if (!log_error_file[0])
+      opt_error_log= 0;                         // Too long file name
+    else
+    {
+      my_bool res;
+#ifndef EMBEDDED_LIBRARY
+      res= reopen_fstreams(log_error_file, stdout, stderr);
+#else
+      res= reopen_fstreams(log_error_file, NULL, stderr);
+#endif
+
+      if (!res)
+        setbuf(stderr, NULL);
+    }
+  }
+
   /*
     Now that the logger is available, redirect character set
     errors directly to the logger
@@ -3791,37 +3820,7 @@ static int init_server_components()
     unireg_abort(0);
 
   locked_in_memory=0;
-
-  logger.set_handlers(LOG_FILE, LOG_NONE, LOG_FILE);
-
   init_max_user_conn();
-  if (log_error_file_ptr != disabled_my_option)
-    opt_error_log= 1;
-  else
-    log_error_file_ptr= const_cast<char*>("");
-
-  if (opt_error_log)
-  {
-    if (!log_error_file_ptr[0])
-      sprintf(log_error_file, "inception.err"); 
-    else
-      sprintf(log_error_file, log_error_file_ptr); 
-    log_error_file_ptr= log_error_file;
-    if (!log_error_file[0])
-      opt_error_log= 0;                         // Too long file name
-    else
-    {
-      my_bool res;
-#ifndef EMBEDDED_LIBRARY
-      res= reopen_fstreams(log_error_file, stdout, stderr);
-#else
-      res= reopen_fstreams(log_error_file, NULL, stderr);
-#endif
-
-      if (!res)
-        setbuf(stderr, NULL);
-    }
-  }
 
   DBUG_RETURN(0);
 }

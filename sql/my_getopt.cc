@@ -64,7 +64,7 @@ char *enabled_my_option= (char*) "1";
    it by itself
 */
 
-my_bool my_getopt_print_errors= 0;
+my_bool my_getopt_print_errors= 1;
 
 /* 
    This is a flag that can be set in client programs. 1 means that
