@@ -32,6 +32,7 @@
 #include "sql_select.h"                // JOIN
 #include "sql_optimizer.h"             // JOIN
 #include <mysql/psi/mysql_statement.h>
+#include "lex.h"
 
 static int lex_one_token(void *arg, void *yythd);
 

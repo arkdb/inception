@@ -31,10 +31,10 @@ SET(MYSYS_SOURCES  array.c charset-def.c charset.c checksum.c
 				my_quick.c my_read.c my_redel.c my_rename.c my_seek.c my_sleep.c
 				my_static.c my_symlink.c my_symlink2.c my_sync.c my_thr_init.c 
 				my_write.c ptr_cmp.c queues.c stacktrace.c
-				string.c thr_lock.c thr_mutex.c
+				string.c thr_lock.c thr_mutex.c 
 				thr_rwlock.c tree.c typelib.c base64.c my_memmem.c my_getpagesize.c
 				lf_alloc-pin.c lf_dynarray.c lf_hash.c
-				my_atomic.c my_getncpus.c
+				my_atomic.c my_getncpus.c thr_alarm.c
 				my_rdtsc.c waiting_threads.c psi_noop.c)
 
 IF (WIN32)

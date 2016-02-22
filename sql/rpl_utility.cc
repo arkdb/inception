@@ -777,9 +777,8 @@ table_def::create_conversion_table(
   field_info = LIST_GET_FIRST(target_table->field_lst);
   while(field_info)
   {
-    Create_field *field_def=
-      (Create_field*) alloc_root(mem_root, sizeof(Create_field));
-    if (field_list.push_back(field_def))
+    Create_field *field_def= (Create_field*) alloc_root(mem_root, sizeof(Create_field));
+    if (field_list.push_back(field_def, mem_root))
       DBUG_RETURN(NULL);
 
     uint decimals= 0;
@@ -841,6 +840,7 @@ table_def::create_conversion_table(
   }
 
   TABLE *conv_table= create_virtual_tmp_table(thd, field_list, mem_root);
+
   DBUG_RETURN(conv_table);
 }
 

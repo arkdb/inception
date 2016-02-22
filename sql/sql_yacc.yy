@@ -1277,6 +1277,9 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  INCEPTION_START_SYM           /* SQL-2003-R */
 %token  INCEPTION_COMMIT_SYM          /* SQL-2003-R */
 %token  INCEPTION_SYM
+%token  INSTANCE_SYM 
+%token  TRANSFER_SYM
+%token  DATACENTER_SYM
 %token  INDEXES
 %token  INDEX_SYM
 %token  INFILE
@@ -1604,6 +1607,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  TEXT_SYM
 %token  THAN_SYM
 %token  THEN_SYM                      /* SQL-2003-R */
+%token  THREADS_SYM/* SQL-2003-R */
 %token  TIMESTAMP                     /* SQL-2003-R */
 %token  TIMESTAMP_ADD
 %token  TIMESTAMP_DIFF
@@ -1728,7 +1732,8 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
         opt_natural_language_mode opt_query_expansion
         opt_ev_status opt_ev_on_completion ev_on_completion opt_ev_comment
         ev_alter_on_schedule_completion opt_ev_rename_to opt_ev_sql_stmt
-        trg_action_time trg_event
+        trg_action_time trg_event inception_transfer_master_slave inception_op_type 
+        inception_do_ignore inception_add_delete
 
 /*
   Bit field of MYSQL_START_TRANS_OPT_* flags.
@@ -1853,7 +1858,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
         insert_values update delete truncate rename
         show describe load alter optimize keycache preload flush
         reset purge inception_magic_start inception_magic_commit 
-	begin commit rollback savepoint release inception
+        begin commit rollback savepoint release inception inception_show_param
         repair analyze check start checksum
         field_list field_list_item field_spec kill column_def key_def
         keycache_list keycache_list_or_parts assign_to_keycache
@@ -2180,7 +2185,7 @@ change:
               Clear LEX_MASTER_INFO struct. repl_ignore_server_ids is freed
               in THD::cleanup_after_query. So it is guaranteed to be
               uninitialized before here.
-	      Its allocation is deferred till the option is parsed below.
+          Its allocation is deferred till the option is parsed below.
             */
             lex->mi.set_unspecified();
             DBUG_ASSERT(Lex->mi.repl_ignore_server_ids.elements == 0);
@@ -6000,10 +6005,10 @@ storage_engines:
           ident_or_text
           {
               THD *thd= YYTHD;
-			  if ($1.length == 0 || strcasecmp($1.str, "innodb") != 0)
+              if ($1.length == 0 || strcasecmp($1.str, "innodb") != 0)
                 $$ = (handlerton *)DB_TYPE_MISAM;
               else
-         	    $$ = (handlerton *)DB_TYPE_INNODB;
+                 $$ = (handlerton *)DB_TYPE_INNODB;
           }
         ;
 
@@ -6987,7 +6992,7 @@ key_using_alg:
 all_key_opt:
           KEY_BLOCK_SIZE opt_equal ulong_num
           { Lex->key_create_info.block_size= $3; }
-	| COMMENT_SYM TEXT_STRING_sys { Lex->key_create_info.comment= $2; }
+    | COMMENT_SYM TEXT_STRING_sys { Lex->key_create_info.comment= $2; }
         ;
 
 normal_key_opt:
@@ -11388,7 +11393,7 @@ into:
             {
               THD *thd= YYTHD;
               my_error(ER_VIEW_SELECT_CLAUSE, MYF(0), "INTO");
-		      mysql_errmsg_append(thd);
+              mysql_errmsg_append(thd);
             }
           }
           into_destination
@@ -11648,7 +11653,7 @@ drop_ts_options:
 
 drop_ts_option:
           opt_ts_engine
-      	| ts_wait
+          | ts_wait
 
 /*
 ** Insert : add new data to table
@@ -13537,36 +13542,36 @@ IDENT_sys:
           {
             THD *thd= YYTHD;
 
-	    if (thd->charset_is_system_charset)
-	    {
-		    const CHARSET_INFO *cs= system_charset_info;
-		    int dummy_error;
-		    uint wlen= cs->cset->well_formed_len(cs, $1.str,
-				    $1.str+$1.length,
-				    $1.length, &dummy_error);
-		    if (wlen < $1.length)
-		    {
-			    ErrConvString err($1.str, $1.length, &my_charset_bin);
-			    my_error(ER_INVALID_CHARACTER_STRING, MYF(0),
-					    cs->csname, err.ptr());
-			    MYSQL_YYABORT;
-		    }
-		    $$= $1;
-	    }
-	    else
-	    {
-		    if (thd->convert_string(&$$, system_charset_info,
-					    $1.str, $1.length, thd->charset()))
-			    MYSQL_YYABORT;
-	    }
+        if (thd->charset_is_system_charset)
+        {
+            const CHARSET_INFO *cs= system_charset_info;
+            int dummy_error;
+            uint wlen= cs->cset->well_formed_len(cs, $1.str,
+                    $1.str+$1.length,
+                    $1.length, &dummy_error);
+            if (wlen < $1.length)
+            {
+                ErrConvString err($1.str, $1.length, &my_charset_bin);
+                my_error(ER_INVALID_CHARACTER_STRING, MYF(0),
+                        cs->csname, err.ptr());
+                MYSQL_YYABORT;
+            }
+            $$= $1;
+        }
+        else
+        {
+            if (thd->convert_string(&$$, system_charset_info,
+                        $1.str, $1.length, thd->charset()))
+                MYSQL_YYABORT;
+        }
 
         mysql_check_identified(thd, $1.str, $1.length);
-	    if (thd->have_begin && get_hash_symbol($1.str, $1.length,0))
-	    {
-		    my_error(ER_IDENT_USE_KEYWORD, MYF(0), $1.str);
-		    mysql_errmsg_append(thd);
-	    }
-	  }
+        if (thd->have_begin && get_hash_symbol($1.str, $1.length,0))
+        {
+            my_error(ER_IDENT_USE_KEYWORD, MYF(0), $1.str);
+            mysql_errmsg_append(thd);
+        }
+      }
 ;
 
 TEXT_STRING_sys:
@@ -13628,11 +13633,11 @@ ident:
               MYSQL_YYABORT;
             $$.length= $1.length;
         mysql_check_identified(thd, $$.str, $$.length);
-	    if (thd->have_begin && get_hash_symbol($$.str, $$.length,0))
-	    {
-		    my_error(ER_IDENT_USE_KEYWORD, MYF(0), $$.str);
-		    mysql_errmsg_append(thd);
-	    }
+        if (thd->have_begin && get_hash_symbol($$.str, $$.length,0))
+        {
+            my_error(ER_IDENT_USE_KEYWORD, MYF(0), $$.str);
+            mysql_errmsg_append(thd);
+        }
           }
         ;
 
@@ -15316,16 +15321,16 @@ grant_option:
         ;
 
 opt_variables_name:
-	{
+    {
             LEX *lex=Lex;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SHOWALL;
-	}
-	| TEXT_STRING_sys
-	{
+        lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SHOWALL;
+    }
+    | TEXT_STRING_sys
+    {
             LEX *lex=Lex;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SHOW;
-	}
-	;
+        lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SHOW;
+    }
+    ;
 
 local_show_param:
         VARIABLES opt_variables_name 
@@ -15334,62 +15339,107 @@ local_show_param:
               if (lex->inception_cmd_type != INCEPTION_COMMAND_LOCAL_SHOWALL)
               {
                   Lex->wild= new (YYTHD->mem_root) String($2.str, $2.length,
-						    system_charset_info);
+                            system_charset_info);
                   if (Lex->wild == NULL)
                       MYSQL_YYABORT;
               }
           }
-	;
+    ;
+
+inception_transfer_master_slave:
+         MASTER_SYM { $$=1; }
+         | SLAVE { $$=2; }
+         ;
 
 inception_show_param:
-	SHOW show_param
-	{
+    SHOW show_param
+    {
             LEX *lex=Lex;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	}
-	| GET_SYM local_show_param
-	{	
+        lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
+        lex->sql_command = SQLCOM_INCEPTION;
+    }
+    | GET_SYM local_show_param
+    {    
             LEX *lex=Lex;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	}
-	| GET_SYM OSC_SYM PROCESSLIST_SYM
-	{	
+        lex->sql_command = SQLCOM_INCEPTION;
+    }
+    | GET_SYM OSC_SYM PROCESSLIST_SYM
+    {    
             LEX *lex=Lex;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_OSC_PROCESSLIST;
-	  /* Lex->wild= new (YYTHD->mem_root) String($3.str, $3.length, */
-		/* 			    system_charset_info); */
-	  /* if (Lex->wild == NULL) */
-	  /*     MYSQL_YYABORT; */
-	}
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_OSC_PROCESSLIST;
+      /* Lex->wild= new (YYTHD->mem_root) String($3.str, $3.length, */
+        /*                 system_charset_info); */
+      /* if (Lex->wild == NULL) */
+      /*     MYSQL_YYABORT; */
+    }
     | GET_SYM opt_full PROCESSLIST_SYM
     { 
             LEX *lex=Lex;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_PROCESSLIST;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_PROCESSLIST;
     }
-	| GET_SYM OSC_PERCENT_SYM  TEXT_STRING_sys
-	{	
+    | GET_SYM OSC_PERCENT_SYM  TEXT_STRING_sys
+    {    
             LEX *lex=Lex;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_OSC_SHOW;
-	  Lex->wild= new (YYTHD->mem_root) String($3.str, $3.length,
-					    system_charset_info);
-	  if (Lex->wild == NULL)
-	      MYSQL_YYABORT;
-	}
-	| STOP_SYM ALTER TEXT_STRING_sys
-	{	
-            LEX *lex=Lex;
-	    lex->sql_command = SQLCOM_INCEPTION;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_OSC_ABORT;
-	  Lex->wild= new (YYTHD->mem_root) String($3.str, $3.length,
-					    system_charset_info);
-	  if (Lex->wild == NULL)
-	      MYSQL_YYABORT;
-	}
-	;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_OSC_SHOW;
+      Lex->wild= new (YYTHD->mem_root) String($3.str, $3.length,
+                        system_charset_info);
+      if (Lex->wild == NULL)
+          MYSQL_YYABORT;
+    }
+    | GET_SYM inception_transfer_master_slave STATUS_SYM FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_TRANSFER_STATUS;
+        lex->name= $6;
+        lex->type = $2;
+    }
+    | GET_SYM DATACENTER_SYM LIST_SYM
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DATACENTER;
+    }
+    | GET_SYM inception_do_ignore LIST_SYM FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_DO_IGNORE;
+        lex->type = $2;
+        lex->name= $6;
+    }
+    | GET_SYM THREADS_SYM STATUS_SYM  FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_THREAD_STATUS;
+        lex->name= $6;
+    }
+    | GET_SYM TABLE_SYM STATUS_SYM  FOR_SYM DATACENTER_SYM ident
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_TABLE_STATUS;
+        lex->name= $6;
+    }
+    ;
+
+inception_op_type:
+         RESET_SYM { $$=1; }
+         | STOP_SYM { $$=2; }
+         ;
+
+inception_do_ignore:
+         DO_SYM { $$=DO_SYM; }
+         | IGNORE_SYM { $$=IGNORE_SYM; }
+         ;
+inception_add_delete:
+         ADD { $$=ADD ; }
+         | DROP { $$=DROP; }
+         ;
 
 inception:
          INCEPTION_SYM 
@@ -15409,20 +15459,125 @@ inception:
         | INCEPTION_SYM describe_command table_ident
         {
             LEX *lex=Lex;
-	    lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
+            lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
             lex->sql_command = SQLCOM_INCEPTION;
         }
-	| INCEPTION_SYM SET 
-	{
+        | INCEPTION_SYM SET 
+        {
+                LEX *lex=Lex;
+            lex->var_list.empty();
+            lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SET;
+                lex->sql_command = SQLCOM_INCEPTION;
+                Lex->option_type= OPT_GLOBAL;
+        }
+        option_value    
+        {
+        }
+        | INCEPTION_SYM CREATE DATACENTER_SYM ident
+        {
             LEX *lex=Lex;
-	    lex->var_list.empty();
-	    lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SET;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_DC_CREATE;
             lex->sql_command = SQLCOM_INCEPTION;
-            Lex->option_type= OPT_GLOBAL;
-	}
-	option_value	
-	{
-	}
+            lex->name= $4;
+        }
+        | INCEPTION_SYM ADD inception_transfer_master_slave INSTANCE_SYM 
+        ident '(' TEXT_STRING_sys ',' ulong_num ')' FOR_SYM DATACENTER_SYM ident 
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_INSTANCE_ADD;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->server_options.port= $9;
+            lex->type = $3;
+            lex->ident= $7;
+            lex->name= $13;
+            lex->comment = $5;
+        }
+        | INCEPTION_SYM START_SYM TRANSFER_SYM FOR_SYM DATACENTER_SYM ident WITH MASTER_USER_SYM
+         TEXT_STRING_sys MASTER_PASSWORD_SYM  TEXT_STRING_sys
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_TRANSFER;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->name= $6;
+            lex->ident= $9;
+            lex->comment = $11;
+        }
+        | INCEPTION_SYM START_SYM TRANSFER_SYM FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_TRANSFER;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->name= $6;
+            lex->ident.str= NULL;
+            lex->comment.str= NULL;
+        }
+        | INCEPTION_SYM SET TRANSFER_SYM POSITION_SYM '(' TEXT_STRING_sys ',' 
+        ulong_num ')' FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_SET_POSITION;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->server_options.port= $8;
+            Lex->ident= $6;
+            lex->name= $12;
+        }
+        | INCEPTION_SYM inception_op_type TRANSFER_SYM FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            if ($2 == 1)
+                lex->inception_cmd_sub_type = INCEPTION_BINLOG_RESET_TRANSFER;
+            else 
+                lex->inception_cmd_sub_type = INCEPTION_BINLOG_STOP_TRANSFER;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->ident= $6;
+        }
+        | INCEPTION_SYM START_SYM SLAVE ident FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_STOP_SLAVE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->name= $4;
+            Lex->ident= $7;
+        }
+        | INCEPTION_SYM STOP_SYM SLAVE ident FOR_SYM DATACENTER_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_START_SLAVE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->name= $4;
+            Lex->ident= $7;
+        }
+        | INCEPTION_SYM STOP_SYM ALTER TEXT_STRING_sys
+        {    
+                LEX *lex=Lex;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->inception_cmd_type = INCEPTION_COMMAND_OSC_ABORT;
+          Lex->wild= new (YYTHD->mem_root) String($4.str, $4.length,
+                            system_charset_info);
+          if (Lex->wild == NULL)
+              MYSQL_YYABORT;
+        }
+        | INCEPTION_SYM inception_add_delete inception_do_ignore TABLE_SYM '(' TEXT_STRING_sys 
+        ',' TEXT_STRING_sys ')' FOR_SYM DATACENTER_SYM ident 
+        {
+            LEX *lex=Lex;
+            lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
+            lex->inception_cmd_sub_type = INCEPTION_BINLOG_ADD_DO_IGNORE;
+            lex->sql_command = SQLCOM_INCEPTION;
+            Lex->server_options.port= $2;
+            lex->type = $3;
+            lex->ident= $6;
+            lex->name= $8;
+            lex->comment = $12;
+        }
         ;
 
 inception_magic_start:                                      
@@ -15558,9 +15713,9 @@ union_opt:
         ;
 
 opt_union_order_or_limit:
-	  /* Empty */ { $$= false; }
-	| union_order_or_limit { $$= true; }
-	;
+      /* Empty */ { $$= false; }
+    | union_order_or_limit { $$= true; }
+    ;
 
 union_order_or_limit:
           {

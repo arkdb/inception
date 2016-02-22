@@ -198,6 +198,17 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_INVALID_IDENT, "Identifier \'%s\' is invalid, valid options: [a-z|A-Z|0-9|_].");
   SERVER_SETMSG(ER_DB_EXISTS, "Database \'%s\' have already existed");
   SERVER_SETMSG(ER_SUBSELECT_IN_DML, "Existed subselect statement in DML.");
+  SERVER_SETMSG(ER_DATACENTER_EXISTED, "Data center \'%s\' is existed.");
+  SERVER_SETMSG(ER_INVALID_TRANSFER_INFO, "Can not connect datacenter with invalid binlog transfer host information.");
+  SERVER_SETMSG(ER_ADD_INSTANCE_ERROR, "Add transfer instance error: \'%s\'.");
+  SERVER_SETMSG(ER_INSTANCE_EXISTED, "Transfer instance (%s, %d) or \'%s\' or master have existed.");
+  SERVER_SETMSG(ER_INVALID_DATACENTER_INFO, "Invalid metadata information in datacenter \'%s\'.");
+  SERVER_SETMSG(ER_TRANSFER_INTERRUPT, "Transfer interrupt(m): \'%s\'.");
+  SERVER_SETMSG(ER_TRANSFER_RUNNING, "Transfer is running for datacenter \'%s\'.");
+  SERVER_SETMSG(ER_TRANSFER_NONRUNNING, "Transfer is not running for datacenter \'%s\'.");
+  SERVER_SETMSG(ER_TRANSFER_INTERRUPT_DC, "Transfer interrupt(dc): \'%s\'.");
+  SERVER_SETMSG(ER_TRANSFER_NOT_EXISTED, "Data center \'%s\' not existed.");
+  SERVER_SETMSG(ER_MASTER_NODE_FIRST, "Add master data center node first.");
 
 	/* Register messages for use with my_error(). */
 	if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

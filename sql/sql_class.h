@@ -47,6 +47,9 @@
 #include "mysql.h"
 #include <functional>
 
+// Added by michael.li
+#include <string>
+
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
@@ -170,17 +173,55 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMIT_LEN    strlen(INCEPTION_COMMIT)
 #define INCEPTION_BEGIN         "inception_magic_begin"
 
-#define INCEPTION_COMMAND_REMOTE_SHOW     1
-#define INCEPTION_COMMAND_LOCAL_SHOW      2
-#define INCEPTION_COMMAND_LOCAL_SET       3
-#define INCEPTION_COMMAND_LOCAL_SHOWALL   4
-#define INCEPTION_COMMAND_OSC_SHOW        5
-#define INCEPTION_COMMAND_OSC_ABORT       6
-#define INCEPTION_COMMAND_OSC_PROCESSLIST 7
-#define INCEPTION_COMMAND_PROCESSLIST     8
+#define INCEPTION_COMMAND_REMOTE_SHOW             1
+#define INCEPTION_COMMAND_LOCAL_SHOW              2
+#define INCEPTION_COMMAND_LOCAL_SET               3
+#define INCEPTION_COMMAND_LOCAL_SHOWALL           4
+#define INCEPTION_COMMAND_OSC_SHOW                5
+#define INCEPTION_COMMAND_OSC_ABORT               6
+#define INCEPTION_COMMAND_OSC_PROCESSLIST         7
+#define INCEPTION_COMMAND_PROCESSLIST             8
+#define INCEPTION_COMMAND_BINLOG_TRANSFER         9
+#define INCEPTION_COMMAND_SHOW_TRANSFER_STATUS    10
+#define INCEPTION_COMMAND_SHOW_DATACENTER         11
+#define INCEPTION_COMMAND_SHOW_DO_IGNORE          12
+#define INCEPTION_COMMAND_SHOW_THREAD_STATUS      13
+#define INCEPTION_COMMAND_SHOW_TABLE_STATUS      14
 
 #define LIST_PROCESS_HOST_LEN 64
 
+#define INCEPTION_BINLOG_DC_CREATE        1
+#define INCEPTION_BINLOG_INSTANCE_ADD     2
+#define INCEPTION_BINLOG_START_TRANSFER   3
+#define INCEPTION_BINLOG_SET_POSITION     4
+#define INCEPTION_BINLOG_RESET_TRANSFER   5
+#define INCEPTION_BINLOG_STOP_TRANSFER    6
+#define INCEPTION_BINLOG_STOP_SLAVE       7
+#define INCEPTION_BINLOG_START_SLAVE       8
+#define INCEPTION_BINLOG_ADD_DO_IGNORE     9
+
+#define INCEPTION_TRANSFER_EIDNAME      "EID"
+#define INCEPTION_TRANSFER_TIDNAME      "TID"
+#define INCEPTION_TRANSFER_EIDENUM      1
+#define INCEPTION_TRANSFER_TIDENUM      2
+
+#define INCEPTION_DO_UNKNOWN               0
+#define INCEPTION_DO_DO                    1
+#define INCEPTION_DO_IGNORE                2
+
+
+// typedef struct datacenter_struct datacenter_t;
+// struct datacenter_struct
+// {
+//     char    hostname[HOSTNAME_LENGTH + 1];
+//     int     mysql_port;
+//     char    username[USERNAME_CHAR_LENGTH + 1];
+//     char    password[MAX_PASSWORD_LENGTH+ 1];
+//     char    binlog_file[256 + 1];
+//     int     binlog_position;
+//     char    datacenter_name[FN_LEN+1];
+// };
+//
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
@@ -218,6 +259,7 @@ struct table_info_struct
 {
     char    db_name[NAME_CHAR_LEN + 1];
     char    table_name[NAME_CHAR_LEN + 1];
+    char    hash_key[FN_LEN+ 1];
     uchar*  record;
     char*   null_arr;
     int     remote_existed;
@@ -232,6 +274,11 @@ struct table_info_struct
     int     isdeleted;//表示是不是已经删除，删除表的时候会置为1
     int     table_size;
     int     have_pk;//用来表示这个表上面有没有主键
+
+    //for transfer 
+    int doignore; //0:need to recheck, 1: do, 2: ignore
+    longlong mts_ref_count;
+    int mts_index;
 
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;
@@ -334,6 +381,117 @@ public:
     FILE* pipe () { return io_;  }
     int   error() { return err_; }
     int   wait ();
+};
+
+typedef struct mts_thread_queue_struct mts_thread_queue_t;
+struct mts_thread_queue_struct
+{
+    mysql_mutex_t       element_lock;
+    str_t               sql_buffer;
+    volatile int        valid;
+    int                 commit_event;
+    str_t               commit_sql_buffer;
+    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
+};
+
+typedef struct mts_thread_struct mts_thread_t;
+struct mts_thread_struct
+{
+    mts_thread_queue_t* thread_queue;
+    volatile int        enqueue_index;
+    volatile int        dequeue_index;
+    void*               datacenter;
+    volatile int        thread_stage;
+    volatile longlong        event_count;
+};
+
+typedef struct mts_struct mts_t;
+struct mts_struct
+{
+    //只要有一个线程有问题，就需要其它线程也退出
+    int                 mts_running;
+    mts_thread_t*       mts_thread;
+    mysql_cond_t        mts_cond;
+    mysql_mutex_t       mts_lock;
+};
+
+typedef struct transfer_cache_struct transfer_cache_t;
+struct transfer_cache_struct
+{
+    MYSQL* mysql;
+    char    hostname[HOSTNAME_LENGTH + 1];
+    int     mysql_port;
+    char    username[USERNAME_CHAR_LENGTH + 1];
+    char    password[MAX_PASSWORD_LENGTH+ 1];
+    char    binlog_file[256 + 1];
+    volatile int binlog_position;
+    char    datacenter_name[FN_LEN+1];
+    char    instance_name[FN_LEN+1];
+
+    // datacenter_t*  datacenter;
+    str_t         errmsg;
+    //current binlog position
+    char          cbinlog_file[256 + 1];
+    volatile int  cbinlog_position;
+    struct tm*     stop_time;
+    struct tm     stop_time_space;
+    volatile int  thread_stage;
+
+    long          time_diff;
+    volatile int           transfer_on;
+    volatile int           abort_slave;
+    long clock_diff_with_master;
+    time_t last_master_timestamp;
+    time_t last_event_timestamp;
+    mysql_cond_t stop_cond;
+    mysql_mutex_t run_lock;
+    THD* thd;
+    LIST_NODE_T(transfer_cache_t) link;
+    str_t sql_buffer;
+    str_t* mts_sql_buffer;
+    mts_thread_queue_t* current_element;
+    mts_thread_t* current_thread;
+    str_t dupchar_buffer;
+    HASH table_cache;
+    int doempty;
+    int parallel_workers;
+    int queue_length;
+    //for qps stat
+    time_t start_time;
+    longlong events_count;
+    longlong trx_count;
+    longlong eps;
+    longlong tps;
+
+    //use to guarantees the integrity of replication when failover from master to slave
+    //and use to guarantees binlog event sequence uniqueness to distinct the replication
+    longlong event_seq_in_trx;
+    //use to fetch the event_seq_in_second, if current event time 
+    //is not eq with last, then event_seq_in_second=0, else event_seq_in_second+=1
+    time_t last_event_time;
+
+    mts_t* mts;
+
+    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
+    char datacenter_epoch[CRYPT_MAX_PASSWORD_SIZE + 1];
+    char gtid[128];
+    rpl_gno gno;
+    char last_gtid[128];
+    rpl_gno last_gno;
+    int gtid_on;
+ 
+    // slave attributes
+    // 表示当前这个从库节点是不是可用，如果连不上了，出错了，都会将其置为FALSE
+    volatile int valid;
+    char    current_time[FN_LEN+1];
+    //use to record the slaves's binlog positions, to wirte the ha info
+    LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+};
+
+typedef struct transfer_struct transfer_t;
+struct transfer_struct 
+{
+    LIST_BASE_NODE_T(transfer_cache_t) transfer_lst;
 };
 
 typedef struct osc_percent_cache_struct osc_percent_cache_t;
@@ -473,7 +631,9 @@ struct sql_statistic_struct
 };
 
 extern osc_cache_t global_osc_cache;
+extern transfer_t global_transfer_cache;
 extern mysql_mutex_t osc_mutex;
+extern mysql_mutex_t transfer_mutex;
 
 extern sinfo_t global_source;
 extern char** isql_option;
@@ -3226,6 +3386,9 @@ public:
   /* scramble - random string sent to client on handshake */
   char         scramble[SCRAMBLE_LENGTH+1];
   //add by wanghuai
+  longlong transaction_id;
+  longlong event_id;
+  THD* query_thd;
   sinfo_space_t* thd_sinfo;
   int timestamp_count;//timestamp column count in one table
   uint have_error_before;
@@ -4308,6 +4471,7 @@ private:
 public:
   MYSQL* get_audit_connection();
   MYSQL* get_backup_connection();
+  MYSQL* get_transfer_connection();
   void close_all_connections();
 
 private:
@@ -4323,7 +4487,10 @@ private:
 
   bool init_backup_connection();
   bool backup_conn_inited;
+  bool init_transfer_connection();
+  bool transfer_conn_inited;
   MYSQL backup_conn;
+  MYSQL transfer_conn;
 };
 
 

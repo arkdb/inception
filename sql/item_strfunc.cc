@@ -4097,126 +4097,126 @@ longlong Item_func_crc32::val_int()
   return (longlong) 0;
 }
 
-// #ifdef HAVE_COMPRESS
-// #include "zlib.h"
-// 
-// String *Item_func_compress::val_str(String *str)
-// {
-//   int err= Z_OK, code;
-//   ulong new_size;
-//   String *res;
-//   Byte *body;
-//   char *tmp, *last_char;
-//   DBUG_ASSERT(fixed == 1);
-// 
-//   if (!(res= args[0]->val_str(str)))
-//   {
-//     null_value= 1;
-//     return 0;
-//   }
-//   null_value= 0;
-//   if (res->is_empty()) return res;
-// 
-//   /*
-//     Citation from zlib.h (comment for compress function):
-// 
-//     Compresses the source buffer into the destination buffer.  sourceLen is
-//     the byte length of the source buffer. Upon entry, destLen is the total
-//     size of the destination buffer, which must be at least 0.1% larger than
-//     sourceLen plus 12 bytes.
-//     We assume here that the buffer can't grow more than .25 %.
-//   */
-//   new_size= res->length() + res->length() / 5 + 12;
-// 
-//   // Check new_size overflow: new_size <= res->length()
-//   if (((uint32) (new_size+5) <= res->length()) || 
-//       buffer.realloc((uint32) new_size + 4 + 1))
-//   {
-//     null_value= 1;
-//     return 0;
-//   }
-// 
-//   body= ((Byte*)buffer.ptr()) + 4;
-// 
-//   // As far as we have checked res->is_empty() we can use ptr()
-//   if ((err= compress(body, &new_size,
-// 		     (const Bytef*)res->ptr(), res->length())) != Z_OK)
-//   {
-//     code= err==Z_MEM_ERROR ? ER_ZLIB_Z_MEM_ERROR : ER_ZLIB_Z_BUF_ERROR;
-//     push_warning(current_thd,Sql_condition::WARN_LEVEL_WARN,code,ER(code));
-//     null_value= 1;
-//     return 0;
-//   }
-// 
-//   tmp= (char*)buffer.ptr(); // int4store is a macro; avoid side effects
-//   int4store(tmp, res->length() & 0x3FFFFFFF);
-// 
-//   /* This is to ensure that things works for CHAR fields, which trim ' ': */
-//   last_char= ((char*)body)+new_size-1;
-//   if (*last_char == ' ')
-//   {
-//     *++last_char= '.';
-//     new_size++;
-//   }
-// 
-//   buffer.length((uint32)new_size + 4);
-//   return &buffer;
-// }
-// 
-// 
-// String *Item_func_uncompress::val_str(String *str)
-// {
-//   DBUG_ASSERT(fixed == 1);
-//   String *res= args[0]->val_str(str);
-//   ulong new_size;
-//   int err;
-//   uint code;
-// 
-//   if (!res)
-//     goto err;
-//   null_value= 0;
-//   if (res->is_empty())
-//     return res;
-// 
-//   /* If length is less than 4 bytes, data is corrupt */
-//   if (res->length() <= 4)
-//   {
-//     push_warning_printf(current_thd,Sql_condition::WARN_LEVEL_WARN,
-// 			ER_ZLIB_Z_DATA_ERROR,
-// 			ER(ER_ZLIB_Z_DATA_ERROR));
-//     goto err;
-//   }
-// 
-//   /* Size of uncompressed data is stored as first 4 bytes of field */
-//   new_size= uint4korr(res->ptr()) & 0x3FFFFFFF;
-//   if (new_size > current_thd->variables.max_allowed_packet)
-//   {
-//     push_warning_printf(current_thd,Sql_condition::WARN_LEVEL_WARN,
-// 			ER_TOO_BIG_FOR_UNCOMPRESS,
-// 			ER(ER_TOO_BIG_FOR_UNCOMPRESS),
-//                         static_cast<int>(current_thd->variables.
-//                                          max_allowed_packet));
-//     goto err;
-//   }
-//   if (buffer.realloc((uint32)new_size))
-//     goto err;
-// 
-//   if ((err= uncompress((Byte*)buffer.ptr(), &new_size,
-// 		       ((const Bytef*)res->ptr())+4,res->length())) == Z_OK)
-//   {
-//     buffer.length((uint32) new_size);
-//     return &buffer;
-//   }
-// 
-//   code= ((err == Z_BUF_ERROR) ? ER_ZLIB_Z_BUF_ERROR :
-// 	 ((err == Z_MEM_ERROR) ? ER_ZLIB_Z_MEM_ERROR : ER_ZLIB_Z_DATA_ERROR));
-//   push_warning(current_thd,Sql_condition::WARN_LEVEL_WARN,code,ER(code));
-// 
-// err:
-//   null_value= 1;
-//   return 0;
-// }
-// #endif
+#ifdef HAVE_COMPRESS
+#include "zlib.h"
+
+String *Item_func_compress::val_str(String *str)
+{
+  int err= Z_OK, code;
+  ulong new_size;
+  String *res;
+  Byte *body;
+  char *tmp, *last_char;
+  DBUG_ASSERT(fixed == 1);
+
+  if (!(res= args[0]->val_str(str)))
+  {
+    null_value= 1;
+    return 0;
+  }
+  null_value= 0;
+  if (res->is_empty()) return res;
+
+  /*
+    Citation from zlib.h (comment for compress function):
+
+    Compresses the source buffer into the destination buffer.  sourceLen is
+    the byte length of the source buffer. Upon entry, destLen is the total
+    size of the destination buffer, which must be at least 0.1% larger than
+    sourceLen plus 12 bytes.
+    We assume here that the buffer can't grow more than .25 %.
+  */
+  new_size= res->length() + res->length() / 5 + 12;
+
+  // Check new_size overflow: new_size <= res->length()
+  if (((uint32) (new_size+5) <= res->length()) || 
+      buffer.realloc((uint32) new_size + 4 + 1))
+  {
+    null_value= 1;
+    return 0;
+  }
+
+  body= ((Byte*)buffer.ptr()) + 4;
+
+  // As far as we have checked res->is_empty() we can use ptr()
+  if ((err= compress(body, &new_size,
+		     (const Bytef*)res->ptr(), res->length())) != Z_OK)
+  {
+    code= err==Z_MEM_ERROR ? ER_ZLIB_Z_MEM_ERROR : ER_ZLIB_Z_BUF_ERROR;
+    push_warning(current_thd,Sql_condition::WARN_LEVEL_WARN,code,ER(code));
+    null_value= 1;
+    return 0;
+  }
+
+  tmp= (char*)buffer.ptr(); // int4store is a macro; avoid side effects
+  int4store(tmp, res->length() & 0x3FFFFFFF);
+
+  /* This is to ensure that things works for CHAR fields, which trim ' ': */
+  last_char= ((char*)body)+new_size-1;
+  if (*last_char == ' ')
+  {
+    *++last_char= '.';
+    new_size++;
+  }
+
+  buffer.length((uint32)new_size + 4);
+  return &buffer;
+}
+
+
+String *Item_func_uncompress::val_str(String *str)
+{
+  DBUG_ASSERT(fixed == 1);
+  String *res= args[0]->val_str(str);
+  ulong new_size;
+  int err;
+  uint code;
+
+  if (!res)
+    goto err;
+  null_value= 0;
+  if (res->is_empty())
+    return res;
+
+  /* If length is less than 4 bytes, data is corrupt */
+  if (res->length() <= 4)
+  {
+    push_warning_printf(current_thd,Sql_condition::WARN_LEVEL_WARN,
+			ER_ZLIB_Z_DATA_ERROR,
+			ER(ER_ZLIB_Z_DATA_ERROR));
+    goto err;
+  }
+
+  /* Size of uncompressed data is stored as first 4 bytes of field */
+  new_size= uint4korr(res->ptr()) & 0x3FFFFFFF;
+  if (new_size > current_thd->variables.max_allowed_packet)
+  {
+    push_warning_printf(current_thd,Sql_condition::WARN_LEVEL_WARN,
+			ER_TOO_BIG_FOR_UNCOMPRESS,
+			ER(ER_TOO_BIG_FOR_UNCOMPRESS),
+                        static_cast<int>(current_thd->variables.
+                                         max_allowed_packet));
+    goto err;
+  }
+  if (buffer.realloc((uint32)new_size))
+    goto err;
+
+  if ((err= uncompress((Byte*)buffer.ptr(), &new_size,
+		       ((const Bytef*)res->ptr())+4,res->length())) == Z_OK)
+  {
+    buffer.length((uint32) new_size);
+    return &buffer;
+  }
+
+  code= ((err == Z_BUF_ERROR) ? ER_ZLIB_Z_BUF_ERROR :
+	 ((err == Z_MEM_ERROR) ? ER_ZLIB_Z_MEM_ERROR : ER_ZLIB_Z_DATA_ERROR));
+  push_warning(current_thd,Sql_condition::WARN_LEVEL_WARN,code,ER(code));
+
+err:
+  null_value= 1;
+  return 0;
+}
+#endif
 
 /*
   UUID, as in

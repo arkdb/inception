@@ -250,11 +250,13 @@ public:
   RPL_TABLE_LIST *tables_to_lock;           /* RBR: Tables to lock  */
   uint tables_to_lock_count;        /* RBR: Count of tables to lock */
 
+  transfer_cache_t*           datacenter;
   table_info_t*		table_info;
   THD*		thd;
   ulong		thread_id;
   time_t	exec_time;
   int		seqno;
+  String sql_buffer;
 
   MYSQL* mysql;
   uint32 file_id;				/* for 3.23 load data infile */

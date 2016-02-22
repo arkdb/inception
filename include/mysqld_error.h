@@ -130,7 +130,18 @@
 #define ER_INVALID_IDENT                    2627
 #define ER_DB_EXISTS                        2628
 #define ER_SUBSELECT_IN_DML                 2629
-#define ER_ERROR_LAST                       2630
+#define ER_DATACENTER_EXISTED               2628
+#define ER_INVALID_TRANSFER_INFO            2629
+#define ER_ADD_INSTANCE_ERROR               2630
+#define ER_INSTANCE_EXISTED                 2631
+#define ER_INVALID_DATACENTER_INFO          2632
+#define ER_TRANSFER_INTERRUPT               2633
+#define ER_TRANSFER_RUNNING                 2634
+#define ER_TRANSFER_NONRUNNING              2635
+#define ER_TRANSFER_INTERRUPT_DC            2636
+#define ER_TRANSFER_NOT_EXISTED             2637
+#define ER_MASTER_NODE_FIRST                2638
+#define ER_ERROR_LAST                       2639
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

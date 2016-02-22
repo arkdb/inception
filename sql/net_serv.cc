@@ -881,10 +881,10 @@ my_net_read(NET *net)
 
   MYSQL_NET_READ_START();
 
-// #ifdef HAVE_COMPRESS
-//   if (!net->compress)
-//   {
-// #endif
+#ifdef HAVE_COMPRESS
+  if (!net->compress)
+  {
+#endif
     len= net_read_packet(net, &complen);
     if (len == MAX_PACKET_LENGTH)
     {
@@ -906,115 +906,115 @@ my_net_read(NET *net)
       net->read_pos[len]=0;		/* Safeguard for mysql_use_result */
     MYSQL_NET_READ_DONE(0, len);
     return len;
-// #ifdef HAVE_COMPRESS
-//   }
-//   else
-//   {
-//     /* We are using the compressed protocol */
-// 
-//     ulong buf_length;
-//     ulong start_of_packet;
-//     ulong first_packet_offset;
-//     uint read_length, multi_byte_packet=0;
-// 
-//     if (net->remain_in_buf)
-//     {
-//       buf_length= net->buf_length;		/* Data left in old packet */
-//       first_packet_offset= start_of_packet= (net->buf_length -
-//                                              net->remain_in_buf);
-//       /* Restore the character that was overwritten by the end 0 */
-//       net->buff[start_of_packet]= net->save_char;
-//     }
-//     else
-//     {
-//       /* reuse buffer, as there is nothing in it that we need */
-//       buf_length= start_of_packet= first_packet_offset= 0;
-//     }
-//     for (;;)
-//     {
-//       ulong packet_len;
-// 
-//       if (buf_length - start_of_packet >= NET_HEADER_SIZE)
-//       {
-//         read_length = uint3korr(net->buff+start_of_packet);
-//         if (!read_length)
-//         { 
-//           /* End of multi-byte packet */
-//           start_of_packet += NET_HEADER_SIZE;
-//           break;
-//         }
-//         if (read_length + NET_HEADER_SIZE <= buf_length - start_of_packet)
-//         {
-//           if (multi_byte_packet)
-//           {
-//             /* Remove packet header for second packet */
-//             memmove(net->buff + first_packet_offset + start_of_packet,
-//               net->buff + first_packet_offset + start_of_packet +
-//               NET_HEADER_SIZE,
-//               buf_length - start_of_packet);
-//             start_of_packet += read_length;
-//             buf_length -= NET_HEADER_SIZE;
-//           }
-//           else
-//             start_of_packet+= read_length + NET_HEADER_SIZE;
-// 
-//           if (read_length != MAX_PACKET_LENGTH)	/* last package */
-//           {
-//             multi_byte_packet= 0;		/* No last zero len packet */
-//             break;
-//           }
-//           multi_byte_packet= NET_HEADER_SIZE;
-//           /* Move data down to read next data packet after current one */
-//           if (first_packet_offset)
-//           {
-//             memmove(net->buff,net->buff+first_packet_offset,
-//               buf_length-first_packet_offset);
-//             buf_length-=first_packet_offset;
-//             start_of_packet -= first_packet_offset;
-//             first_packet_offset=0;
-//           }
-//           continue;
-//         }
-//       }
-//       /* Move data down to read next data packet after current one */
-//       if (first_packet_offset)
-//       {
-//         memmove(net->buff,net->buff+first_packet_offset,
-//           buf_length-first_packet_offset);
-//         buf_length-=first_packet_offset;
-//         start_of_packet -= first_packet_offset;
-//         first_packet_offset=0;
-//       }
-// 
-//       net->where_b=buf_length;
-//       if ((packet_len= net_read_packet(net, &complen)) == packet_error)
-//       {
-//         MYSQL_NET_READ_DONE(1, 0);
-//         return packet_error;
-//       }
-//       if (my_uncompress(net->buff + net->where_b, packet_len,
-//                         &complen))
-//       {
-//         net->error= 2;			/* caller will close socket */
-//         net->last_errno= ER_NET_UNCOMPRESS_ERROR;
-// #ifdef MYSQL_SERVER
-//         my_error(ER_NET_UNCOMPRESS_ERROR, MYF(0));
-// #endif
-//         MYSQL_NET_READ_DONE(1, 0);
-//         return packet_error;
-//       }
-//       buf_length+= complen;
-//     }
-// 
-//     net->read_pos=      net->buff+ first_packet_offset + NET_HEADER_SIZE;
-//     net->buf_length=    buf_length;
-//     net->remain_in_buf= (ulong) (buf_length - start_of_packet);
-//     len = ((ulong) (start_of_packet - first_packet_offset) - NET_HEADER_SIZE -
-//            multi_byte_packet);
-//     net->save_char= net->read_pos[len];	/* Must be saved */
-//     net->read_pos[len]=0;		/* Safeguard for mysql_use_result */
-//   }
-// #endif /* HAVE_COMPRESS */
+#ifdef HAVE_COMPRESS
+  }
+  else
+  {
+    /* We are using the compressed protocol */
+
+    ulong buf_length;
+    ulong start_of_packet;
+    ulong first_packet_offset;
+    uint read_length, multi_byte_packet=0;
+
+    if (net->remain_in_buf)
+    {
+      buf_length= net->buf_length;		/* Data left in old packet */
+      first_packet_offset= start_of_packet= (net->buf_length -
+                                             net->remain_in_buf);
+      /* Restore the character that was overwritten by the end 0 */
+      net->buff[start_of_packet]= net->save_char;
+    }
+    else
+    {
+      /* reuse buffer, as there is nothing in it that we need */
+      buf_length= start_of_packet= first_packet_offset= 0;
+    }
+    for (;;)
+    {
+      ulong packet_len;
+
+      if (buf_length - start_of_packet >= NET_HEADER_SIZE)
+      {
+        read_length = uint3korr(net->buff+start_of_packet);
+        if (!read_length)
+        { 
+          /* End of multi-byte packet */
+          start_of_packet += NET_HEADER_SIZE;
+          break;
+        }
+        if (read_length + NET_HEADER_SIZE <= buf_length - start_of_packet)
+        {
+          if (multi_byte_packet)
+          {
+            /* Remove packet header for second packet */
+            memmove(net->buff + first_packet_offset + start_of_packet,
+              net->buff + first_packet_offset + start_of_packet +
+              NET_HEADER_SIZE,
+              buf_length - start_of_packet);
+            start_of_packet += read_length;
+            buf_length -= NET_HEADER_SIZE;
+          }
+          else
+            start_of_packet+= read_length + NET_HEADER_SIZE;
+
+          if (read_length != MAX_PACKET_LENGTH)	/* last package */
+          {
+            multi_byte_packet= 0;		/* No last zero len packet */
+            break;
+          }
+          multi_byte_packet= NET_HEADER_SIZE;
+          /* Move data down to read next data packet after current one */
+          if (first_packet_offset)
+          {
+            memmove(net->buff,net->buff+first_packet_offset,
+              buf_length-first_packet_offset);
+            buf_length-=first_packet_offset;
+            start_of_packet -= first_packet_offset;
+            first_packet_offset=0;
+          }
+          continue;
+        }
+      }
+      /* Move data down to read next data packet after current one */
+      if (first_packet_offset)
+      {
+        memmove(net->buff,net->buff+first_packet_offset,
+          buf_length-first_packet_offset);
+        buf_length-=first_packet_offset;
+        start_of_packet -= first_packet_offset;
+        first_packet_offset=0;
+      }
+
+      net->where_b=buf_length;
+      if ((packet_len= net_read_packet(net, &complen)) == packet_error)
+      {
+        MYSQL_NET_READ_DONE(1, 0);
+        return packet_error;
+      }
+      if (my_uncompress(net->buff + net->where_b, packet_len,
+                        &complen))
+      {
+        net->error= 2;			/* caller will close socket */
+        net->last_errno= ER_NET_UNCOMPRESS_ERROR;
+#ifdef MYSQL_SERVER
+        my_error(ER_NET_UNCOMPRESS_ERROR, MYF(0));
+#endif
+        MYSQL_NET_READ_DONE(1, 0);
+        return packet_error;
+      }
+      buf_length+= complen;
+    }
+
+    net->read_pos=      net->buff+ first_packet_offset + NET_HEADER_SIZE;
+    net->buf_length=    buf_length;
+    net->remain_in_buf= (ulong) (buf_length - start_of_packet);
+    len = ((ulong) (start_of_packet - first_packet_offset) - NET_HEADER_SIZE -
+           multi_byte_packet);
+    net->save_char= net->read_pos[len];	/* Must be saved */
+    net->read_pos[len]=0;		/* Safeguard for mysql_use_result */
+  }
+#endif /* HAVE_COMPRESS */
   MYSQL_NET_READ_DONE(0, len);
   return len;
 }

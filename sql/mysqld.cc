@@ -596,6 +596,18 @@ bool inception_read_only=0;
 bool inception_check_identifier=0;
 bool inception_ddl_support=0;
 bool inception_osc_on=0;
+char* inception_datacenter_host=NULL;
+int inception_datacenter_port;
+char* inception_datacenter_user=NULL;
+char* inception_datacenter_password=NULL;
+ulong inception_transfer_trx_sequence_sync=0;
+ulong inception_transfer_event_sequence_sync=0;
+ulong inception_transfer_binlog_expire_hours=0;
+ulong inception_transfer_slave_sync=0;
+ulong inception_transfer_master_sync=0;
+ulong inception_transfer_worker_queue_length=0;
+ulong inception_transfer_parallel_workers=0;
+
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
 // ulong inception_osc_max_connected=0;
@@ -609,7 +621,10 @@ bool inception_osc_on=0;
 // bool inception_osc_drop_old_table=0;
 
 mysql_mutex_t        osc_mutex;
+mysql_mutex_t        transfer_mutex;
 osc_cache_t global_osc_cache;
+transfer_t global_transfer_cache;
+
 /**
   Soft upper limit for number of sp_head objects that can be stored
   in the sp_cache for one connection.
@@ -657,6 +672,7 @@ const char *server_uuid_ptr;
 char mysql_home[FN_REFLEN], pidfile_name[FN_REFLEN], system_time_zone[30];
 char default_logfile_name[FN_REFLEN];
 char *default_tz_name;
+char* log_error_file_ptr= NULL;
 char log_error_file[FN_REFLEN], glob_hostname[FN_REFLEN];
 char mysql_real_data_home[FN_REFLEN],
      lc_messages_dir[FN_REFLEN], reg_ext[FN_EXTLEN],
@@ -1365,7 +1381,7 @@ static void close_connections(void)
     unix_sock= MYSQL_INVALID_SOCKET;
   }
 #endif
-//   end_thr_alarm(0);      // Abort old alarms.
+   end_thr_alarm(0);      // Abort old alarms.
 
   /*
     First signal all threads that it's time to die
@@ -1678,6 +1694,7 @@ void clean_up(bool print_message)
   my_free(isql_option);
   mysql_mutex_destroy(&isql_option_mutex);
   mysql_mutex_destroy(&osc_mutex);
+  mysql_mutex_destroy(&transfer_mutex);
   mysql_osc_cache_free();
 
   my_tz_free();
@@ -2803,41 +2820,41 @@ void my_init_signals(void)
 }
 
 
-// static void start_signal_handler(void)
-// {
-//   int error;
-//   pthread_attr_t thr_attr;
-//   DBUG_ENTER("start_signal_handler");
-// 
-//   (void) pthread_attr_init(&thr_attr);
-// #if !defined(HAVE_DEC_3_2_THREADS)
-//   pthread_attr_setscope(&thr_attr,PTHREAD_SCOPE_SYSTEM);
-//   (void) pthread_attr_setdetachstate(&thr_attr,PTHREAD_CREATE_DETACHED);
-// #if defined(__ia64__) || defined(__ia64)
-//   /*
-//     Peculiar things with ia64 platforms - it seems we only have half the
-//     stack size in reality, so we have to double it here
-//   */
-//   pthread_attr_setstacksize(&thr_attr,my_thread_stack_size*2);
-// #else
-//   pthread_attr_setstacksize(&thr_attr,my_thread_stack_size);
-// #endif
-// #endif
-// 
-//   mysql_mutex_lock(&LOCK_thread_count);
-//   if ((error= mysql_thread_create(key_thread_signal_hand,
-//                                   &signal_thread, &thr_attr, signal_hand, 0)))
-//   {
-//     sql_print_error("Can't create interrupt-thread (error %d, errno: %d)",
-//         error,errno);
-//     exit(1);
-//   }
-//   mysql_cond_wait(&COND_thread_count, &LOCK_thread_count);
-//   mysql_mutex_unlock(&LOCK_thread_count);
-// 
-//   (void) pthread_attr_destroy(&thr_attr);
-//   DBUG_VOID_RETURN;
-// }
+static void start_signal_handler(void)
+{
+  int error;
+  pthread_attr_t thr_attr;
+  DBUG_ENTER("start_signal_handler");
+
+  (void) pthread_attr_init(&thr_attr);
+#if !defined(HAVE_DEC_3_2_THREADS)
+  pthread_attr_setscope(&thr_attr,PTHREAD_SCOPE_SYSTEM);
+  (void) pthread_attr_setdetachstate(&thr_attr,PTHREAD_CREATE_DETACHED);
+#if defined(__ia64__) || defined(__ia64)
+  /*
+    Peculiar things with ia64 platforms - it seems we only have half the
+    stack size in reality, so we have to double it here
+  */
+  pthread_attr_setstacksize(&thr_attr,my_thread_stack_size*2);
+#else
+  pthread_attr_setstacksize(&thr_attr,my_thread_stack_size);
+#endif
+#endif
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  if ((error= mysql_thread_create(key_thread_signal_hand,
+                                  &signal_thread, &thr_attr, signal_hand, 0)))
+  {
+    sql_print_error("Can't create interrupt-thread (error %d, errno: %d)",
+        error,errno);
+    exit(1);
+  }
+  mysql_cond_wait(&COND_thread_count, &LOCK_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  (void) pthread_attr_destroy(&thr_attr);
+  DBUG_VOID_RETURN;
+}
 
 
 /** This threads handles all signals and alarms. */
@@ -2854,6 +2871,9 @@ pthread_handler_t signal_hand(void *arg __attribute__((unused)))
     This should actually be '+ max_number_of_slaves' instead of +10,
     but the +10 should be quite safe.
   */
+  init_thr_alarm(thread_scheduler->max_threads + 1+
+           global_system_variables.max_insert_delayed_threads + 10);
+
   if (thd_lib_detected != THD_LIB_LT && (test_flags & TEST_SIGINT))
   {
     (void) sigemptyset(&set);     // Setup up SIGINT for debug
@@ -3398,7 +3418,9 @@ int init_common_variables()
   global_system_variables.time_zone= my_tz_SYSTEM;
 
   mysql_mutex_init(NULL, &osc_mutex, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(NULL, &transfer_mutex, MY_MUTEX_INIT_FAST);
   LIST_INIT(global_osc_cache.osc_lst);
+  LIST_INIT(global_transfer_cache.transfer_lst);
   
   mysql_mutex_init(NULL, &isql_option_mutex, MY_MUTEX_INIT_FAST);
   isql_option = (char**)my_malloc(sizeof(char*) * (ISQL_OPTION_COUNT + 2), MY_ZEROFILL);
@@ -3773,6 +3795,34 @@ static int init_server_components()
   logger.set_handlers(LOG_FILE, LOG_NONE, LOG_FILE);
 
   init_max_user_conn();
+  if (log_error_file_ptr != disabled_my_option)
+    opt_error_log= 1;
+  else
+    log_error_file_ptr= const_cast<char*>("");
+
+  if (opt_error_log)
+  {
+    if (!log_error_file_ptr[0])
+      sprintf(log_error_file, "inception.err"); 
+    else
+      sprintf(log_error_file, log_error_file_ptr); 
+    log_error_file_ptr= log_error_file;
+    if (!log_error_file[0])
+      opt_error_log= 0;                         // Too long file name
+    else
+    {
+      my_bool res;
+#ifndef EMBEDDED_LIBRARY
+      res= reopen_fstreams(log_error_file, stdout, stderr);
+#else
+      res= reopen_fstreams(log_error_file, NULL, stderr);
+#endif
+
+      if (!res)
+        setbuf(stderr, NULL);
+    }
+  }
+
   DBUG_RETURN(0);
 }
 
@@ -3990,7 +4040,7 @@ int mysqld_main(int argc, char **argv)
     After this we can't quit by a simple unireg_abort
   */
   error_handler_hook= my_message_sql;
-  //start_signal_handler();       // Creates pidfile
+  start_signal_handler();       // Creates pidfile
 
   acl_init(opt_noacl);
 
