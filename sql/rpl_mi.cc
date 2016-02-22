@@ -134,6 +134,7 @@ Master_info::Master_info(
 	tables_to_lock = NULL;
 	tables_to_lock_count = 0;
   init_sql_alloc(&lock_tables_mem_root, 4096, 0);
+  datacenter = NULL;
 }
 
 void free_tables_to_lock(Master_info*	mi)

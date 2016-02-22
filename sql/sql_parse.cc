@@ -7367,7 +7367,7 @@ pthread_handler_t inception_transfer_thread(void* arg)
     pthread_detach_this_thread();
     mi->info_thd = thd;
     mysql_mutex_lock(&LOCK_thread_count);
-    add_global_thread(thd);
+    // add_global_thread(thd);
     mysql_mutex_unlock(&LOCK_thread_count);
 
     setup_connection_thread_globals(thd);
@@ -7542,7 +7542,7 @@ error:
     datacenter->stop_time = &datacenter->stop_time_space;
     datacenter->transfer_on = 0;
     mysql_mutex_lock(&LOCK_thread_count);
-    remove_global_thread(thd);
+    // remove_global_thread(thd);
     mysql_mutex_unlock(&LOCK_thread_count);
     my_thread_end();
     pthread_exit(0);
@@ -12661,8 +12661,11 @@ int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_ev
                 my_error(ER_SLAVE_RELAY_LOG_WRITE_FAILURE, MYF(0));
                 DBUG_RETURN(true);
             }
-            mi->datacenter->cbinlog_position = mi->get_master_log_pos();
-            strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+            if (mi->datacenter)
+            {
+                mi->datacenter->cbinlog_position = mi->get_master_log_pos();
+                strcpy(mi->datacenter->cbinlog_file, (char*)mi->get_master_log_name());
+            }
         }
 
         break;
@@ -12993,8 +12996,13 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
                 !ptr->m_tabledef.compatible_with(mi->thd, NULL, 
                 mi->table_info, &conv_table, mi->get_lock_tables_mem_root()))
             {
-                sql_print_information("[%s] convert table failed, db: %s, table: %s",
-			              mi->datacenter->datacenter_name, ptr->db, ptr->table_name);
+                if (mi->datacenter)
+                    sql_print_information("[%s] convert table failed, db: %s, table: %s",
+                        mi->datacenter->datacenter_name, ptr->db, ptr->table_name);
+                else
+                    sql_print_information("convert table failed, db: %s, table: %s",
+                        ptr->db, ptr->table_name);
+
                 DBUG_RETURN(FALSE);
             }
 
@@ -13008,8 +13016,11 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
 
     if (mi->table_info)
     {
-        sql_print_information("[%s] can not find binlog table, db: %s, table: %s",
-            mi->datacenter->datacenter_name,
+        if (mi->datacenter)
+            sql_print_information("[%s] can not find binlog table, db: %s, table: %s",
+            mi->datacenter->datacenter_name, mi->table_info->db_name, mi->table_info->table_name);
+        else
+            sql_print_information("can not find binlog table, db: %s, table: %s",
             mi->table_info->db_name, mi->table_info->table_name);
     }
 
