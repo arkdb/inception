@@ -5593,9 +5593,17 @@ inception_transfer_table_map(
 
     table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
-    if (!table_info)
+
+    if (!table_info && 
+         strcmp(tab_map_ev->get_table_name(), mi->last_report_table) &&
+         strcmp(tab_map_ev->get_db(), mi->last_report_db))
+    {
         sql_print_error("transfer load table failed, db: %s, table: %s", 
 		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
+        strcpy(mi->last_report_db, tab_map_ev->get_db());
+        strcpy(mi->last_report_table, tab_map_ev->get_table_name());
+    }
+
     if (!table_info && mi->thd->is_error())
     {
         mi->table_info = NULL;
@@ -5611,7 +5619,7 @@ inception_transfer_table_map(
           && strcasecmp(ptr->table_name , mi->table_info->table_name) == 0)
         {
             if ((static_cast<RPL_TABLE_LIST*>(ptr)->m_tabledef).size() != 
-                LIST_GET_LEN(table_info->field_lst))
+                LIST_GET_LEN(table_info->field_lst) && table_info->doignore != INCEPTION_DO_IGNORE)
             {
                 sql_print_information("[%s] load table failed, column num not matching, "
                     "inception ignore it, db: %s, table: %s", 
@@ -5848,10 +5856,17 @@ inception_mts_get_hash_value(
     char* p;
     int key_length;
     my_hash_value_type hash_value=0;
-    if (commit_flag)
-        sprintf(key, "%s%sXID", table_info->db_name, table_info->table_name);
+    if (table_info)
+    {
+        if (commit_flag)
+            sprintf(key, "%s%sXID", table_info->db_name, table_info->table_name);
+        else
+            sprintf(key, "%s%s", table_info->db_name, table_info->table_name);
+    }
     else
-        sprintf(key, "%s%s", table_info->db_name, table_info->table_name);
+    {
+        sprintf(key, "%dXID", (int)datacenter->last_event_timestamp);
+    }
 
     p = key;
     key_length = strlen(key);
@@ -7407,6 +7422,7 @@ pthread_handler_t inception_transfer_thread(void* arg)
     datacenter->start_time = time(0);
     datacenter->trx_count = 0;
     datacenter->events_count = 0;
+    datacenter->current_element = NULL;
 
     inception_transfer_fetch_epoch(datacenter);
     sql_print_information("[%s] transfer started, start position: %s : %d", 
@@ -7636,7 +7652,8 @@ inception_free_mts(
         mts_thread = &mts->mts_thread[i];
 retry:
         //if the thread is not exit, here to wait
-        if (mts_thread->enqueue_index != mts_thread->dequeue_index)
+        if (mts_thread->thread_stage != transfer_mts_stopped && 
+            mts_thread->enqueue_index != mts_thread->dequeue_index)
         {
             mysql_cond_broadcast(&datacenter->mts->mts_cond);
             sleep(1);

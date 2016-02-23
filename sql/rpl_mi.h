@@ -251,6 +251,8 @@ public:
   uint tables_to_lock_count;        /* RBR: Count of tables to lock */
 
   transfer_cache_t*           datacenter;
+  char last_report_db[NAME_CHAR_LEN+1];
+  char last_report_table[NAME_CHAR_LEN+1];
   table_info_t*		table_info;
   THD*		thd;
   ulong		thread_id;
