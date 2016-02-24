@@ -1054,6 +1054,8 @@ THD::THD(bool enable_plugins)
   use_osc = 0;
   LIST_INIT(tablecache.tablecache_lst);
   memset(&sql_statistic, 0, sizeof(sql_statistic_t));
+  mysql_mutex_init(NULL, &sleep_lock, MY_MUTEX_INIT_FAST);
+  mysql_cond_init(NULL, &sleep_cond, NULL);
 
   variables.long_query_time =10000000;
 #ifndef DBUG_OFF
@@ -1636,6 +1638,9 @@ void THD::cleanup(void)
 
   delete_dynamic(&user_var_events);
   my_hash_free(&user_vars);
+  mysql_mutex_destroy(&sleep_lock);
+  mysql_cond_destroy(&sleep_cond);
+
 //   if (gtid_mode > 0)
 //     variables.gtid_next.set_automatic();
 //   close_temporary_tables(this);

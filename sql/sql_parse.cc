@@ -2490,6 +2490,7 @@ int thd_parse_options(
     // }
 
     thd->thd_sinfo->ignore_warnings = global_source.ignore_warnings;
+    thd->thd_sinfo->sleep_nms = global_source.sleep_nms;
     strcpy(thd->thd_sinfo->host, global_source.host);
     thd->thd_sinfo->port = global_source.port;
     thd->thd_sinfo->force = global_source.force;
@@ -10708,6 +10709,17 @@ int mysql_remote_execute_command(
     DBUG_RETURN(FALSE);
 }
 
+int mysql_sleep(THD* thd)
+{
+    if (thd->thd_sinfo->sleep_nms > 0)
+    {
+        struct timespec abstime;
+        set_timespec_nsec(abstime, thd->thd_sinfo->sleep_nms * 1000000ULL);
+        mysql_cond_timedwait(&thd->sleep_cond, &thd->sleep_lock, &abstime);
+    }
+
+    return false;
+}
 
 int mysql_execute_all_statement(THD* thd)
 {
@@ -10726,6 +10738,7 @@ int mysql_execute_all_statement(THD* thd)
             (exe_err = mysql_remote_execute_command(thd, mysql, sql_cache_node)) == TRUE)
             break;
 
+        mysql_sleep(thd);
         sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
     }
 

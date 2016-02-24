@@ -5160,6 +5160,10 @@ struct my_option my_isql_options[]=
     &global_source.split, &global_source.split, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
+  {"sleep", 0, "sleep mili-seconds between execute two statement .",
+    &global_source.sleep_nms, &global_source.sleep_nms, 0,
+    GET_INT,	REQUIRED_ARG, 0, 0, 100000, 0, 0, 0},
+
   {"query_print", 0, "print the query tree.",
     &global_source.query_print, &global_source.query_print, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},

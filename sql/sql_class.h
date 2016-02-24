@@ -259,6 +259,7 @@ struct source_info_struct
     uint        ignore_warnings;
     uint        split;
     uint        query_print;
+    ulonglong   sleep_nms;
 };
 
 typedef struct source_info_space_struct sinfo_space_t;
@@ -274,6 +275,7 @@ struct source_info_space_struct
     uint        backup;//force to execute though exist error before
     uint        ignore_warnings;
     uint        split;
+    ulonglong   sleep_nms;
     enum enum_inception_optype optype;
 };
 
@@ -3259,6 +3261,8 @@ public:
   str_t*        query_print_tree;
   volatile      int thread_state;
   sql_cache_node_t*  current_execute;
+  mysql_mutex_t   sleep_lock;
+  mysql_cond_t    sleep_cond;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven
   bool       slave_thread, one_shot_set;
