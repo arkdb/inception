@@ -7195,8 +7195,9 @@ pthread_handler_t inception_mts_thread(void* arg)
             {
                 inception_transfer_set_errmsg(thd, datacenter, 
                     ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
-                break;
                 //error exit, notify other threads;
+            	inception_stop_transfer(datacenter);
+                break;
             }
         }
 
@@ -7552,13 +7553,19 @@ reconnect:
     while(!inception_transfer_killed(thd, datacenter))
     {
         ulong event_len;
+  	time_t last_master_timestamp;
 
         datacenter->thread_stage = transfer_wait_master_send;
+
+	//save the last_master_timestamp, for read event
+	last_master_timestamp = datacenter->last_master_timestamp;
         datacenter->last_master_timestamp = 0;
         if (datacenter->parallel_workers > 0)
             mysql_cond_broadcast(&datacenter->mts->mts_cond);
         event_len = mysql_read_event_for_transfer(mi, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
+	//if new binlog comming, restore the last_master_timestamp
+        datacenter->last_master_timestamp = last_master_timestamp;
 
         if (event_len == packet_error)
         {
