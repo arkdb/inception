@@ -15428,8 +15428,9 @@ inception_show_param:
     ;
 
 inception_op_type:
-         RESET_SYM { $$=1; }
-         | STOP_SYM { $$=2; }
+         RESET_SYM { $$=INCEPTION_BINLOG_RESET_TRANSFER; }
+         | STOP_SYM { $$=INCEPTION_BINLOG_STOP_TRANSFER; }
+         | FLUSH_SYM { $$=INCEPTION_BINLOG_FLUSH_TRANSFER; }
          ;
 
 inception_do_ignore:
@@ -15530,10 +15531,7 @@ inception:
         {
             LEX *lex=Lex;
             lex->inception_cmd_type = INCEPTION_COMMAND_BINLOG_TRANSFER;
-            if ($2 == 1)
-                lex->inception_cmd_sub_type = INCEPTION_BINLOG_RESET_TRANSFER;
-            else 
-                lex->inception_cmd_sub_type = INCEPTION_BINLOG_STOP_TRANSFER;
+            lex->inception_cmd_sub_type = $2;
             lex->sql_command = SQLCOM_INCEPTION;
             Lex->ident= $6;
         }

@@ -7298,6 +7298,64 @@ retry:
     return NULL;
 }
 
+int inception_flush_transfer_data(THD* thd, char* datacenter_name)
+{
+    MYSQL* mysql;
+    char tmp[1024];
+
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return true;
+    }
+
+    sprintf(tmp, "update `%s`.`instances` set binlog_file='', binlog_position=0 \
+        where instance_role = 'master'", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`master_positions`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`slave_positions`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`transfer_data`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`transfer_filter`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    sprintf(tmp, "update `%s`.`transfer_sequence` set sequence=0", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        return true;
+    }
+
+    return false;
+}
+
 int inception_reset_transfer_position(THD* thd, char* datacenter_name)
 {
     MYSQL* mysql;
@@ -7314,6 +7372,7 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name)
         where instance_role = 'master'", datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
         return true;
     }
 
@@ -7963,6 +8022,44 @@ int inception_transfer_set_instance_position(
 }
 
 int
+inception_transfer_flush_transfer(THD* thd, char* datacenter_name)
+{
+    transfer_cache_t* transfer_node;
+
+    mysql_mutex_lock(&transfer_mutex); 
+    transfer_node = inception_transfer_load_datacenter(thd, datacenter_name, false);
+
+    if (transfer_node && transfer_node->transfer_on)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_RUNNING, MYF(0), datacenter_name);
+        return true;
+    }
+
+    if (!transfer_node)
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        my_error(ER_TRANSFER_NOT_EXISTED, MYF(0), datacenter_name);
+        return true;
+    }
+
+    if(inception_flush_transfer_data(thd, datacenter_name))
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        return true;
+    }
+
+    LIST_REMOVE(link, global_transfer_cache.transfer_lst, transfer_node);
+    mysql_mutex_unlock(&transfer_mutex); 
+
+    //todo: free the cache node
+    str_deinit(&transfer_node->errmsg);
+    my_free(transfer_node);
+
+    return false;
+}
+
+int
 inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
 {
     transfer_cache_t* transfer_node;
@@ -8083,6 +8180,8 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
                 thd->lex->ident.str, thd->lex->server_options.port);
         case INCEPTION_BINLOG_RESET_TRANSFER:
             return inception_transfer_reset_transfer(thd, thd->lex->ident.str);
+        case INCEPTION_BINLOG_FLUSH_TRANSFER:
+            return inception_transfer_flush_transfer(thd, thd->lex->ident.str);
         case INCEPTION_BINLOG_STOP_TRANSFER:
             return inception_transfer_stop_replicate(thd->lex->ident.str);
         case INCEPTION_BINLOG_STOP_SLAVE:
