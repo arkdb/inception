@@ -691,6 +691,7 @@ class thread_info
     int dest_port;
     int state;
     CSET_STRING query_string;
+    CSET_STRING query_string_e;
 };
 
 // For sorting by thread_id.
@@ -3421,6 +3422,7 @@ public:
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
   volatile      int thread_state;
+  sql_cache_node_t*  current_execute;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven
   bool       slave_thread, one_shot_set;

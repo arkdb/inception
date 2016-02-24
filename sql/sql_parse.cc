@@ -4011,14 +4011,15 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     DBUG_ENTER("mysql_execute_inception_processlist");
 
     field_list.push_back(new Item_int(NAME_STRING("Id"), 0, MY_INT64_NUM_DECIMAL_DIGITS));
-    field_list.push_back(new Item_empty_string("dest_user",16));//目标数据库用户名
-    field_list.push_back(new Item_empty_string("dest_host",FN_REFLEN));//目标主机
-    field_list.push_back(new Item_return_int("dest_port",20, MYSQL_TYPE_LONG));//目标端口
-    field_list.push_back(new Item_empty_string("from_host",FN_REFLEN));//连接来源主机
+    field_list.push_back(new Item_empty_string("Dest_User",16));//目标数据库用户名
+    field_list.push_back(new Item_empty_string("Dest_Host",FN_REFLEN));//目标主机
+    field_list.push_back(new Item_return_int("Dest_Port",20, MYSQL_TYPE_LONG));//目标端口
+    field_list.push_back(new Item_empty_string("From_Host",FN_REFLEN));//连接来源主机
     field_list.push_back(new Item_empty_string("Command",16));//操作类型
     field_list.push_back(new Item_empty_string("STATE",16));//操作类型
     field_list.push_back(new Item_return_int("Time",20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Info",max_query_length));
+    field_list.push_back(new Item_empty_string("Current_Execute",max_query_length));
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
         DBUG_RETURN(false);
@@ -4058,6 +4059,12 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             }
             
             thd_info->state = tmp->thread_state;
+            if (tmp->current_execute && tmp->current_execute->sql_statement)
+            {
+                char *q= thd->strmake(tmp->current_execute->sql_statement, 100);
+                thd_info->query_string_e= CSET_STRING(q, q ? 100: 0, system_charset_info);
+            }
+
             //info
             if (tmp->query())
             {
@@ -4117,6 +4124,8 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
 
         //info
         protocol->store(thd_info->query_string.str(), thd_info->query_string.charset());
+        //execute
+        protocol->store(thd_info->query_string_e.str(), thd_info->query_string_e.charset());
         if (protocol->write())
             break; /* purecov: inspected */
     }
@@ -15289,10 +15298,12 @@ int mysql_remote_execute_command(
         case SQLCOM_UPDATE:
         case SQLCOM_UPDATE_MULTI:
         case SQLCOM_INSERT_SELECT:
+            thd->current_execute = sql_cache_node;
             err = mysql_execute_and_backup(thd, mysql, sql_cache_node);
             break;
 
         case SQLCOM_ALTER_TABLE:
+            thd->current_execute = sql_cache_node;
             err = mysql_execute_statement(thd, mysql,
                     sql_cache_node->sql_statement, sql_cache_node);
             break;
@@ -15303,6 +15314,7 @@ int mysql_remote_execute_command(
         case SQLCOM_SET_OPTION:
         case SQLCOM_TRUNCATE:
         case SQLCOM_CREATE_DB:
+            thd->current_execute = sql_cache_node;
             err = mysql_execute_statement(thd, mysql,
                     sql_cache_node->sql_statement, sql_cache_node);
             break;
@@ -15895,6 +15907,7 @@ int mysql_deinit_sql_cache(THD* thd)
         str_deinit(&thd->setnames);
     }
 
+    thd->current_execute = NULL;
     str_deinit(thd->errmsg);
     thd->errmsg = NULL;
     if (thd->sql_cache == NULL)
@@ -15907,7 +15920,10 @@ int mysql_deinit_sql_cache(THD* thd)
     {
         sql_cache_node_next = LIST_GET_NEXT(link, sql_cache_node);
         if (sql_cache_node->sql_statement != NULL)
+        {
             my_free(sql_cache_node->sql_statement);
+            sql_cache_node->sql_statement = NULL;
+        }
 
         str_deinit(sql_cache_node->errmsg);
         str_deinit(sql_cache_node->stagereport);
