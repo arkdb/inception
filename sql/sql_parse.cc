@@ -4322,6 +4322,7 @@ inception_transfer_load_datacenter(
     mysql_free_result(source_res);
     my_hash_init(&datacenter->table_cache, &my_charset_bin, 
         4096, 0, 0, (my_hash_get_key)table_cache_get_key, NULL, 0);
+    thd->close_all_connections();
     return datacenter;
 }
 
@@ -7131,6 +7132,7 @@ pthread_handler_t inception_mts_thread(void* arg)
                 ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
             sql_print_information("[%s] MTS [%p] stopped: %s", 
                 datacenter->datacenter_name, mts_thread, mysql_error(mysql));
+            mts_thread->thread_stage = transfer_mts_stopped;
             inception_stop_transfer(datacenter);
             break;
             //error exit, notify other threads;
@@ -7176,6 +7178,7 @@ pthread_handler_t inception_mts_thread(void* arg)
                 ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
             sql_print_information("[%s] MTS [%p] stopped: %s", 
                 datacenter->datacenter_name, mts_thread, mysql_error(mysql));
+            mts_thread->thread_stage = transfer_mts_stopped;
             inception_stop_transfer(datacenter);
             break;
             //error exit, notify other threads;
@@ -7196,6 +7199,7 @@ pthread_handler_t inception_mts_thread(void* arg)
                 inception_transfer_set_errmsg(thd, datacenter, 
                     ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
                 //error exit, notify other threads;
+                mts_thread->thread_stage = transfer_mts_stopped;
             	inception_stop_transfer(datacenter);
                 break;
             }
@@ -13188,7 +13192,7 @@ int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev)
         my_free(memory);
     }
 
-    if (!mi->table_info->have_pk)
+    if (mi->table_info && !mi->table_info->have_pk)
     {
         sql_print_warning("MySQL instance(%s:%d), Table(%s:%s) have no "
             "primary key, omit the backup", mi->thd->thd_sinfo->host, 
