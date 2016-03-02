@@ -7103,6 +7103,26 @@ error:
     return ret;
 }
 
+int inception_mts_execute_retry(
+    MYSQL *mysql, 
+    const char *query, 
+    ulong length
+)
+{
+    int retry_count = 0;
+
+    while (retry_count < 3 && mysql_real_query(mysql, query, length))
+    {
+        retry_count++;
+        sql_print_information("MTS thread retry[%d/3]: %s", retry_count, mysql_error(mysql));
+    }
+        
+    if (retry_count == 3)
+        return true;
+
+    return false;
+}
+
 pthread_handler_t inception_mts_thread(void* arg)
 {
     THD *thd= NULL;
@@ -7172,16 +7192,16 @@ pthread_handler_t inception_mts_thread(void* arg)
         //如果内容不是空的，才执行，如果是空的，则说明是COMMIT语句，多线程就不需要这个了
         mts_thread->thread_stage = transfer_mts_write_datacenter;
         if (str_get_len(sql_buffer) > 0 && 
-            mysql_real_query(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
+            inception_mts_execute_retry(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
         {
             inception_transfer_set_errmsg(thd, datacenter, 
                 ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
             sql_print_information("[%s] MTS [%p] stopped: %s", 
                 datacenter->datacenter_name, mts_thread, mysql_error(mysql));
+            //error exit, notify other threads;
             mts_thread->thread_stage = transfer_mts_stopped;
             inception_stop_transfer(datacenter);
             break;
-            //error exit, notify other threads;
         }
 
         if (str_get_len(sql_buffer) > 0)
@@ -7193,14 +7213,14 @@ pthread_handler_t inception_mts_thread(void* arg)
 
         if (element->commit_event && str_get_len(commit_sql_buffer) > 0)
         {
-            if (mysql_real_query(mysql, str_get(commit_sql_buffer), 
+            if (inception_mts_execute_retry(mysql, str_get(commit_sql_buffer), 
                   str_get_len(commit_sql_buffer)))
             {
                 inception_transfer_set_errmsg(thd, datacenter, 
                     ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
                 //error exit, notify other threads;
                 mts_thread->thread_stage = transfer_mts_stopped;
-            	inception_stop_transfer(datacenter);
+            	  inception_stop_transfer(datacenter);
                 break;
             }
         }
