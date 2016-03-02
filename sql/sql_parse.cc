@@ -6566,7 +6566,7 @@ inception_transfer_query_event(
         else
         {
             mi->datacenter->gtid_on = false;
-            datacenter->event_seq_in_trx = 0;
+            mi->datacenter->event_seq_in_trx = 0;
         }
 
         if(inception_transfer_next_sequence(mi, 
