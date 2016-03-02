@@ -6822,13 +6822,14 @@ inception_transfer_write_Xid(
     str_truncate_0(backup_sql);
     mi->datacenter->trx_count += 1;
 
+    if(inception_transfer_next_sequence(mi, 
+        mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
+        return true;
+
     if (mi->datacenter->parallel_workers == 0)
     {
         //still the privise trx, but is another event
         inception_transfer_fetch_binlogsha1(mi, ev);
-        if(inception_transfer_next_sequence(mi, 
-            mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
-            return true;
         str_append(backup_sql, "INSERT IGNORE INTO ");
         sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
           tablename, create_time, instance_name, binlog_hash, optype , data) VALUES \
