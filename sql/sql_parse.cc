@@ -6560,9 +6560,15 @@ inception_transfer_query_event(
     if (strcasecmp(query_log->query, "BEGIN") == 0)
     {
         if (mi->datacenter->gno)
+        {
             mi->datacenter->gtid_on = true;
+        }
         else
+        {
             mi->datacenter->gtid_on = false;
+            datacenter->event_seq_in_trx = 0;
+        }
+
         if(inception_transfer_next_sequence(mi, 
             mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
             DBUG_RETURN(true);
@@ -6771,7 +6777,8 @@ inception_transfer_fetch_binlogsha1(
     binlog_position = mi->get_master_log_pos();
     if (datacenter->gno == 0)
     {
-        sprintf(tmp_buf, "%ld#%s#%d", ev->get_time(), binlog_file, binlog_position);
+        sprintf(tmp_buf, "%ld#%s#%d#%lld", ev->get_time(), 
+            binlog_file, binlog_position, datacenter->event_seq_in_trx);
     }
     else
     {
