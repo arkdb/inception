@@ -276,7 +276,7 @@ bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
 void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
 int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
 int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
-int inception_wait_and_free_mts( transfer_cache_t* datacenter);
+int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -7679,7 +7679,7 @@ failover:
 
 error:
     datacenter->thread_stage = transfer_waiting_threads_exit;
-    inception_wait_and_free_mts(datacenter);
+    inception_wait_and_free_mts(datacenter, true);
     sql_print_information("[%s] transfer stopped", datacenter->datacenter_name);
     datacenter->thread_stage = transfer_stopped;
     thd->close_all_connections();
@@ -7793,18 +7793,25 @@ retry:
 
 int
 inception_wait_and_free_mts(
-    transfer_cache_t* datacenter
+    transfer_cache_t* datacenter,
+    int need_lock
 )
 {
     if (datacenter->parallel_workers == 0)
         return false;
 
     //notify the mts thread to exit
+    if (need_lock)
+        mysql_mutex_lock(&datacenter->run_lock);
+
     if (datacenter->mts)
     {
         mysql_cond_broadcast(&datacenter->mts->mts_cond);
         inception_free_mts(datacenter);
     }
+
+    if (need_lock)
+        mysql_mutex_unlock(&datacenter->run_lock);
 
     return false;
 }
@@ -7847,7 +7854,7 @@ int inception_stop_transfer(
 
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
-    inception_wait_and_free_mts(datacenter);
+    inception_wait_and_free_mts(datacenter, false);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
