@@ -7775,7 +7775,7 @@ retry:
             goto retry;
         }
 
-        for (j = 0; j < datacenter->queue_length; j++)
+        for (j = 0; j < datacenter->queue_length && mts_thread->thread_queue; j++)
         {
             element = &mts_thread->thread_queue[j]; 
             mysql_mutex_destroy(&element->element_lock);
@@ -7783,7 +7783,8 @@ retry:
             str_deinit(&element->commit_sql_buffer);
         }
 
-        my_free(mts_thread->thread_queue);
+        if (mts_thread->thread_queue)
+            my_free(mts_thread->thread_queue);
     }
 
     mysql_mutex_destroy(&mts->mts_lock);
