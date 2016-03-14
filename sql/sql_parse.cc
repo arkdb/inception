@@ -4531,12 +4531,13 @@ int mysql_master_transfer_status(
     protocol->store((longlong)osc_percent_node->table_cache.records);
     protocol->store(osc_percent_node->parallel_workers);
     protocol->store(osc_percent_node->queue_length);
-    if (osc_percent_node->transfer_on)
+    time_diff = (long)(time(0) - osc_percent_node->start_time);
+    if (osc_percent_node->transfer_on && time_diff > 0)
     {
         osc_percent_node->eps = 
-          osc_percent_node->events_count/((long)(time(0)-osc_percent_node->start_time));
+          osc_percent_node->events_count/time_diff;
         osc_percent_node->tps = 
-          osc_percent_node->trx_count/((long)(time(0)-osc_percent_node->start_time));
+          osc_percent_node->trx_count/time_diff;
     }
 
     protocol->store(osc_percent_node->eps);
