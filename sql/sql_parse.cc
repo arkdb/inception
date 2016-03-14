@@ -7529,22 +7529,24 @@ pthread_handler_t inception_transfer_thread(void* arg)
     datacenter->trx_count = 0;
     datacenter->events_count = 0;
     datacenter->current_element = NULL;
+    datacenter->mts = NULL;
 
     inception_transfer_fetch_epoch(datacenter);
     sql_print_information("[%s] transfer started, start position: %s : %d", 
         datacenter->datacenter_name, binlog_file, binlog_position);
-    if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
-        goto error; 
 
-    if (mysql_thread_create(0, &threadid, &connection_attrib,
+    if (inception_create_mts(datacenter) || 
+        mysql_thread_create(0, &threadid, &connection_attrib,
         inception_transfer_delete1, (void*)datacenter) ||
         mysql_thread_create(0, &threadid, &connection_attrib,
-        inception_transfer_delete2, (void*)datacenter) ||
-        inception_create_mts(datacenter))
+        inception_transfer_delete2, (void*)datacenter))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), datacenter->datacenter_name);
         goto error; 
     }
+
+    if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
+        goto error; 
 
 reconnect:
     mysql_close(mysql);
