@@ -4760,6 +4760,7 @@ int mysql_show_datacenter_list(THD* thd)
         DBUG_RETURN(true);
     }
 
+    thd->close_all_connections();
     source_row = mysql_fetch_row(source_res);
     while (source_row)
     {
@@ -4788,7 +4789,6 @@ int mysql_show_datacenter_list(THD* thd)
     }
 
     mysql_free_result(source_res);
-    thd->close_all_connections();
     my_eof(thd);
 
     DBUG_RETURN(res);
@@ -7112,6 +7112,7 @@ error:
 }
 
 int inception_mts_execute_retry(
+    transfer_cache_t* datacenter,
     MYSQL *mysql, 
     const char *query, 
     ulong length
@@ -7122,7 +7123,8 @@ int inception_mts_execute_retry(
     while (retry_count < 3 && mysql_real_query(mysql, query, length))
     {
         retry_count++;
-        sql_print_information("MTS thread retry[%d/3]: %s", retry_count, mysql_error(mysql));
+        sql_print_information("[%s] MTS thread retry[%d/3]: %s", 
+            datacenter->datacenter_name, retry_count, mysql_error(mysql));
     }
         
     if (retry_count == 3)
@@ -7200,7 +7202,8 @@ pthread_handler_t inception_mts_thread(void* arg)
         //如果内容不是空的，才执行，如果是空的，则说明是COMMIT语句，多线程就不需要这个了
         mts_thread->thread_stage = transfer_mts_write_datacenter;
         if (str_get_len(sql_buffer) > 0 && 
-            inception_mts_execute_retry(mysql, str_get(sql_buffer), str_get_len(sql_buffer)))
+            inception_mts_execute_retry(datacenter, mysql, 
+              str_get(sql_buffer), str_get_len(sql_buffer)))
         {
             inception_transfer_set_errmsg(thd, datacenter, 
                 ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
@@ -7216,13 +7219,14 @@ pthread_handler_t inception_mts_thread(void* arg)
         {
             affected_rows = mysql_affected_rows(mysql);
             if (affected_rows == 0)
-                sql_print_information("MTS Binlog SHA1 duplicate: %s", element->binlog_hash);
+                sql_print_information("[%s] MTS Binlog SHA1 duplicate: %s", 
+                    datacenter->datacenter_name, element->binlog_hash);
         }
 
         if (element->commit_event && str_get_len(commit_sql_buffer) > 0)
         {
-            if (inception_mts_execute_retry(mysql, str_get(commit_sql_buffer), 
-                  str_get_len(commit_sql_buffer)))
+            if (inception_mts_execute_retry(datacenter, mysql, 
+                  str_get(commit_sql_buffer), str_get_len(commit_sql_buffer)))
             {
                 inception_transfer_set_errmsg(thd, datacenter, 
                     ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
