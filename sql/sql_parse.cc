@@ -4758,6 +4758,7 @@ int mysql_show_datacenter_list(THD* thd)
         (source_res = mysql_store_result(mysql)) == NULL)
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        thd->close_all_connections();
         DBUG_RETURN(true);
     }
 
@@ -4791,6 +4792,7 @@ int mysql_show_datacenter_list(THD* thd)
 
     mysql_free_result(source_res);
     my_eof(thd);
+    thd->close_all_connections();
 
     DBUG_RETURN(res);
 }
@@ -5033,6 +5035,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5069,6 +5072,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5099,6 +5103,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5124,6 +5129,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5142,6 +5148,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5155,6 +5162,7 @@ int inception_transfer_instance_table_create(
         if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
@@ -5175,10 +5183,12 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
             return true;
         }
     }
 
+    thd->close_all_connections();
     return false;
 }
 
@@ -5510,7 +5520,7 @@ int inception_get_table_do_ignore(
         doignore = tableinfo->doignore;
     }
 
-    	    	thd->close_all_connections();
+    thd->close_all_connections();
     return doignore;
 }
 
@@ -7270,8 +7280,9 @@ pthread_handler_t inception_transfer_delete1(void* arg)
     setup_connection_thread_globals(thd);
 
 retry:
-    sql_print_information("[%s] delete thread[1] started/continue, binlog expire after [%ld hours]", 
-        datacenter->datacenter_name, inception_transfer_binlog_expire_hours);
+    sql_print_information("[%s] delete thread[1] started/continue,"
+        "binlog expire after [%ld hours]", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_hours);
 
     inception_transfer_binlog_expire_hours_local = inception_transfer_binlog_expire_hours;
     sprintf(sql, "DELETE FROM `%s`.transfer_data where create_time < \
@@ -7294,6 +7305,7 @@ retry:
             sleep(2);
     }
 
+    thd->close_all_connections();
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7317,8 +7329,9 @@ pthread_handler_t inception_transfer_delete2(void* arg)
     setup_connection_thread_globals(thd);
 
 retry:
-    sql_print_information("[%s] delete thread[2] started/continue, binlog expire after [%ld hours]", 
-        datacenter->datacenter_name, inception_transfer_binlog_expire_hours);
+    sql_print_information("[%s] delete thread[2] started/continue, "
+        "binlog expire after [%ld hours]", datacenter->datacenter_name, 
+        inception_transfer_binlog_expire_hours);
 
     inception_transfer_binlog_expire_hours_local = inception_transfer_binlog_expire_hours;
     sprintf(sql, "DELETE FROM `%s`.slave_positions where create_time < \
@@ -7341,6 +7354,7 @@ retry:
             sleep(2);
     }
 
+    thd->close_all_connections();
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7363,6 +7377,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
@@ -7370,6 +7385,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
@@ -7377,6 +7393,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
@@ -7384,6 +7401,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
@@ -7391,6 +7409,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
@@ -7398,9 +7417,11 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
+    thd->close_all_connections();
     return false;
 }
 
