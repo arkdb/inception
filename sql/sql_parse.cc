@@ -192,6 +192,7 @@ const char *xa_state_names[]={
 #define INC_CHAR_MAX_TO_VARCHAR     16
 
 extern const char *osc_recursion_method[];
+extern const char *osc_alter_foreign_keys_method[];
 
 int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
 int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
@@ -10383,7 +10384,10 @@ int mysql_execute_alter_table_osc(
     if (!thd->variables.inception_osc_check_alter)
         oscargv[count++] = strdup("--no-check-alter");
 
-    oscargv[count++] = strdup("--alter-foreign-keys-method=auto");
+    sprintf(cmd_line, "--alter-foreign-keys-method=%s", 
+        osc_alter_foreign_keys_method[thd->variables.inception_alter_foreign_keys_method]);
+    oscargv[count++] = strdup(cmd_line);
+
     oscargv[count++] = strdup("--execute");
     oscargv[count++] = strdup("--statistics");
     oscargv[count++] = strdup("--max-lag");

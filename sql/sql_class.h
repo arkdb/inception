@@ -928,6 +928,7 @@ typedef struct system_variables
   bool inception_osc_drop_new_table;
   bool inception_osc_check_replication_filters;
   bool inception_osc_check_alter;
+  ulong inception_alter_foreign_keys_method;
   ulong inception_osc_chunk_size;
   ulong inception_osc_max_running;
   ulong inception_osc_max_connected;

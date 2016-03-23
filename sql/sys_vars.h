@@ -1836,4 +1836,10 @@ enum enum_osc_recursion_method{
   recursion_method_unspec=3  
 };
 
+enum enum_osc_alter_foreign_keys_method{
+  alter_foreign_keys_method_auto =0,
+  alter_foreign_keys_method_none =1,
+  alter_foreign_keys_method_rebuild_constraints=2, 
+  alter_foreign_keys_method_drop_swap =3,
+};
 
