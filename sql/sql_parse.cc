@@ -10388,6 +10388,9 @@ int mysql_execute_alter_table_osc(
         osc_alter_foreign_keys_method[thd->variables.inception_alter_foreign_keys_method]);
     oscargv[count++] = strdup(cmd_line);
 
+    if (thd->variables.inception_alter_foreign_keys_method == 1/*alter_foreign_keys_method_none*/)
+        oscargv[count++] = strdup("--force");
+
     oscargv[count++] = strdup("--execute");
     oscargv[count++] = strdup("--statistics");
     oscargv[count++] = strdup("--max-lag");
