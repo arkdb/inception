@@ -1012,6 +1012,16 @@ static Sys_var_mybool Sys_inception_osc_check_alter(
     SESSION_VAR(inception_osc_check_alter),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+const char *osc_alter_foreign_keys_method[]= 
+{"auto", "none", "rebuild_constraints", "drop_swap", NullS};
+
+static Sys_var_enum Sys_inception_alter_foreign_keys_method(
+    "inception_osc_alter_foreign_keys_method",
+    "--alter-foreign-keys-method",
+    SESSION_VAR(inception_alter_foreign_keys_method), CMD_LINE(REQUIRED_ARG),
+    osc_alter_foreign_keys_method, DEFAULT(alter_foreign_keys_method_none), 
+    NO_MUTEX_GUARD, NOT_IN_BINLOG);
+
 const char *osc_recursion_method[]= {"processlist", "hosts", "none", NullS};
 static Sys_var_enum Sys_inception_osc_recursion_method(
     "inception_osc_recursion_method",
