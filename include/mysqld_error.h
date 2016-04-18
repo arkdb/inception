@@ -141,7 +141,8 @@
 #define ER_TRANSFER_INTERRUPT_DC            2636
 #define ER_TRANSFER_NOT_EXISTED             2637
 #define ER_MASTER_NODE_FIRST                2638
-#define ER_ERROR_LAST                       2639
+#define ER_TASK_ALREADY_EXISTED             2639
+#define ER_ERROR_LAST                       2640
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

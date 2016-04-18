@@ -15389,6 +15389,16 @@ inception_show_param:
       if (Lex->wild == NULL)
           MYSQL_YYABORT;
     }
+    | GET_SYM PROCESS STATUS_SYM TEXT_STRING_sys
+    {    
+            LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_TASK_SHOW;
+      Lex->wild= new (YYTHD->mem_root) String($4.str, $4.length,
+                        system_charset_info);
+      if (Lex->wild == NULL)
+          MYSQL_YYABORT;
+    }
     | GET_SYM inception_transfer_master_slave STATUS_SYM FOR_SYM DATACENTER_SYM ident
     {
         LEX *lex=Lex;

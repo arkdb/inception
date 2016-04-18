@@ -278,6 +278,8 @@ void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
 int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
 int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
 int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
+int inception_table_create(THD *thd, String *create_sql);
+int mysql_cache_deinit_task(THD* thd);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -737,7 +739,7 @@ int mysql_cache_one_sql(THD* thd)
 
     sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->optype = thd->lex->sql_command;
-    sql_cache_node->seqno = thd->sql_cache->seqno_cache++;
+    sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
     mysql_compute_sql_sha1(thd, sql_cache_node);
     sql_cache_node->affected_rows = thd->affected_rows;
     sql_cache_node->ignore = thd->lex->ignore;
@@ -925,6 +927,7 @@ int mysql_not_need_data_source(THD* thd)
         (thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOW ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SHOWALL ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_SHOW ||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_TASK_SHOW ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_PROCESSLIST ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_PROCESSLIST ||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_OSC_ABORT ||
@@ -990,7 +993,7 @@ int mysql_send_all_results(THD* thd)
         {
             protocol->prepare_for_resend();
 
-            protocol->store(id++);
+            protocol->store(sql_cache_node->seqno);
             if (sql_cache_node->stage == 1)
                 protocol->store("CHECKED", thd->charset());
             else if (sql_cache_node->stage == 2)
@@ -2608,9 +2611,20 @@ int thd_parse_options(
         goto ERROR;
     }
 
+    if (global_source.task_sequence && strlen(global_source.task_sequence) >= 128)
+    {
+        my_error(ER_SQL_INVALID_SOURCE, MYF(0));
+        goto ERROR;
+    }
+
     thd->thd_sinfo->ignore_warnings = global_source.ignore_warnings;
     thd->thd_sinfo->sleep_nms = global_source.sleep_nms;
     strcpy(thd->thd_sinfo->host, global_source.host);
+
+    thd->thd_sinfo->task_sequence[0] = '\0';
+    if (global_source.task_sequence)
+        strcpy(thd->thd_sinfo->task_sequence, global_source.task_sequence);
+
     thd->thd_sinfo->port = global_source.port;
     thd->thd_sinfo->force = global_source.force;
     thd->thd_sinfo->backup = global_source.backup;
@@ -4817,6 +4831,48 @@ int mysql_show_transfer_status(THD* thd)
     else if (thd->lex->type == 2)
         mysql_slave_transfer_status(thd, osc_percent_node); 
 
+    DBUG_RETURN(res);
+}
+
+int mysql_execute_inception_task_show(THD* thd)
+{
+    DBUG_ENTER("mysql_execute_inception_task_show");
+    int res= 0;
+    LEX *lex= thd->lex;
+    const char *wild= lex->wild ? lex->wild->ptr() : NullS;
+    task_progress_t* osc_percent_node;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
+
+    mysql_mutex_lock(&task_mutex); 
+    osc_percent_node = LIST_GET_FIRST(global_task_cache.task_lst);
+    while(osc_percent_node)
+    {
+        if (!strcasecmp(osc_percent_node->sequence, wild))
+            break;
+
+        osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
+    }
+    mysql_mutex_unlock(&task_mutex);
+
+    field_list.push_back(new Item_empty_string("STATUS", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+          Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    protocol->prepare_for_resend();
+
+    if (osc_percent_node)
+        protocol->store("RUNNING", system_charset_info);
+    else
+        protocol->store("STOPPED", system_charset_info);
+
+    protocol->write();
+
+    my_eof(thd);
     DBUG_RETURN(res);
 }
 
@@ -8309,6 +8365,8 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_execute_inception_set_command(thd);
         case INCEPTION_COMMAND_OSC_SHOW:
             return mysql_execute_inception_osc_show(thd);
+        case INCEPTION_COMMAND_TASK_SHOW:
+            return mysql_execute_inception_task_show(thd);
         case INCEPTION_COMMAND_OSC_PROCESSLIST:
             return mysql_execute_inception_osc_processlist(thd);
         case INCEPTION_COMMAND_PROCESSLIST:
@@ -12068,14 +12126,33 @@ int mysql_get_statistic_table_sql(
     return 0;
 }
 
-int mysql_make_sure_statistic_table_exist(THD *thd)
+int mysql_get_progress_table_sql(
+    String*   create_sql
+)
+{
+    create_sql->truncate();
+    create_sql->append("create table ");
+    create_sql->append("inception.execute_progress");
+    create_sql->append("(");
+
+    create_sql->append("task_sequence varchar(128) primary key, ");
+    create_sql->append("sequence int not null default 0, ");
+    create_sql->append("status varchar(64) not null default '', ");
+    create_sql->append("update_time timestamp default current_timestamp "
+        "on update current_timestamp, ");
+    create_sql->append("errcode int default null, ");
+    create_sql->append("message varchar(1024) default null");
+    create_sql->append(") ENGINE INNODB DEFAULT CHARSET UTF8;");
+
+    return 0;
+}
+
+int inception_table_create(THD *thd, String *create_sql)
 {
     char  desc_sql[256];
     MYSQL*  mysql_remote;
-    String  create_sql;
-    String  create_info_sql;
 
-    DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
+    DBUG_ENTER("inception_table_create");
 
     if ((mysql_remote= thd->get_backup_connection()) == NULL)
         DBUG_RETURN(TRUE);
@@ -12092,9 +12169,7 @@ int mysql_make_sure_statistic_table_exist(THD *thd)
         thd->clear_error();
     }
 
-    mysql_get_statistic_table_sql(&create_sql);
-
-    if (mysql_real_query(mysql_remote, create_sql.ptr(), create_sql.length()))
+    if (mysql_real_query(mysql_remote, create_sql->ptr(), create_sql->length()))
     {
         if (mysql_errno(mysql_remote) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
@@ -12441,13 +12516,34 @@ commit:
     DBUG_RETURN(false);
 }
 
+int mysql_make_sure_inception_table_exist(THD* thd)
+{
+  
+    String  create_sql;
+    if (!thd->thd_sinfo->backup)
+        return false;
+
+    if (inception_enable_sql_statistic)
+    {
+        mysql_get_statistic_table_sql(&create_sql);
+        inception_table_create(thd, &create_sql);
+    }
+
+    if (thd->thd_sinfo->task_sequence[0] != '\0')
+    {
+        mysql_get_progress_table_sql(&create_sql);
+        inception_table_create(thd, &create_sql);
+    }
+
+    return false;
+}
+
 int mysql_operation_statistic(THD* thd)
 {
     if (!inception_enable_sql_statistic)
         return true;
 
     String  create_sql;
-    mysql_make_sure_statistic_table_exist(thd);
     mysql_get_statistic_table_insert_sql(thd, &create_sql);
     mysql_execute_remote_backup_sql(thd, create_sql.c_ptr());
     return false;
@@ -15353,6 +15449,53 @@ int mysql_execute_and_backup(THD *thd, MYSQL* mysql, sql_cache_node_t* sql_cache
     DBUG_RETURN(false);
 }
 
+int
+mysql_execute_progress_update(
+    THD* thd, 
+    char* stage, 
+    sql_cache_node_t* sql_cache_node
+)
+{
+    char sql[1024];
+    int         errrno=0;
+    const char* errmsg=NULL;
+    const char* msg=NULL;
+    int seqno;
+
+    if (sql_cache_node == NULL)
+        seqno = 0;
+    else
+        seqno = sql_cache_node->seqno;
+
+    if (thd->is_error())
+    {
+        errrno = thd->get_stmt_da()->sql_errno();
+        msg = thd->get_stmt_da()->message();
+        errmsg = (char*)my_malloc(strlen(msg)*2+1, MY_ZEROFILL);
+        mysql_dup_char((char*)msg, (char*)errmsg, '\'');
+        sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
+            "sequence, status, errcode, message) values('%s', %d, '%s', %d, '%s')"
+            "on duplicate key update sequence=values(sequence), status=values(status),"
+            "errcode = values(errcode), message=values(message)", thd->thd_sinfo->task_sequence,
+            seqno, stage, errrno, errmsg);
+    }
+    else
+    {
+        sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
+            "sequence, status, errcode, message) values('%s', %d, '%s', %d, NULL)"
+            "on duplicate key update sequence=values(sequence), status=values(status),"
+            "errcode = values(errcode), message=values(message)", thd->thd_sinfo->task_sequence,
+            seqno, stage, 0);
+    }
+
+    mysql_execute_remote_backup_sql(thd, sql);
+
+    if (errmsg)
+        my_free((void*)errmsg);
+
+    return false;
+}
+
 int mysql_remote_execute_command(
     THD *thd,
     MYSQL* mysql,
@@ -15366,6 +15509,7 @@ int mysql_remote_execute_command(
     sql_cache_node->stage = 2;//execute
     sql_cache_node->affected_rows = 0;
 
+    mysql_execute_progress_update(thd, (char*)"PREPARE", sql_cache_node);
     if (!thd->thd_sinfo->force && thd->have_error_before)
     {
         my_error(ER_ERROR_EXIST_BEFORE, MYF(0));
@@ -15410,6 +15554,7 @@ int mysql_remote_execute_command(
 
     if (err)
     {
+        mysql_execute_progress_update(thd, (char*)"ERROR", sql_cache_node);
         mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         if (sql_cache_node->err_stage == INC_ERROR_NONE_STAGE)
             sql_cache_node->err_stage = INC_ERROR_EXECUTE_STAGE;
@@ -15419,6 +15564,10 @@ int mysql_remote_execute_command(
             DBUG_RETURN(FALSE);
         else
             DBUG_RETURN(TRUE);
+    }
+    else
+    {
+        mysql_execute_progress_update(thd, (char*)"DONE", sql_cache_node);
     }
 
     if (sql_cache_node->stage==1)
@@ -15462,6 +15611,7 @@ int mysql_execute_all_statement(THD* thd)
         sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
     }
 
+    mysql_execute_progress_update(thd, (char*)"DONE", NULL);
     return FALSE;
 }
 
@@ -15579,6 +15729,7 @@ int mysql_execute_commit(THD *thd)
         DBUG_RETURN(false);
     }
 
+    mysql_make_sure_inception_table_exist(thd);
     if (!thd->check_error_before || thd->thd_sinfo->ignore_warnings)
     {
         if (!mysql_execute_all_statement(thd))
@@ -15861,6 +16012,57 @@ int mysql_need_source_info(THD *thd)
     return true;
 }
 
+int mysql_cache_deinit_task(THD* thd)
+{
+    task_progress_t* task_node;
+
+    DBUG_ENTER("mysql_cache_deinit_task");
+    mysql_mutex_lock(&task_mutex);
+    task_node = LIST_GET_FIRST(global_task_cache.task_lst);
+    while (task_node)
+    {
+        if (strcmp(task_node->sequence, thd->thd_sinfo->task_sequence)==0)
+            break;
+
+        task_node = LIST_GET_NEXT(link, task_node);
+    }
+
+    if (task_node)
+    {
+        LIST_REMOVE(link, global_task_cache.task_lst, task_node);
+        my_free(task_node);
+    }
+
+    mysql_mutex_unlock(&task_mutex);
+    return false;
+}
+
+int mysql_cache_new_task(THD* thd)
+{
+    task_progress_t* task_node;
+
+    DBUG_ENTER("mysql_cache_new_task");
+    mysql_mutex_lock(&task_mutex);
+    task_node = LIST_GET_FIRST(global_task_cache.task_lst);
+    while (task_node)
+    {
+        if (strcmp(task_node->sequence, thd->thd_sinfo->task_sequence)==0)
+        {
+            //is already executed
+            my_error(ER_TASK_ALREADY_EXISTED, MYF(0), task_node->sequence);
+            DBUG_RETURN(true);
+        }
+
+        task_node = LIST_GET_NEXT(link, task_node);
+    }
+
+    task_node = (task_progress_t*)my_malloc(sizeof(task_progress_t), MY_ZEROFILL);
+    strcpy(task_node->sequence, thd->thd_sinfo->task_sequence);
+    LIST_ADD_LAST(link, global_task_cache.task_lst, task_node);
+    mysql_mutex_unlock(&task_mutex);
+    return false;
+}
+
 int mysql_init_sql_cache(THD* thd)
 {
     sql_cache_t*  sql_cache;
@@ -15955,6 +16157,9 @@ int mysql_init_sql_cache(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
+    if(mysql_cache_new_task(thd))
+        DBUG_RETURN(ER_NO);
+
     DBUG_RETURN(FALSE);
 }
 
@@ -16002,6 +16207,7 @@ int mysql_deinit_sql_cache(THD* thd)
         str_deinit(&thd->setnames);
     }
 
+    mysql_cache_deinit_task(thd);
     thd->current_execute = NULL;
     str_deinit(thd->errmsg);
     thd->errmsg = NULL;

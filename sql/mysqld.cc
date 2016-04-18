@@ -621,8 +621,10 @@ ulong inception_transfer_parallel_workers=0;
 // bool inception_osc_drop_old_table=0;
 
 mysql_mutex_t        osc_mutex;
+mysql_mutex_t        task_mutex;
 mysql_mutex_t        transfer_mutex;
 osc_cache_t global_osc_cache;
+task_cache_t global_task_cache;
 transfer_t global_transfer_cache;
 
 /**
@@ -1694,6 +1696,7 @@ void clean_up(bool print_message)
   my_free(isql_option);
   mysql_mutex_destroy(&isql_option_mutex);
   mysql_mutex_destroy(&osc_mutex);
+  mysql_mutex_destroy(&task_mutex);
   mysql_mutex_destroy(&transfer_mutex);
   mysql_osc_cache_free();
 
@@ -3418,8 +3421,10 @@ int init_common_variables()
   global_system_variables.time_zone= my_tz_SYSTEM;
 
   mysql_mutex_init(NULL, &osc_mutex, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(NULL, &task_mutex, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(NULL, &transfer_mutex, MY_MUTEX_INIT_FAST);
   LIST_INIT(global_osc_cache.osc_lst);
+  LIST_INIT(global_task_cache.task_lst);
   LIST_INIT(global_transfer_cache.transfer_lst);
   
   mysql_mutex_init(NULL, &isql_option_mutex, MY_MUTEX_INIT_FAST);
@@ -5213,6 +5218,10 @@ struct my_option my_isql_options[]=
   {"sleep", 0, "sleep mili-seconds between execute two statement .",
     &global_source.sleep_nms, &global_source.sleep_nms, 0,
     GET_INT,	REQUIRED_ARG, 0, 0, 100000, 0, 0, 0},
+
+  {"sequence", 0, "task sequence for current task.",	
+    &global_source.task_sequence , &global_source.task_sequence , 0, 
+    GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0,	0, 0},
 
   {"query_print", 0, "print the query tree.",
     &global_source.query_print, &global_source.query_print, 0,

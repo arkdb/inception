@@ -187,6 +187,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_SHOW_DO_IGNORE          12
 #define INCEPTION_COMMAND_SHOW_THREAD_STATUS      13
 #define INCEPTION_COMMAND_SHOW_TABLE_STATUS      14
+#define INCEPTION_COMMAND_TASK_SHOW               15
 
 #define LIST_PROCESS_HOST_LEN 64
 
@@ -308,6 +309,7 @@ struct source_info_struct
     uint        split;
     uint        query_print;
     ulonglong   sleep_nms;
+    char*       task_sequence;
 };
 
 typedef struct source_info_space_struct sinfo_space_t;
@@ -324,6 +326,7 @@ struct source_info_space_struct
     uint        ignore_warnings;
     uint        split;
     ulonglong   sleep_nms;
+    char        task_sequence[512];
     enum enum_inception_optype optype;
 };
 
@@ -497,6 +500,19 @@ struct transfer_struct
     LIST_BASE_NODE_T(transfer_cache_t) transfer_lst;
 };
 
+typedef struct task_progress_cache_struct task_progress_t;
+struct task_progress_cache_struct 
+{
+    char        sequence[128];
+    LIST_NODE_T(task_progress_t) link;
+};
+
+typedef struct task_cache_struct task_cache_t;
+struct task_cache_struct 
+{
+    LIST_BASE_NODE_T(task_progress_t) task_lst;
+};
+
 typedef struct osc_percent_cache_struct osc_percent_cache_t;
 struct osc_percent_cache_struct 
 {
@@ -634,8 +650,10 @@ struct sql_statistic_struct
 };
 
 extern osc_cache_t global_osc_cache;
+extern task_cache_t global_task_cache;
 extern transfer_t global_transfer_cache;
 extern mysql_mutex_t osc_mutex;
+extern mysql_mutex_t task_mutex;
 extern mysql_mutex_t transfer_mutex;
 
 extern sinfo_t global_source;
