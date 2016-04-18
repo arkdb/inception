@@ -259,6 +259,7 @@ struct source_info_struct
     uint        ignore_warnings;
     uint        split;
     uint        query_print;
+    ulonglong   sleep_nms;
 };
 
 typedef struct source_info_space_struct sinfo_space_t;
@@ -274,6 +275,7 @@ struct source_info_space_struct
     uint        backup;//force to execute though exist error before
     uint        ignore_warnings;
     uint        split;
+    ulonglong   sleep_nms;
     enum enum_inception_optype optype;
 };
 
@@ -530,6 +532,7 @@ class thread_info
     int dest_port;
     int state;
     CSET_STRING query_string;
+    CSET_STRING query_string_e;
 };
 
 // For sorting by thread_id.
@@ -925,6 +928,7 @@ typedef struct system_variables
   bool inception_osc_drop_new_table;
   bool inception_osc_check_replication_filters;
   bool inception_osc_check_alter;
+  ulong inception_alter_foreign_keys_method;
   ulong inception_osc_chunk_size;
   ulong inception_osc_max_running;
   ulong inception_osc_max_connected;
@@ -3257,6 +3261,9 @@ public:
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
   volatile      int thread_state;
+  sql_cache_node_t*  current_execute;
+  mysql_mutex_t   sleep_lock;
+  mysql_cond_t    sleep_cond;
 
   /// @todo: slave_thread is completely redundant, we should use 'system_thread' instead /sven
   bool       slave_thread, one_shot_set;
