@@ -4869,8 +4869,6 @@ int mysql_check_create_index(THD *thd)
     uint            key_count;
     char*           tablename;
 
-    tablename = thd->lex->select_lex.table_list.first->table_name;
-
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
     Alter_info* alter_info_ptr = &alter_info;
@@ -4883,6 +4881,8 @@ int mysql_check_create_index(THD *thd)
             thd->lex->query_tables->table_name, TRUE);
     if (table_info == NULL)
         DBUG_RETURN(TRUE);
+
+    tablename = table_info->table_name;
 
     mysql= thd->get_audit_connection();
     if (mysql == NULL)
@@ -5002,7 +5002,8 @@ int mysql_check_create_index(THD *thd)
         source_row = mysql_fetch_row(source_res);
         while (source_row)
         {
-            if (source_row[2] != NULL)
+
+            if (strcasecmp(source_row[3], "1") == 0)
             {
                 key_count++;
             }
