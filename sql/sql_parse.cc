@@ -4877,6 +4877,8 @@ int mysql_check_create_index(THD *thd)
     MYSQL_RES *     source_res;
     char            sql[1024];
     MYSQL_ROW       source_row;
+    uint            key_count;
+    char*           tablename;
 
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
@@ -4890,6 +4892,8 @@ int mysql_check_create_index(THD *thd)
             thd->lex->query_tables->table_name, TRUE);
     if (table_info == NULL)
         DBUG_RETURN(TRUE);
+
+    tablename = table_info->table_name;
 
     mysql= thd->get_audit_connection();
     if (mysql == NULL)
@@ -4915,12 +4919,17 @@ int mysql_check_create_index(THD *thd)
         }
     }
 
+    key_count=0;
+
     while ((key=key_iterator++))
     {
         List_iterator<Key_part_spec> col_it(key->columns);
 
         uint keymaxlen=0;
         mysql_check_index_attribute(thd, key, table_info->table_name);
+
+        key_count++;
+
         while ((col1= col_it++))
         {
             found = 0;
@@ -4997,6 +5006,29 @@ int mysql_check_create_index(THD *thd)
             str_append(&thd->ddl_rollback, tmp_buf);
             str_append(&thd->ddl_rollback, ",");
         }
+    }
+
+    if (!table_info->new_cache)
+    {
+        source_row = mysql_fetch_row(source_res);
+        while (source_row)
+        {
+
+            if (strcasecmp(source_row[3], "1") == 0)
+            {
+                key_count++;
+            }
+
+            source_row = mysql_fetch_row(source_res);
+        }
+        //reset source_res to start
+                mysql_data_seek2(source_res, 0);
+     }
+
+    if (key_count > inception_max_keys)
+    {
+      my_error(ER_TOO_MANY_KEYS,MYF(0), tablename, inception_max_keys);
+          mysql_errmsg_append(thd);
     }
 
     if (!table_info->new_cache)
