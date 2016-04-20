@@ -10117,7 +10117,9 @@ char* mysql_get_alter_table_post_part(
     {
         if (!segcom)
         {
-            if (p[0] == '#')
+            if (p[0] == '#')// # xxx
+                jincom = 1;
+            if (strlen(p) >= 3 && p[0] == '-' && p[1] == '-' && p[2] == ' ') // -- xxxx
                 jincom = 1;
 
             if (jincom == 1)
