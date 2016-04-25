@@ -280,6 +280,7 @@ int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
 int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
 int inception_table_create(THD *thd, String *create_sql);
 int mysql_cache_deinit_task(THD* thd);
+char* inception_get_task_sequence(THD* thd);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -12561,7 +12562,7 @@ int mysql_make_sure_inception_table_exist(THD* thd)
         inception_table_create(thd, &create_sql);
     }
 
-    if (thd->thd_sinfo->task_sequence[0] != '\0')
+    if (inception_get_task_sequence(thd))
     {
         mysql_get_progress_table_sql(&create_sql);
         inception_table_create(thd, &create_sql);
@@ -15483,6 +15484,14 @@ int mysql_execute_and_backup(THD *thd, MYSQL* mysql, sql_cache_node_t* sql_cache
     DBUG_RETURN(false);
 }
 
+char* inception_get_task_sequence(THD* thd)
+{
+    if (thd->thd_sinfo->task_sequence[0] == '\0')
+        return NULL;
+
+    return thd->thd_sinfo->task_sequence;
+}
+
 int
 mysql_execute_progress_update(
     THD* thd, 
@@ -15496,7 +15505,7 @@ mysql_execute_progress_update(
     const char* msg=NULL;
     int seqno;
 
-    if (thd->thd_sinfo->task_sequence[0] == '\0')
+    if (!inception_get_task_sequence(thd))
         return false;
 
     if (sql_cache_node == NULL)
@@ -15513,7 +15522,7 @@ mysql_execute_progress_update(
         sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
             "sequence, status, errcode, message) values('%s', %d, '%s', %d, '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
-            "errcode = values(errcode), message=values(message)", thd->thd_sinfo->task_sequence,
+            "errcode = values(errcode), message=values(message)", inception_get_task_sequence(thd),
             seqno, stage, errrno, errmsg);
     }
     else
@@ -15521,7 +15530,7 @@ mysql_execute_progress_update(
         sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
             "sequence, status, errcode, message) values('%s', %d, '%s', %d, NULL)"
             "on duplicate key update sequence=values(sequence), status=values(status),"
-            "errcode = values(errcode), message=values(message)", thd->thd_sinfo->task_sequence,
+            "errcode = values(errcode), message=values(message)", inception_get_task_sequence(thd),
             seqno, stage, 0);
     }
 
@@ -16053,12 +16062,15 @@ int mysql_cache_deinit_task(THD* thd)
 {
     task_progress_t* task_node;
 
+    if (!inception_get_task_sequence(thd))
+        return false;
+
     DBUG_ENTER("mysql_cache_deinit_task");
     mysql_mutex_lock(&task_mutex);
     task_node = LIST_GET_FIRST(global_task_cache.task_lst);
     while (task_node)
     {
-        if (strcmp(task_node->sequence, thd->thd_sinfo->task_sequence)==0)
+        if (strcmp(task_node->sequence, inception_get_task_sequence(thd))==0)
             break;
 
         task_node = LIST_GET_NEXT(link, task_node);
@@ -16078,12 +16090,15 @@ int mysql_cache_new_task(THD* thd)
 {
     task_progress_t* task_node;
 
+    if (!inception_get_task_sequence(thd))
+        return false;
+
     DBUG_ENTER("mysql_cache_new_task");
     mysql_mutex_lock(&task_mutex);
     task_node = LIST_GET_FIRST(global_task_cache.task_lst);
     while (task_node)
     {
-        if (strcmp(task_node->sequence, thd->thd_sinfo->task_sequence)==0)
+        if (strcmp(task_node->sequence, inception_get_task_sequence(thd))==0)
         {
             //is already executed
             my_error(ER_TASK_ALREADY_EXISTED, MYF(0), task_node->sequence);
@@ -16095,7 +16110,7 @@ int mysql_cache_new_task(THD* thd)
     }
 
     task_node = (task_progress_t*)my_malloc(sizeof(task_progress_t), MY_ZEROFILL);
-    strcpy(task_node->sequence, thd->thd_sinfo->task_sequence);
+    strcpy(task_node->sequence, inception_get_task_sequence(thd));
     LIST_ADD_LAST(link, global_task_cache.task_lst, task_node);
     mysql_mutex_unlock(&task_mutex);
     return false;
