@@ -15496,6 +15496,9 @@ mysql_execute_progress_update(
     const char* msg=NULL;
     int seqno;
 
+    if (thd->thd_sinfo->task_sequence[0] == '\0')
+        return false;
+
     if (sql_cache_node == NULL)
         seqno = 0;
     else
