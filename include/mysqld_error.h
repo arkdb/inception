@@ -130,8 +130,6 @@
 #define ER_INVALID_IDENT                    2627
 #define ER_DB_EXISTS                        2628
 #define ER_SUBSELECT_IN_DML                 2629
-#define ER_DATACENTER_EXISTED               2628
-#define ER_INVALID_TRANSFER_INFO            2629
 #define ER_ADD_INSTANCE_ERROR               2630
 #define ER_INSTANCE_EXISTED                 2631
 #define ER_INVALID_DATACENTER_INFO          2632
@@ -142,7 +140,9 @@
 #define ER_TRANSFER_NOT_EXISTED             2637
 #define ER_MASTER_NODE_FIRST                2638
 #define ER_TASK_ALREADY_EXISTED             2639
-#define ER_ERROR_LAST                       2640
+#define ER_INVALID_TRANSFER_INFO            2640
+#define ER_DATACENTER_EXISTED               2641
+#define ER_ERROR_LAST                       2642
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001
