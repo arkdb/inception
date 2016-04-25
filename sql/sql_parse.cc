@@ -16087,6 +16087,7 @@ int mysql_cache_new_task(THD* thd)
         {
             //is already executed
             my_error(ER_TASK_ALREADY_EXISTED, MYF(0), task_node->sequence);
+            mysql_mutex_unlock(&task_mutex);
             DBUG_RETURN(true);
         }
 
