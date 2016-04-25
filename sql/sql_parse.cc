@@ -4089,7 +4089,6 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
                 char *q= thd->strmake(tmp->query(),length);
                 thd_info->query_string= CSET_STRING(q, q ? length : 0, tmp->query_charset());
             }
-            mysql_mutex_unlock(&tmp->LOCK_thd_data);
             thd_info->start_time= tmp->start_time.tv_sec;
             thread_infos.push_back(thd_info);
         }
