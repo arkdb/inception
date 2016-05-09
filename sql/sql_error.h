@@ -652,10 +652,10 @@ public:
   enum_diagnostics_status status() const { return m_status; }
 
   const char *message() const
-  { DBUG_ASSERT(m_status == DA_ERROR || m_status == DA_OK); return m_message; }
+  { DBUG_ASSERT_V2(m_status == DA_ERROR || m_status == DA_OK); return m_message; }
 
   uint sql_errno() const
-  { DBUG_ASSERT(m_status == DA_ERROR); return m_sql_errno; }
+  { DBUG_ASSERT_V2(m_status == DA_ERROR); return m_sql_errno; }
 
   const char* get_sqlstate() const
   { DBUG_ASSERT(m_status == DA_ERROR); return m_sqlstate; }

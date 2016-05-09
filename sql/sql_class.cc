@@ -974,10 +974,10 @@ THD::THD(bool enable_plugins)
 #ifndef DBUG_OFF
   dbug_sentry=THD_SENTRY_MAGIC;
 #endif
-// #ifndef EMBEDDED_LIBRARY
-//   mysql_audit_init_thd(this);
-//   net.vio=0;
-// #endif
+#ifndef EMBEDDED_LIBRARY
+  // mysql_audit_init_thd(this);
+  net.vio=0;
+#endif
   client_capabilities= 0;                       // minimalistic client
   ull=0;
   system_thread= NON_SYSTEM_THREAD;

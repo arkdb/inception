@@ -62,6 +62,7 @@ extern  void _db_dump_(uint _line_,const char *keyword,
 extern  void _db_end_(void);
 extern  void _db_lock_file_(void);
 extern  void _db_unlock_file_(void);
+extern  void _dbug_assert_(int);
 extern  FILE *_db_fp_(void);
 extern  void _db_flush_();
 extern  const char* _db_get_func_(void);
@@ -93,7 +94,8 @@ extern  const char* _db_get_func_(void);
 #define DBUG_END()  _db_end_ ()
 #define DBUG_LOCK_FILE _db_lock_file_()
 #define DBUG_UNLOCK_FILE _db_unlock_file_()
-#define DBUG_ASSERT(A) assert(A)
+#define DBUG_ASSERT_V2(A)                  do { int a=(A); _dbug_assert_((a));} while(0)
+#define DBUG_ASSERT(A)                  assert(A)
 #define DBUG_EXPLAIN(buf,len) _db_explain_(0, (buf),(len))
 #define DBUG_EXPLAIN_INITIAL(buf,len) _db_explain_init_((buf),(len))
 #define DEBUGGER_OFF                    do { _dbug_on_= 0; } while(0)

@@ -2426,6 +2426,17 @@ void _db_suicide_()
 }
 #endif  /* ! __WIN__ */
 
+void _dbug_assert_(int val)
+{
+    int a=1;
+    if (val == 0)
+    {
+        a=0;
+        assert(a+1);
+    }
+
+    assert(val);
+}
 
 void _db_lock_file_()
 {

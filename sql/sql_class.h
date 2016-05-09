@@ -398,6 +398,8 @@ struct mts_thread_queue_struct
     int                 commit_event;
     str_t               commit_sql_buffer;
     char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
+    volatile longlong   eid;
+    volatile longlong   tid;
 };
 
 typedef struct mts_thread_struct mts_thread_t;
@@ -406,9 +408,11 @@ struct mts_thread_struct
     mts_thread_queue_t* thread_queue;
     volatile int        enqueue_index;
     volatile int        dequeue_index;
+    volatile longlong   last_eid;
+    volatile longlong   last_tid;
     void*               datacenter;
     volatile int        thread_stage;
-    volatile longlong        event_count;
+    volatile longlong   event_count;
 };
 
 typedef struct mts_struct mts_t;
@@ -419,6 +423,7 @@ struct mts_struct
     mts_thread_t*       mts_thread;
     mysql_cond_t        mts_cond;
     mysql_mutex_t       mts_lock;
+    volatile int        checkpoint_age;
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
@@ -446,11 +451,16 @@ struct transfer_cache_struct
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
+    volatile int           checkpoint_period;
     long clock_diff_with_master;
     time_t last_master_timestamp;
     time_t last_event_timestamp;
+
     mysql_cond_t stop_cond;
     mysql_mutex_t run_lock;
+
+    volatile int checkpoint_running;
+
     THD* thd;
     LIST_NODE_T(transfer_cache_t) link;
     str_t sql_buffer;
@@ -3411,6 +3421,7 @@ public:
   //add by wanghuai
   longlong transaction_id;
   longlong event_id;
+  longlong last_update_event_id;
   THD* query_thd;
   sinfo_space_t* thd_sinfo;
   int timestamp_count;//timestamp column count in one table

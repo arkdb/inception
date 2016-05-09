@@ -4248,7 +4248,7 @@ inception_transfer_load_datacenter(
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res = mysql_store_result(mysql)) == NULL)
     {
-    	thd->close_all_connections();
+    	  thd->close_all_connections();
         return NULL;
     }
 
@@ -4257,7 +4257,7 @@ inception_transfer_load_datacenter(
     if (source_res->row_count != 1)
     {
         mysql_free_result(source_res);
-    	thd->close_all_connections();
+    	  thd->close_all_connections();
         return NULL;
     }
 
@@ -4291,6 +4291,8 @@ inception_transfer_load_datacenter(
     strcpy(datacenter->instance_name, instance_name);
     str_init(&datacenter->errmsg);
     datacenter->stop_time = NULL;
+    //default 50ms
+    datacenter->checkpoint_period = 50;
     LIST_INIT(datacenter->slave_lst);
     if (need_lock)
         mysql_mutex_lock(&transfer_mutex); 
@@ -4306,12 +4308,12 @@ inception_transfer_load_datacenter(
         instance_role in ('slave')", datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
-    	thd->close_all_connections();
+    	  thd->close_all_connections();
         return NULL;
     }
     if ((source_res = mysql_store_result(mysql)) == NULL)
     {
-    	thd->close_all_connections();
+    	  thd->close_all_connections();
         return NULL;
     }
     source_row = mysql_fetch_row(source_res);
@@ -4335,8 +4337,11 @@ inception_transfer_load_datacenter(
     }
 
     mysql_free_result(source_res);
-    my_hash_init(&datacenter->table_cache, &my_charset_bin, 
-        4096, 0, 0, (my_hash_get_key)table_cache_get_key, NULL, 0);
+    datacenter->checkpoint_running=false;
+
+    mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
+    mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
+
     thd->close_all_connections();
     return datacenter;
 }
@@ -4469,6 +4474,7 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Trxs_Per_Second", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Master_Gtid_Mode", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Checkpoint_Period", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4558,6 +4564,8 @@ int mysql_master_transfer_status(
     protocol->store(osc_percent_node->eps);
     protocol->store(osc_percent_node->tps);
     protocol->store(osc_percent_node->gtid_on ? "ON":"OFF", system_charset_info);
+    sprintf(tmp, "%d(ms)", osc_percent_node->checkpoint_period);
+    protocol->store(tmp, system_charset_info);
     mysql_mutex_unlock(&transfer_mutex);
 
     protocol->write();
@@ -5245,6 +5253,38 @@ int inception_transfer_instance_table_create(
         }
     }
 
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_checkpoint");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "id bigint unsigned not null comment 'eid', ");
+    create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'tid') ");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 "
+        "comment 'checkpoint sequence, before which are all avialable'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
+    }
+    else
+    {
+        //insert the init data when create the table first
+        str_truncate(create_sql, str_get_len(create_sql));
+        create_sql = str_append(create_sql, "INSERT INTO ");
+        sprintf (tmp, "`%s`.`%s` values(0, 0)", datacenter, "transfer_checkpoint");
+        create_sql = str_append(create_sql, tmp);
+        if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+        {
+            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
+    }
+
     thd->close_all_connections();
     return false;
 }
@@ -5516,7 +5556,7 @@ int inception_get_table_do_ignore(
         {
             thd->clear_error();
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), "Connection the master failed");
-    	    thd->close_all_connections();
+    	      thd->close_all_connections();
             return INCEPTION_DO_UNKNOWN;
         }
 
@@ -5528,7 +5568,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-    	    	thd->close_all_connections();
+    	    	    thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
             datacenter->doempty = atoi(mysql_fetch_row(source_res)[0]) > 0 ? 0:1;
@@ -5543,7 +5583,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-    	    	thd->close_all_connections();
+    	    	    thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
 
@@ -5562,7 +5602,7 @@ int inception_get_table_do_ignore(
                 (source_res = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
-    	    	thd->close_all_connections();
+    	    	    thd->close_all_connections();
                 return INCEPTION_DO_UNKNOWN;
             }
             if (source_res->row_count > 0)
@@ -5978,7 +6018,6 @@ inception_mts_get_sql_buffer(
     datacenter->thread_stage = transfer_enqueue_reserve;
     mts = datacenter->mts;
 
-
     index = inception_mts_get_hash_value(datacenter, table_info, commit_flag);
     if (!commit_flag)
     {
@@ -6000,6 +6039,9 @@ retry:
         datacenter->current_element = mts_queue;
         datacenter->current_thread = mts_thread;
         mts_thread->enqueue_index = (enqueue_index + 1) % datacenter->queue_length;
+        mysql_mutex_lock(&mts->mts_lock);
+        mts->checkpoint_age += 1; 
+        mysql_mutex_unlock(&mts->mts_lock);
         return &mts_queue->sql_buffer;
     }
     else
@@ -6921,6 +6963,111 @@ inception_transfer_write_Xid(
     return false;
 }
 
+int inception_execute_sql_with_retry(
+    THD* thd, 
+    transfer_cache_t* datacenter,
+    char* tmp
+)
+{
+    MYSQL* mysql;
+    int retry_count=0;
+    int errcode;
+
+retry:
+    retry_count++;
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        errcode = ER_INVALID_TRANSFER_INFO;
+        goto error;
+    }
+
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        errcode = ER_INVALID_DATACENTER_INFO;
+        thd->close_all_connections();
+        goto error;
+    }
+
+    return false;
+error:
+    if (retry_count < 3)
+    {
+        sql_print_information("[%s] transfer checkpoint failed(%s), retry: %d", 
+            datacenter->datacenter_name, mysql_error(mysql), retry_count);
+        goto retry;
+    }
+
+    if (errcode == ER_INVALID_TRANSFER_INFO)
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+    else if (errcode == ER_INVALID_DATACENTER_INFO)
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+
+    return true;
+}
+
+int
+inception_transfer_make_checkpoint(
+    THD* thd_thread,
+    transfer_cache_t* datacenter
+)
+{
+    mts_t* mts;
+    int i;
+    mts_thread_t*       mts_thread;
+    mts = datacenter->mts;
+    longlong last_eid = 0;
+    longlong last_tid = 0;
+    THD* thd;
+    thd = datacenter->thd;
+    //current max event id
+    longlong min_eid = thd->event_id;
+    longlong min_tid;
+    char sql[1024];
+
+    //if not started
+    if (thd->event_id == 0)
+        return false;
+
+    for (i = 0; i < datacenter->parallel_workers; i++)
+    {
+        mts_thread = &mts->mts_thread[i];
+        //if not empty and last_eid have been updated
+        if (mts_thread->dequeue_index != mts_thread->enqueue_index &&
+            mts_thread->last_eid != 0)
+        {
+            last_eid = mts_thread->last_eid;
+            last_tid = mts_thread->last_tid;
+            if (min_eid > last_eid)
+            {
+                min_eid = last_eid;
+                min_tid = last_tid;
+            }
+        }
+    }
+
+    //if all threads have no jobs or not mts
+    if (min_eid == thd->event_id)
+    {
+        min_eid = thd->event_id;
+        min_tid = thd->transaction_id;
+    }
+        
+    if (thd->last_update_event_id >= min_eid)
+        return false;
+
+    sprintf(sql, "UPDATE `%s`.`transfer_checkpoint` set id= %lld, tid=%lld", 
+        datacenter->datacenter_name, min_eid, min_tid);
+    if (inception_execute_sql_with_retry(thd_thread, datacenter, sql))
+        return true;
+
+    mysql_mutex_lock(&mts->mts_lock);
+    thd->last_update_event_id = min_eid;
+    mts->checkpoint_age = 0;
+    mysql_mutex_unlock(&mts->mts_lock);
+    return false;
+}
+
 int inception_transfer_binlog_process(
     Master_info* mi,
     Log_event* ev,
@@ -6982,6 +7129,7 @@ int inception_transfer_binlog_process(
     default:
         break;
     }
+
 
     DBUG_RETURN(err);
 }
@@ -7308,12 +7456,48 @@ pthread_handler_t inception_mts_thread(void* arg)
         mts_thread->thread_stage = transfer_mts_dequeue;
         mysql_mutex_lock(&element->element_lock);
         element->valid = false;
+        mts_thread->last_eid = element->eid;
+        mts_thread->last_tid = element->tid;
         mysql_mutex_unlock(&element->element_lock);
+
         mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % datacenter->queue_length;
     }
 
     mts_thread->thread_stage = transfer_mts_stopped;
-    thd->close_all_connections();
+    delete thd;
+    my_thread_end();
+    pthread_exit(0);
+    return NULL;
+}
+
+pthread_handler_t inception_transfer_checkpoint(void* arg)
+{
+    THD *thd= NULL;
+    transfer_cache_t* datacenter;
+    struct timespec abstime;
+
+    my_thread_init();
+    thd= new THD;
+    thd->thread_stack= (char*) &thd;
+
+    datacenter = (transfer_cache_t*)arg;
+    setup_connection_thread_globals(thd);
+    datacenter->checkpoint_running = true;
+
+    while (datacenter->transfer_on && !inception_transfer_killed(datacenter->thd, datacenter))
+    {
+        set_timespec_nsec(abstime, datacenter->checkpoint_period* 1000000ULL);
+        mysql_mutex_lock(&datacenter->thd->sleep_lock);
+        mysql_cond_timedwait(&datacenter->thd->sleep_cond, &datacenter->thd->sleep_lock, &abstime);
+        mysql_mutex_unlock(&datacenter->thd->sleep_lock);
+
+        if (datacenter->mts && datacenter->mts->checkpoint_age > 0)
+            inception_transfer_make_checkpoint(thd, datacenter);
+    }
+
+    sql_print_information("[%s] Checkpoint Thread Exited", datacenter->datacenter_name);
+    datacenter->checkpoint_running = false;
+    delete thd;
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7322,7 +7506,6 @@ pthread_handler_t inception_mts_thread(void* arg)
 pthread_handler_t inception_transfer_delete1(void* arg)
 {
     THD *thd= NULL;
-    // datacenter_t* datacenter;
     transfer_cache_t* datacenter;
     MYSQL* mysql = NULL;
     char sql[1024];
@@ -7362,7 +7545,7 @@ retry:
             sleep(2);
     }
 
-    thd->close_all_connections();
+    delete thd;
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7371,7 +7554,6 @@ retry:
 pthread_handler_t inception_transfer_delete2(void* arg)
 {
     THD *thd= NULL;
-    // datacenter_t* datacenter;
     transfer_cache_t* datacenter;
     MYSQL* mysql = NULL;
     char sql[1024];
@@ -7411,7 +7593,7 @@ retry:
             sleep(2);
     }
 
-    thd->close_all_connections();
+    delete thd;
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7530,6 +7712,8 @@ int inception_create_mts(
                 sizeof(mts_thread_queue_t)*datacenter->queue_length, MY_ZEROFILL);
             mts_thread->dequeue_index = 0;
             mts_thread->enqueue_index = 0;
+            mts_thread->last_tid = 0;
+            mts_thread->last_eid = 0;
             mts_thread->datacenter = datacenter;
             mts_thread->thread_stage = transfer_mts_not_start;
             for (j = 0; j < datacenter->queue_length; j++)
@@ -7586,9 +7770,6 @@ pthread_handler_t inception_transfer_thread(void* arg)
     mi->datacenter = datacenter;
     pthread_detach_this_thread();
     mi->info_thd = thd;
-    mysql_mutex_lock(&LOCK_thread_count);
-    // add_global_thread(thd);
-    mysql_mutex_unlock(&LOCK_thread_count);
 
     setup_connection_thread_globals(thd);
     inception_init_slave_thread(thd);
@@ -7600,8 +7781,6 @@ pthread_handler_t inception_transfer_thread(void* arg)
     binlog_position = datacenter->binlog_position;
     str_truncate(&datacenter->errmsg, str_get_len(&datacenter->errmsg));
     datacenter->thd = thd;
-    mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
-    mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
     datacenter->abort_slave = false;
     datacenter->transfer_on = 1;
     datacenter->start_time = time(0);
@@ -7609,12 +7788,16 @@ pthread_handler_t inception_transfer_thread(void* arg)
     datacenter->events_count = 0;
     datacenter->current_element = NULL;
     datacenter->mts = NULL;
+    my_hash_init(&datacenter->table_cache, &my_charset_bin, 
+        4096, 0, 0, (my_hash_get_key)table_cache_get_key, NULL, 0);
 
     inception_transfer_fetch_epoch(datacenter);
     sql_print_information("[%s] transfer started, start position: %s : %d", 
         datacenter->datacenter_name, binlog_file, binlog_position);
 
     if (inception_create_mts(datacenter) || 
+        mysql_thread_create(0, &threadid, &connection_attrib,
+        inception_transfer_checkpoint, (void*)datacenter) ||
         mysql_thread_create(0, &threadid, &connection_attrib,
         inception_transfer_delete1, (void*)datacenter) ||
         mysql_thread_create(0, &threadid, &connection_attrib,
@@ -7670,18 +7853,18 @@ reconnect:
     while(!inception_transfer_killed(thd, datacenter))
     {
         ulong event_len;
-  	time_t last_master_timestamp;
+  	    time_t last_master_timestamp;
 
         datacenter->thread_stage = transfer_wait_master_send;
 
-	//save the last_master_timestamp, for read event
-	last_master_timestamp = datacenter->last_master_timestamp;
+	      //save the last_master_timestamp, for read event
+	      last_master_timestamp = datacenter->last_master_timestamp;
         datacenter->last_master_timestamp = 0;
         if (datacenter->parallel_workers > 0)
             mysql_cond_broadcast(&datacenter->mts->mts_cond);
         event_len = mysql_read_event_for_transfer(mi, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
-	//if new binlog comming, restore the last_master_timestamp
+	      //if new binlog comming, restore the last_master_timestamp
         datacenter->last_master_timestamp = last_master_timestamp;
 
         if (event_len == packet_error)
@@ -7759,20 +7942,21 @@ failover:
     }
 
 error:
+    my_hash_free(&datacenter->table_cache);
     datacenter->thread_stage = transfer_waiting_threads_exit;
+    datacenter->abort_slave = true;
     inception_wait_and_free_mts(datacenter, true);
+
     sql_print_information("[%s] transfer stopped", datacenter->datacenter_name);
     datacenter->thread_stage = transfer_stopped;
-    thd->close_all_connections();
-    thd->release_resources();
     mysql_cond_broadcast(&datacenter->stop_cond);
     skr= my_time(0);
     localtime_r(&skr, &datacenter->stop_time_space);
     datacenter->stop_time = &datacenter->stop_time_space;
+    mysql_free_all_table_definition(thd);
     datacenter->transfer_on = 0;
-    mysql_mutex_lock(&LOCK_thread_count);
-    // remove_global_thread(thd);
-    mysql_mutex_unlock(&LOCK_thread_count);
+    delete mi;
+    delete thd;
     my_thread_end();
     pthread_exit(0);
     return NULL;
@@ -7852,7 +8036,23 @@ retry:
             sleep(1);
             goto retry;
         }
+    }
 
+retry0:
+    if (datacenter->checkpoint_running)
+    {
+        mysql_cond_broadcast(&datacenter->thd->sleep_cond);
+        sleep(1);
+        goto retry0;
+    }
+
+    //last time to checkpoint
+    inception_transfer_make_checkpoint(datacenter->thd, datacenter);
+
+    //free mts
+    for (i = 0; i < datacenter->parallel_workers; i++)
+    {
+        mts_thread = &mts->mts_thread[i];
         for (j = 0; j < datacenter->queue_length && mts_thread->thread_queue; j++)
         {
             element = &mts_thread->thread_queue[j]; 
@@ -12322,6 +12522,8 @@ inception_mts_enqueue(
     mysql_mutex_lock(&element->element_lock);
     element->valid = true;
     element->commit_event = commit_flag;
+    element->eid = datacenter->thd->event_id;
+    element->tid = datacenter->thd->transaction_id;
     mysql_mutex_unlock(&element->element_lock);
     mysql_cond_broadcast(&datacenter->mts->mts_cond);
     return false;
@@ -13385,7 +13587,7 @@ int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev)
         my_free(memory);
     }
 
-    if (mi->table_info && !mi->table_info->have_pk)
+    if (mi->table_info && !mi->table_info->have_pk && mi->datacenter == NULL)
     {
         sql_print_warning("MySQL instance(%s:%d), Table(%s:%s) have no "
             "primary key, omit the backup", mi->thd->thd_sinfo->host, 
