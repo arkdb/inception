@@ -159,6 +159,7 @@ extern void _db_flush_gcov_();
 #define DBUG_LONGJMP(a1) longjmp(a1)
 #define DBUG_DUMP(keyword,a1,a2)        do { } while(0)
 #define DBUG_END()                      do { } while(0)
+#define DBUG_ASSERT_V2(A)               do { } while(0)
 #define DBUG_ASSERT(A)                  do { } while(0)
 #define DBUG_LOCK_FILE                  do { } while(0)
 #define DBUG_FILE (stderr)
