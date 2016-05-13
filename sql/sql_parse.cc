@@ -7534,6 +7534,8 @@ inception_transfer_delete(
     if (source_row != NULL)
         strcpy(minid, source_row[0]);
 
+    mysql_free_result(source_res1);
+
     sprintf(sql, "DELETE FROM `%s`.`%s` where create_time < \
         DATE_SUB(now(), INTERVAL + %d HOUR) and id < %s+20000", 
         datacenter_name, tablename, period, minid);
