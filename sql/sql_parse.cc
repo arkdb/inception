@@ -15905,7 +15905,9 @@ int mysql_sleep(THD* thd)
     {
         struct timespec abstime;
         set_timespec_nsec(abstime, thd->thd_sinfo->sleep_nms * 1000000ULL);
+        mysql_mutex_lock(&thd->sleep_lock);
         mysql_cond_timedwait(&thd->sleep_cond, &thd->sleep_lock, &abstime);
+        mysql_mutex_unlock(&thd->sleep_lock);
     }
 
     return false;
