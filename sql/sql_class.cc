@@ -1127,10 +1127,11 @@ bool THD::init_backup_connection()
   MYSQL *mysql = &backup_conn;
   ulong client_flag= CLIENT_REMEMBER_OPTIONS;
   uint net_timeout= 3600*24;
+  uint connect_timeout= 5;
   bool reconnect= TRUE;
 
   mysql_init(mysql);
-  mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
+  mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &connect_timeout);
   mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
   mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");

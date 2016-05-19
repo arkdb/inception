@@ -8982,6 +8982,33 @@ err:
     return ret;
 }
 
+dbinfo_t*
+mysql_get_db_object(
+    THD *  thd,
+    char*  db_name,
+    int    only_cache
+)
+{
+    dbinfo_t* dbinfo;
+
+    dbinfo = LIST_GET_FIRST(thd->dbcache.dbcache_lst);
+    while (dbinfo != NULL)
+    {
+        if (!strcasecmp(dbinfo->dbname, db_name))
+        {
+            if (only_cache)
+                return dbinfo;
+            if (dbinfo->is_deleted)
+                return NULL;
+            return dbinfo;
+        }
+
+        dbinfo = LIST_GET_NEXT(link, dbinfo);
+    }
+
+    return NULL;
+}
+
 int mysql_check_db_existed(
     THD *  thd,
     char*  db_name
@@ -8996,13 +9023,11 @@ int mysql_check_db_existed(
 
     DBUG_ENTER("mysql_check_db_existed");
 
-    dbinfo = LIST_GET_FIRST(thd->dbcache.dbcache_lst);
-    while (dbinfo != NULL)
+    if ((dbinfo = mysql_get_db_object(thd, db_name, true)) != NULL)
     {
-        if (!strcasecmp(dbinfo->dbname, db_name))
-            DBUG_RETURN(FALSE);
-
-        dbinfo = LIST_GET_NEXT(link, dbinfo);
+        if (dbinfo->is_deleted)
+            DBUG_RETURN(true);
+        DBUG_RETURN(false);
     }
 
     sprintf(desc_sql, "show databases;");
@@ -9028,6 +9053,10 @@ int mysql_check_db_existed(
         if (strcasecmp(source_row[0], db_name) == 0)
         {
             found = TRUE;
+            dbinfo = (dbinfo_t*)my_malloc(sizeof(dbinfo_t), MYF(MY_ZEROFILL));
+            sprintf(dbinfo->dbname, "%s", db_name);
+            dbinfo->is_deleted = 0;
+            LIST_ADD_LAST(link, thd->dbcache.dbcache_lst, dbinfo);
             break;
         }
 
@@ -10578,6 +10607,37 @@ int mysql_set_option_check(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_check_drop_db(THD *thd)
+{
+    dbinfo_t*   dbinfo;
+    char        tmp_buf[256];
+
+    DBUG_ENTER("mysql_check_drop_db");
+
+    if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
+        mysql_add_split_sql_node(thd, thd->lex->name.str, NULL, MYSQLDML, thd->lex->sql_command);
+    }
+
+    if (mysql_check_db_existed(thd, thd->lex->name.str))
+    {
+        my_error(ER_DB_NOT_EXISTED_ERROR, MYF(0), thd->lex->name.str);
+        mysql_errmsg_append(thd);
+    }
+    else
+    {
+        dbinfo = mysql_get_db_object(thd, thd->lex->name.str, true);
+        dbinfo->is_deleted = true;
+    }
+
+    if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE )
+    {
+        sprintf(tmp_buf, "CREATE DATABASE `%s`;", dbinfo->dbname);
+        str_append(&thd->ddl_rollback, tmp_buf);
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
 int mysql_check_create_db(THD *thd)
 {
     dbinfo_t*   dbinfo;
@@ -10606,9 +10666,18 @@ int mysql_check_create_db(THD *thd)
         mysql_errmsg_append(thd);
     }
 
-    dbinfo = (dbinfo_t*)my_malloc(sizeof(dbinfo_t), MYF(MY_ZEROFILL));
-    sprintf(dbinfo->dbname, "%s", thd->lex->name.str);
-    LIST_ADD_LAST(link, thd->dbcache.dbcache_lst, dbinfo);
+    dbinfo = mysql_get_db_object(thd, thd->lex->name.str, true);
+    if (dbinfo)
+    {
+        dbinfo->is_deleted = 0;
+    }
+    else
+    {
+        dbinfo = (dbinfo_t*)my_malloc(sizeof(dbinfo_t), MYF(MY_ZEROFILL));
+        sprintf(dbinfo->dbname, "%s", thd->lex->name.str);
+        dbinfo->is_deleted = 0;
+        LIST_ADD_LAST(link, thd->dbcache.dbcache_lst, dbinfo);
+    }
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE )
     {
@@ -12130,6 +12199,9 @@ int mysql_check_command(THD *thd)
 
     case SQLCOM_CREATE_DB:
         err = mysql_check_create_db(thd);
+        break;
+    case SQLCOM_DROP_DB:
+        err = mysql_check_drop_db(thd);
         break;
 
     case SQLCOM_INSERT:
@@ -15789,6 +15861,7 @@ int mysql_remote_execute_command(
         case SQLCOM_SET_OPTION:
         case SQLCOM_TRUNCATE:
         case SQLCOM_CREATE_DB:
+        case SQLCOM_DROP_DB:
             thd->current_execute = sql_cache_node;
             err = mysql_execute_statement(thd, mysql,
                     sql_cache_node->sql_statement, sql_cache_node);

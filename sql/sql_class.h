@@ -553,6 +553,7 @@ typedef struct dbinfo_struct dbinfo_t;
 struct dbinfo_struct
 {
     char        dbname[NAME_CHAR_LEN];
+    int         is_deleted;
     LIST_NODE_T(dbinfo_t) link;
 };
 
