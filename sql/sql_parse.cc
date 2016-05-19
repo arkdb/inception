@@ -5572,6 +5572,7 @@ int inception_get_table_do_ignore(
                 return INCEPTION_DO_UNKNOWN;
             }
             datacenter->doempty = atoi(mysql_fetch_row(source_res)[0]) > 0 ? 0:1;
+            mysql_free_result(source_res);
         }
 
         if (!datacenter->doempty)
@@ -13496,6 +13497,7 @@ int mysql_get_master_version(MYSQL* mysql, Master_info* mi)
         mysql_mutex_lock(&mi->data_lock);
         mi->clock_diff_with_master= (long) (time((time_t*) 0) - strtoul(master_row[0], 0, 10));
         mysql_mutex_unlock(&mi->data_lock);
+        mysql_free_result(master_res);
     }
     else
     {
@@ -15857,7 +15859,8 @@ int mysql_execute_all_statement(THD* thd)
         sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
     }
 
-    mysql_execute_progress_update(thd, (char*)"DONE", NULL);
+    if (!sql_cache_node)
+        mysql_execute_progress_update(thd, (char*)"DONE", NULL);
     return FALSE;
 }
 
