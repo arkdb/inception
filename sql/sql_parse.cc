@@ -9465,6 +9465,7 @@ int mysql_generate_backup_sql_by_record_for_update_after(
     backup_sql->append(tmp_buf);
 
     backup_sql->append(");");
+    my_free(dupcharfield);
 
     DBUG_RETURN(false);
 }
