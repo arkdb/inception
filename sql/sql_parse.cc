@@ -119,6 +119,26 @@ using std::min;
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
+
+static ulong start_timer(void)
+{
+#if defined(__WIN__)
+    return clock();
+#else
+    struct tms tms_tmp;
+    return times(&tms_tmp);
+#endif
+}
+
 /**
 @defgroup Runtime_Environment Runtime Environment
 */
@@ -4157,13 +4177,14 @@ int mysql_execute_inception_osc_processlist(THD* thd)
     List<Item>    field_list;
     Protocol *    protocol= thd->protocol;
 
-    field_list.push_back(new Item_empty_string("DBNAME", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("TABLENAME", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("COMMAND", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Db_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Table_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Command", FN_REFLEN));
     field_list.push_back(new Item_empty_string("SQLSHA1", FN_REFLEN));
-    field_list.push_back(new Item_return_int("PERCENT", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("REMAINTIME", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("INFOMATION", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Percent", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Remain_Time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Information", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Execute_Time", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4182,6 +4203,7 @@ int mysql_execute_inception_osc_processlist(THD* thd)
         protocol->store(osc_percent_node->percent);
         protocol->store(osc_percent_node->remaintime, system_charset_info);
         protocol->store(str_get(osc_percent_node->sql_cache_node->oscoutput), system_charset_info);
+        protocol->store(osc_percent_node->execute_time, system_charset_info);
 
         protocol->write();
 
@@ -15321,8 +15343,11 @@ int mysql_add_new_percent_cache_node(
     strcpy(osc_percent_node->dbname, sql_cache_node->dbname);
     strcpy(osc_percent_node->tablename, sql_cache_node->tablename);
     strcpy(osc_percent_node->remaintime, "");
+    strcpy(osc_percent_node->execute_time, "");
     strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
     osc_percent_node->sql_cache_node = sql_cache_node;
+    osc_percent_node->start_timer = start_timer();
+
     LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
     mysql_mutex_unlock(&osc_mutex);
     DBUG_RETURN(false);
@@ -15371,6 +15396,8 @@ int mysql_analyze_osc_output(
         {
             osc_percent_node->percent = percent;
             strcpy(osc_percent_node->remaintime, timeremain);
+            sprintf(osc_percent_node->execute_time, "%.3f",
+                (double)(start_timer() - osc_percent_node->start_timer) / CLOCKS_PER_SEC);
             break;
         }
 
@@ -15381,9 +15408,11 @@ int mysql_analyze_osc_output(
     {
         osc_percent_node = (osc_percent_cache_t*)my_malloc(sizeof(osc_percent_cache_t), MY_ZEROFILL);
         osc_percent_node->percent = percent;
+        osc_percent_node->start_timer = start_timer();
         strcpy(osc_percent_node->dbname, sql_cache_node->dbname);
         strcpy(osc_percent_node->tablename, sql_cache_node->tablename);
         strcpy(osc_percent_node->remaintime, timeremain);
+        strcpy(osc_percent_node->execute_time, "");
         strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
         LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
     }
@@ -15639,25 +15668,6 @@ static void print_warnings(
     mysql_free_result(result);
 }
 
-#if defined(__WIN__)
-#include <time.h>
-#else
-#include <sys/times.h>
-#ifdef _SC_CLK_TCK        // For mit-pthreads
-#undef CLOCKS_PER_SEC
-#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
-#endif
-#endif
-
-static ulong start_timer(void)
-{
-#if defined(__WIN__)
-    return clock();
-#else
-    struct tms tms_tmp;
-    return times(&tms_tmp);
-#endif
-}
 
 int mysql_execute_statement(
     THD* thd,

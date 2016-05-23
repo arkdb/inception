@@ -531,6 +531,8 @@ struct osc_percent_cache_struct
     char        dbname[NAME_CHAR_LEN];
     char        tablename[NAME_CHAR_LEN];
     char        remaintime[NAME_CHAR_LEN];
+    char        execute_time[NAME_CHAR_LEN];
+    ulong       start_timer;
     process     *proc;
     volatile int         killed;
     sql_cache_node_t* sql_cache_node;
