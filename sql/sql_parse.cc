@@ -301,6 +301,7 @@ int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
 int inception_table_create(THD *thd, String *create_sql);
 int mysql_cache_deinit_task(THD* thd);
 char* inception_get_task_sequence(THD* thd);
+int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -2325,10 +2326,16 @@ mysql_errmsg_append(
                 thd->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
                 str_init(thd->errmsg);
             }
-            str_append(thd->errmsg, thd->get_stmt_da()->message());
-            str_append(thd->errmsg, "\n");
-            thd->err_level |= mysql_get_err_level_by_errno(thd);
-            thd->check_error_before = TRUE;
+
+            if ((inception_get_type(thd) == INCEPTION_TYPE_PRINT && 
+                mysql_get_err_level_by_errno(thd) == INCEPTION_PARSE) || 
+                inception_get_type(thd) != INCEPTION_TYPE_PRINT)
+            {
+                str_append(thd->errmsg, thd->get_stmt_da()->message());
+                str_append(thd->errmsg, "\n");
+                thd->err_level |= mysql_get_err_level_by_errno(thd);
+                thd->check_error_before = TRUE;
+            }
         }
 
         thd->clear_error();
@@ -4930,12 +4937,13 @@ int mysql_execute_inception_osc_show(THD* thd)
     if (osc_percent_node == NULL)
         DBUG_RETURN(res);
 
-    field_list.push_back(new Item_empty_string("DBNAME", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("TABLENAME", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Db_Name", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Table_Name", FN_REFLEN));
     field_list.push_back(new Item_empty_string("SQLSHA1", FN_REFLEN));
-    field_list.push_back(new Item_return_int("PERCENT", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("REMAINTIME", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("INFOMATION", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Percent", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Remain_Time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Information", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Execute_Time", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4953,6 +4961,7 @@ int mysql_execute_inception_osc_show(THD* thd)
         protocol->store(osc_percent_node->percent);
         protocol->store(osc_percent_node->remaintime, system_charset_info);
         protocol->store(str_get(osc_percent_node->sql_cache_node->oscoutput), system_charset_info);
+        protocol->store(osc_percent_node->execute_time, system_charset_info);
         mysql_mutex_unlock(&osc_mutex);
 
         protocol->write();
@@ -10789,6 +10798,53 @@ int mysql_check_drop_table(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
+int
+mysql_convert_derived_table(
+    THD* thd, 
+    TABLE_LIST* table,
+    check_rt_t* rt,
+    st_select_lex *select_lex
+)
+{
+    table_info_t*  table_info;
+    field_info_t*  field_info;
+    st_select_lex_unit *derived;
+    Item* item;
+    table_rt_t* tablert;
+
+    derived = table->derived;
+
+    SELECT_LEX *last_select= derived->first_select();
+    while (last_select)
+    {
+        table_info = (table_info_t*)malloc(sizeof(table_info_t));
+        memset(table_info, 0, sizeof(table_info_t));
+        LIST_INIT(table_info->field_lst);
+
+        List_iterator<Item> it(last_select->item_list);
+        while ((item= it++))
+        {
+            field_info = (field_info_t*)malloc(sizeof(field_info_t));
+            memset(field_info, 0, sizeof(field_info_t));
+            strcpy(field_info->field_name, (char*)(Item_field*)item->full_name());
+
+            LIST_ADD_LAST(link, table_info->field_lst, field_info);
+        }
+
+        strcpy(table_info->table_name, table->alias); 
+        strcpy(table_info->db_name, table->db); 
+        tablert = (table_rt_t*)my_malloc(sizeof(table_rt_t), MY_ZEROFILL);
+        tablert->table_info = table_info;
+        if (table->alias)
+            strcpy(tablert->alias, table->alias);
+        LIST_ADD_LAST(link, rt->table_rt_lst, tablert);
+
+        last_select= last_select->next_select();
+    }
+
+    return false;
+}
+
 int mysql_print_tables(
     THD* thd, 
     query_print_cache_node_t*   query_node, 
@@ -10803,22 +10859,37 @@ int mysql_print_tables(
     TABLE_LIST* table;
     Item    *join_cond;
     bool have_join_on = false;
+
     if (tables)
     {
         sprintf(tabletype, "\"%s\":[", table_type);
         str_append(print_str, tabletype);
         for (table= tables; table; table= table->next_local)
         {
-            str_append(print_str, "{");
-            str_append(print_str, "\"db\":");
-            sprintf(tablename, "\"%s\",", table->db);
-            str_append(print_str, tablename);
+            if (table->is_view_or_derived())
+            {
+                str_append(print_str, "{");
+                str_append(print_str, "\"type\":\"derived\",");
+                str_append(print_str, "\"table\":");
+                sprintf(tablename, "\"%s\",", table->alias);
+                str_append(print_str, tablename);
+                mysql_print_subselect(thd, query_node, print_str, table->derived->first_select(), false);
+                str_append(print_str, "},");
+            }
+            else
+            {
+                str_append(print_str, "{");
+                str_append(print_str, "\"type\":\"physical\",");
+                str_append(print_str, "\"db\":");
+                sprintf(tablename, "\"%s\",", table->db);
+                str_append(print_str, tablename);
 
-            str_append(print_str, "\"table\":");
-            sprintf(tablename, "\"%s\"", table->table_name);
-            str_append(print_str, tablename);
-            str_append(print_str, "}");
-            str_append(print_str, ",");
+                str_append(print_str, "\"table\":");
+                sprintf(tablename, "\"%s\"", table->table_name);
+                str_append(print_str, tablename);
+                str_append(print_str, "}");
+                str_append(print_str, ",");
+            }
             join_cond = table->join_cond();
             if (join_cond)
                 have_join_on=true;
@@ -10872,8 +10943,9 @@ mysql_load_tables(
     {
         if (table->is_view_or_derived())
         {
-            my_error(ER_SUBSELECT_IN_DML, MYF(0));
-            mysql_errmsg_append(thd);
+            mysql_convert_derived_table(thd, table, rt, select_lex);
+            // my_error(ER_SUBSELECT_IN_DML, MYF(0));
+            // mysql_errmsg_append(thd);
             continue;
         }
         tableinfo = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
