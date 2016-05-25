@@ -6150,7 +6150,7 @@ static int get_options(int *argc_ptr, char ***argv_ptr)
   if (opt_debugging)
   {
     /* Allow break with SIGINT, no core or stack trace */
-    test_flags|= TEST_SIGINT | TEST_NO_STACKTRACE;
+    test_flags|= TEST_SIGINT ;
     test_flags&= ~TEST_CORE_ON_SIGNAL;
   }
   /* Set global MyISAM variables from delay_key_write_options */

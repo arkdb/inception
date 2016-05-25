@@ -5746,8 +5746,8 @@ inception_transfer_table_map(
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
 
     if (!table_info && 
-         strcmp(tab_map_ev->get_table_name(), mi->last_report_table) &&
-         strcmp(tab_map_ev->get_db(), mi->last_report_db))
+         (strcmp(tab_map_ev->get_table_name(), mi->last_report_table) ||
+         strcmp(tab_map_ev->get_db(), mi->last_report_db)))
     {
         sql_print_error("transfer load table failed, db: %s, table: %s", 
 		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
@@ -6661,6 +6661,10 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                     //free the table object
                     inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
+                case SQLCOM_DROP_TABLE:
+                    //free the table object
+                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
+                    break;
                 case SQLCOM_TRUNCATE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
                     break;
@@ -6671,6 +6675,7 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
             if (!err && (optype == SQLCOM_ALTER_TABLE 
                   || optype == SQLCOM_TRUNCATE
                   || optype == SQLCOM_RENAME_TABLE
+                  || optype == SQLCOM_DROP_TABLE
                   || optype == SQLCOM_CREATE_TABLE))
             {
                 mi->datacenter->cbinlog_position = ev->log_pos;
