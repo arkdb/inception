@@ -302,6 +302,7 @@ int inception_table_create(THD *thd, String *create_sql);
 int mysql_cache_deinit_task(THD* thd);
 char* inception_get_task_sequence(THD* thd);
 int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
+void mysql_dup_char( char* src, char* dest, char chr);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -6459,7 +6460,22 @@ int inception_transfer_write_DDL(
                 str_append(sql_buffer, "\",");
                 str_append(sql_buffer, "\"data_type\":");
                 str_append(sql_buffer, "\"");
-                str_append(sql_buffer, field_info->data_type);
+                if (field_info->real_type == MYSQL_TYPE_ENUM ||
+                    field_info->real_type == MYSQL_TYPE_SET ||
+                    field_info->real_type == MYSQL_TYPE_STRING)
+                {
+                    char* dupcharfield;
+                    dupcharfield = (char*)my_malloc(strlen(field_info->data_type) 
+                        * 4 + 1, MY_ZEROFILL);
+                    mysql_dup_char(field_info->data_type, dupcharfield, '\'');
+                    str_append(sql_buffer, dupcharfield);
+                    my_free(dupcharfield);
+                }
+                else
+                {
+                    str_append(sql_buffer, field_info->data_type);
+                }
+
                 str_append(sql_buffer, "\"");
                 str_append(sql_buffer, "}");
 
@@ -7378,6 +7394,8 @@ int inception_mts_execute_retry(
         retry_count++;
         sql_print_information("[%s] MTS thread retry[%d/3]: %s", 
             datacenter->datacenter_name, retry_count, mysql_error(mysql));
+        sql_print_information("[%s] MTS thread ERROR SQL: %s",
+            datacenter->datacenter_name, query);
     }
         
     if (retry_count == 3)

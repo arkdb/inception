@@ -234,7 +234,7 @@ struct field_info_struct
     uint    primary_key;//±Ì æ’‚∏ˆ¡– «≤ª «pk¡–
     uint    nullable;
     uint    auto_increment;
-    char    data_type[NAME_CHAR_LEN];
+    char    data_type[FN_LEN + 1];
     uint    max_length;
     enum enum_field_types real_type;
     uint    pack_flag;
