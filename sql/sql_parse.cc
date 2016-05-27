@@ -11137,7 +11137,7 @@ int mysql_print_select_condition(
     {
         str_append(print_str, ",");
         str_append(print_str, "\"GroupBy\":[");
-        for (order= thd->lex->select_lex.group_list.first ; order; order= order->next)
+        for (order= select_lex->group_list.first ; order; order= order->next)
         {
             print_item(thd, query_node, print_str, *order->item, select_lex);
             str_append(print_str, ",");
@@ -11158,7 +11158,7 @@ int mysql_print_select_condition(
     {
         str_append(print_str, ",");
         str_append(print_str, "\"OrderBy\":[");
-        for (order= thd->lex->select_lex.order_list.first ; order; order= order->next)
+        for (order= select_lex->order_list.first ; order; order= order->next)
         {
             print_item(thd, query_node, print_str, *order->item, select_lex);
             str_append(print_str, ",");

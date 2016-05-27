@@ -142,7 +142,8 @@
 #define ER_TASK_ALREADY_EXISTED             2639
 #define ER_INVALID_TRANSFER_INFO            2640
 #define ER_DATACENTER_EXISTED               2641
-#define ER_ERROR_LAST                       2642
+#define ER_REMOVED_SPACES                   2642
+#define ER_ERROR_LAST                       2643
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001
@@ -596,7 +597,7 @@
 #define ER_NON_GROUPING_FIELD_USED 1463
 #define ER_TABLE_CANT_HANDLE_SPKEYS 1464
 #define ER_NO_TRIGGERS_ON_SYSTEM_SCHEMA 1465
-#define ER_REMOVED_SPACES 1466
+// #define ER_REMOVED_SPACES 1466
 #define ER_AUTOINC_READ_FAILED 1467
 // #define ER_USERNAME 1468
 // #define ER_HOSTNAME 1469

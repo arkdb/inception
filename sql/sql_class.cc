@@ -1058,6 +1058,7 @@ THD::THD(bool enable_plugins)
   mysql_mutex_init(NULL, &sleep_lock, MY_MUTEX_INIT_FAST);
   mysql_cond_init(NULL, &sleep_cond, NULL);
 
+  last_update_event_id = 0;
   this->get_stmt_da()->set_overwrite_status(true);
   variables.long_query_time =10000000;
 #ifndef DBUG_OFF
