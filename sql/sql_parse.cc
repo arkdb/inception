@@ -11677,9 +11677,9 @@ int mysql_print_select(THD* thd)
     if (mysql_print_subselect(thd, query_node, query_node->query_tree, select_lex, true))
         return true;
     str_append(query_node->query_tree, "}");
-    if (thd->errmsg != NULL)
+    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
-        query_node->errlevel= 1;
+        query_node->errlevel= INCEPTION_PARSE;
         query_node->errmsg = thd->errmsg;
         thd->errmsg = NULL;
     }
@@ -11767,9 +11767,9 @@ int mysql_print_insert(THD* thd)
     }
 
     str_append(query_node->query_tree, "}");
-    if (thd->errmsg != NULL)
+    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
-        query_node->errlevel= 1;
+        query_node->errlevel= INCEPTION_PARSE;
         query_node->errmsg = thd->errmsg;
         thd->errmsg = NULL;
     }
@@ -11818,9 +11818,9 @@ int mysql_print_delete(THD* thd)
     // }
 
     str_append(query_node->query_tree, "}");
-    if (thd->errmsg != NULL)
+    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
-        query_node->errlevel= 1;
+        query_node->errlevel= INCEPTION_PARSE;
         query_node->errmsg = thd->errmsg;
         thd->errmsg = NULL;
     }
@@ -11878,9 +11878,9 @@ int mysql_print_update(THD* thd)
     mysql_print_select_condition(thd, query_node, query_node->query_tree, select_lex);
 
     str_append(query_node->query_tree, "}");
-    if (thd->errmsg != NULL)
+    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
-        query_node->errlevel= 1;
+        query_node->errlevel= INCEPTION_PARSE;
         query_node->errmsg = thd->errmsg;
         thd->errmsg = NULL;
     }
@@ -11905,9 +11905,9 @@ int mysql_print_not_support(THD* thd)
 
     my_error(ER_NOT_SUPPORTED_YET, MYF(0));
     mysql_errmsg_append(thd);
-    if (thd->errmsg != NULL)
+    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
-        query_node->errlevel= 1;
+        query_node->errlevel= INCEPTION_PARSE;
         query_node->errmsg = thd->errmsg;
         thd->errmsg = NULL;
     }
