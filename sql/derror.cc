@@ -211,6 +211,7 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_MASTER_NODE_FIRST, "Add master data center node first.");
   SERVER_SETMSG(ER_TASK_ALREADY_EXISTED, "Task with sequence(\'%s\') already existed.");
   SERVER_SETMSG(ER_REMOVED_SPACES, "Leading spaces are removed from name. \'%s\'");
+  SERVER_SETMSG(ER_NET_ERROR_ON_WRITE, "Got an error writing communication packets.");
 
 	/* Register messages for use with my_error(). */
 	if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

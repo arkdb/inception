@@ -8293,7 +8293,7 @@ int inception_transfer_start_replicate(
     //if binlog position is null, then start with 'show master status' position
     //but first, should read the max binlog position from transfer_data, from where
     //to start the replicate first, and then from the show master status;
-    if (source_res1->row_count != 1 || 
+    if (source_res1->row_count == 1 || 
         datacenter->binlog_file[0] == '\0' || 
         datacenter->binlog_position == 0)
     {

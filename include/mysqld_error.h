@@ -143,7 +143,8 @@
 #define ER_INVALID_TRANSFER_INFO            2640
 #define ER_DATACENTER_EXISTED               2641
 #define ER_REMOVED_SPACES                   2642
-#define ER_ERROR_LAST                       2643
+#define ER_NET_ERROR_ON_WRITE               2643
+#define ER_ERROR_LAST                       2644
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001
@@ -294,7 +295,7 @@
 #define ER_NET_UNCOMPRESS_ERROR 1157
 // #define ER_NET_READ_ERROR 1158
 // #define ER_NET_READ_INTERRUPTED 1159
-#define ER_NET_ERROR_ON_WRITE 1160
+// #define ER_NET_ERROR_ON_WRITE 1160
 #define ER_NET_WRITE_INTERRUPTED 1161
 #define ER_TOO_LONG_STRING 1162
 #define ER_TABLE_CANT_HANDLE_BLOB 1163
