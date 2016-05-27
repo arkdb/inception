@@ -4069,10 +4069,12 @@ int mysql_execute_inception_osc_show(THD* thd)
 
         osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
     }
-    mysql_mutex_unlock(&osc_mutex);
 
     if (osc_percent_node == NULL)
+    {
+        mysql_mutex_unlock(&osc_mutex);
         DBUG_RETURN(res);
+    }
 
     field_list.push_back(new Item_empty_string("DBNAME", FN_REFLEN));
     field_list.push_back(new Item_empty_string("TABLENAME", FN_REFLEN));
@@ -4084,12 +4086,12 @@ int mysql_execute_inception_osc_show(THD* thd)
     if (protocol->send_result_set_metadata(&field_list,
           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     {
+        mysql_mutex_unlock(&osc_mutex);
         DBUG_RETURN(true);
     }
 
     if (osc_percent_node)
     {
-        mysql_mutex_lock(&osc_mutex); 
         protocol->prepare_for_resend();
         protocol->store(osc_percent_node->dbname, system_charset_info);
         protocol->store(osc_percent_node->tablename, system_charset_info);
@@ -4097,11 +4099,11 @@ int mysql_execute_inception_osc_show(THD* thd)
         protocol->store(osc_percent_node->percent);
         protocol->store(osc_percent_node->remaintime, system_charset_info);
         protocol->store(str_get(osc_percent_node->sql_cache_node->oscoutput), system_charset_info);
-        mysql_mutex_unlock(&osc_mutex);
 
         protocol->write();
     }
 
+    mysql_mutex_unlock(&osc_mutex);
     my_eof(thd);
     DBUG_RETURN(res);
 }
