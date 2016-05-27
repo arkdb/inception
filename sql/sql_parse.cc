@@ -4370,6 +4370,7 @@ inception_transfer_load_datacenter(
     datacenter->checkpoint_running=false;
 
     mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
+    mysql_mutex_init(NULL, &datacenter->checkpoint_lock, MY_MUTEX_INIT_FAST);
     mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
 
     thd->close_all_connections();
@@ -6046,7 +6047,13 @@ inception_mts_get_sql_buffer(
     int enqueue_index;
 
     if (datacenter->parallel_workers == 0)
+    {
+        mysql_mutex_lock(&datacenter->checkpoint_lock);
+        //only for placeholder
+        datacenter->checkpoint_age += 1; 
+        mysql_mutex_unlock(&datacenter->checkpoint_lock);
         return &datacenter->sql_buffer;
+    }
 
     datacenter->thread_stage = transfer_enqueue_reserve;
     mts = datacenter->mts;
@@ -6072,9 +6079,9 @@ retry:
         datacenter->current_element = mts_queue;
         datacenter->current_thread = mts_thread;
         mts_thread->enqueue_index = (enqueue_index + 1) % datacenter->queue_length;
-        mysql_mutex_lock(&mts->mts_lock);
-        mts->checkpoint_age += 1; 
-        mysql_mutex_unlock(&mts->mts_lock);
+        mysql_mutex_lock(&datacenter->checkpoint_lock);
+        datacenter->checkpoint_age += 1; 
+        mysql_mutex_unlock(&datacenter->checkpoint_lock);
         return &mts_queue->sql_buffer;
     }
     else
@@ -7114,10 +7121,10 @@ inception_transfer_make_checkpoint(
     if (inception_execute_sql_with_retry(thd_thread, datacenter, sql))
         return true;
 
-    mysql_mutex_lock(&mts->mts_lock);
+    mysql_mutex_lock(&datacenter->checkpoint_lock);
     thd->last_update_event_id = min_eid;
-    mts->checkpoint_age = 0;
-    mysql_mutex_unlock(&mts->mts_lock);
+    datacenter->checkpoint_age = 0;
+    mysql_mutex_unlock(&datacenter->checkpoint_lock);
     return false;
 }
 
@@ -7546,7 +7553,7 @@ pthread_handler_t inception_transfer_checkpoint(void* arg)
         mysql_cond_timedwait(&datacenter->thd->sleep_cond, &datacenter->thd->sleep_lock, &abstime);
         mysql_mutex_unlock(&datacenter->thd->sleep_lock);
 
-        if (datacenter->mts && datacenter->mts->checkpoint_age > 0)
+        if (datacenter->checkpoint_age > 0)
             inception_transfer_make_checkpoint(thd, datacenter);
     }
 
@@ -8075,7 +8082,11 @@ inception_free_mts(
     mts_thread_queue_t* element;
 
     if (datacenter->parallel_workers == 0)
+    {
+        //last time to checkpoint
+        inception_transfer_make_checkpoint(datacenter->thd, datacenter);
         return false;
+    }
 
     mts = datacenter->mts;
     for (i = 0; i < datacenter->parallel_workers; i++)
@@ -8134,7 +8145,11 @@ inception_wait_and_free_mts(
 )
 {
     if (datacenter->parallel_workers == 0)
+    {
+        //last time to checkpoint
+        inception_transfer_make_checkpoint(datacenter->thd, datacenter);
         return false;
+    }
 
     //notify the mts thread to exit
     if (need_lock)
@@ -8235,6 +8250,7 @@ int inception_transfer_start_replicate(
     MYSQL_RES *     source_res1=NULL;
     MYSQL_ROW       source_row;
     transfer_cache_t* datacenter;
+    MYSQL* mysql;
 
     mysql_mutex_lock(&transfer_mutex);
     datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
@@ -8258,13 +8274,30 @@ int inception_transfer_start_replicate(
         strcpy(datacenter->password, password);
     }
 
+    //在多线程情况下，checkpoint点与当前复制的最大ID如果不匹配的话，说明
+    //复制数据存在不一致的问题，那此时就强制选择最小ID位置开始复制
+    //即拿datacenter->binlog_file信息不为空。
+    sprintf(tmp, "select id,tid from `%s`.transfer_data where id > "
+        "(select id from `%s`.transfer_checkpoint limit 1) limit 1;", datacenter_name,
+        datacenter_name);
+    mysql = thd->get_transfer_connection();
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
+        mysql_mutex_unlock(&transfer_mutex);
+        thd->close_all_connections();
+        return true;
+    }
+
     //if binlog position is null, then start with 'show master status' position
     //but first, should read the max binlog position from transfer_data, from where
     //to start the replicate first, and then from the show master status;
-    if (datacenter->binlog_file[0] == '\0' || datacenter->binlog_position == 0)
+    if (source_res1->row_count != 1 || 
+        datacenter->binlog_file[0] == '\0' || 
+        datacenter->binlog_position == 0)
     {
         MYSQL mysql_space;
-        MYSQL* mysql;
             
         mysql = thd->get_transfer_connection();
         sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
@@ -8272,7 +8305,8 @@ int inception_transfer_start_replicate(
               `%s`.master_positions where id=(select max(id) from \
                `%s`.master_positions) and id>0) and id > 0 order by id limit 1;",
             datacenter_name, datacenter_name, datacenter_name);
-        if (mysql_real_query(mysql, tmp, strlen(tmp)))
+        if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+            (source_res1 = mysql_store_result(mysql)) == NULL)
         {
             my_error(ER_TRANSFER_INTERRUPT_DC, MYF(0), mysql_error(mysql));
             mysql_mutex_unlock(&transfer_mutex);
@@ -8280,8 +8314,7 @@ int inception_transfer_start_replicate(
             return true;
         }
 
-        if ((source_res1 = mysql_store_result(mysql)) == NULL ||
-            source_res1->row_count != 1)
+        if (source_res1->row_count != 1)
         {
             if (source_res1 && source_res1->row_count != 1)
                 mysql_free_result(source_res1);
@@ -8298,7 +8331,8 @@ int inception_transfer_start_replicate(
                 return true;
             }
             sprintf (tmp, "SHOW MASTER STATUS");
-            if (mysql_real_query(mysql, tmp, strlen(tmp)))
+            if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+               (source_res1 = mysql_store_result(mysql)) == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
                 mysql_mutex_unlock(&transfer_mutex);
@@ -8306,13 +8340,6 @@ int inception_transfer_start_replicate(
                 return true;
             }
 
-            if ((source_res1 = mysql_store_result(mysql)) == NULL)
-            {
-                my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
-                mysql_mutex_unlock(&transfer_mutex);
-                thd->close_all_connections();
-                return true;
-            }
             mysql_close(mysql);
         }
             

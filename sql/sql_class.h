@@ -423,7 +423,6 @@ struct mts_struct
     mts_thread_t*       mts_thread;
     mysql_cond_t        mts_cond;
     mysql_mutex_t       mts_lock;
-    volatile int        checkpoint_age;
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
@@ -458,6 +457,7 @@ struct transfer_cache_struct
 
     mysql_cond_t stop_cond;
     mysql_mutex_t run_lock;
+    mysql_mutex_t checkpoint_lock;
 
     volatile int checkpoint_running;
 
@@ -486,6 +486,7 @@ struct transfer_cache_struct
     //is not eq with last, then event_seq_in_second=0, else event_seq_in_second+=1
     time_t last_event_time;
 
+    volatile int        checkpoint_age;
     mts_t* mts;
 
     char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
