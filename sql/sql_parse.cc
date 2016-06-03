@@ -2322,16 +2322,16 @@ mysql_errmsg_append(
     {
         if (mysql_check_inception_variables(thd))
         {
-            if (thd->errmsg == NULL)
-            {
-                thd->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-                str_init(thd->errmsg);
-            }
-
             if ((inception_get_type(thd) == INCEPTION_TYPE_PRINT && 
                 mysql_get_err_level_by_errno(thd) == INCEPTION_PARSE) || 
                 inception_get_type(thd) != INCEPTION_TYPE_PRINT)
             {
+                if (thd->errmsg == NULL)
+                {
+                    thd->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+                    str_init(thd->errmsg);
+                }
+
                 str_append(thd->errmsg, thd->get_stmt_da()->message());
                 str_append(thd->errmsg, "\n");
                 thd->err_level |= mysql_get_err_level_by_errno(thd);
@@ -10888,6 +10888,7 @@ mysql_convert_derived_table(
         strcpy(table_info->db_name, table->db); 
         tablert = (table_rt_t*)my_malloc(sizeof(table_rt_t), MY_ZEROFILL);
         tablert->table_info = table_info;
+        tablert->derived = true;
         if (table->alias)
             strcpy(tablert->alias, table->alias);
         LIST_ADD_LAST(link, rt->table_rt_lst, tablert);
@@ -16715,6 +16716,8 @@ int mysql_deinit_sql_cache(THD* thd)
             {
                 table_rt_next = LIST_GET_NEXT(link, table_rt);
                 LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                if (table_rt->derived)
+                    mysql_table_info_free(table_rt->table_info);
                 my_free(table_rt);
                 table_rt = table_rt_next;
             }
@@ -16751,6 +16754,8 @@ int mysql_deinit_sql_cache(THD* thd)
             {
                 table_rt_next = LIST_GET_NEXT(link, table_rt);
                 LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                if (table_rt->derived)
+                    mysql_table_info_free(table_rt->table_info);
                 my_free(table_rt);
                 table_rt = table_rt_next;
             }

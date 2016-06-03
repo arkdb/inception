@@ -607,6 +607,7 @@ struct table_rt_struct
 {
     table_info_t*     table_info;
     char              alias[FN_LEN];
+    int               derived;
     
     LIST_NODE_T(table_rt_t)         link;
 };
