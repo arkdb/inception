@@ -8292,6 +8292,7 @@ int inception_transfer_start_replicate(
         return true;
     }
 
+    mysql_free_result(source_res1);
     //if binlog position is null, then start with 'show master status' position
     //but first, should read the max binlog position from transfer_data, from where
     //to start the replicate first, and then from the show master status;
