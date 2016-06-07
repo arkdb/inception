@@ -10879,7 +10879,10 @@ mysql_convert_derived_table(
         {
             field_info = (field_info_t*)malloc(sizeof(field_info_t));
             memset(field_info, 0, sizeof(field_info_t));
-            strcpy(field_info->field_name, (char*)(Item_field*)item->full_name());
+            if (item->item_name.is_set())
+                strcpy(field_info->field_name, (char*)item->item_name.ptr());
+            else
+                strcpy(field_info->field_name, (char*)item->full_name());
 
             LIST_ADD_LAST(link, table_info->field_lst, field_info);
         }
@@ -11115,8 +11118,6 @@ retry:
         {
             strcat(name, field_name);
         }
-        my_error(ER_COLUMN_NOT_EXISTED, MYF(0), name);
-        mysql_errmsg_append(thd);
         return NULL;
     }
 }
@@ -11141,11 +11142,13 @@ int mysql_print_select_condition(
     {
         str_append(print_str, ",");
         str_append(print_str, "\"GroupBy\":[");
+        select_lex->order_group_having = true;
         for (order= select_lex->group_list.first ; order; order= order->next)
         {
             print_item(thd, query_node, print_str, *order->item, select_lex);
             str_append(print_str, ",");
         }
+        select_lex->order_group_having = false;
         str_truncate(print_str, 1);
         str_append(print_str, "]");
     }
@@ -11154,7 +11157,9 @@ int mysql_print_select_condition(
     {
         str_append(print_str, ",");
         str_append(print_str, "\"Having\":[");
+        select_lex->order_group_having = true;
         print_item(thd, query_node, print_str, select_lex->having, select_lex);
+        select_lex->order_group_having = false;
         str_append(print_str, "]");
     }
 
@@ -11162,11 +11167,13 @@ int mysql_print_select_condition(
     {
         str_append(print_str, ",");
         str_append(print_str, "\"OrderBy\":[");
+        select_lex->order_group_having = true;
         for (order= select_lex->order_list.first ; order; order= order->next)
         {
             print_item(thd, query_node, print_str, *order->item, select_lex);
             str_append(print_str, ",");
         }
+        select_lex->order_group_having = false;
         str_truncate(print_str, 1);
         str_append(print_str, "]");
     }
@@ -11362,6 +11369,15 @@ int print_func_item(
             str_append(print_str, "]");
         }
         break;
+    case Item_func::NEG_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            str_append(print_str, "\"func\":\"NEG\",");
+            str_append(print_str, "\"args\":[");
+            print_item(thd, query_node, print_str, left_item, select_lex);
+            str_append(print_str, "]");
+        }
+        break;
     case Item_func::NOT_FUNC:
         {
             Item *left_item= ((Item_func*) item)->arguments()[0];
@@ -11391,18 +11407,21 @@ int print_func_item(
             char funcname[128];
             str_append(print_str, "\"func\":\"OTHERS\",");
             str_append(print_str, "\"name\":");
-            sprintf(funcname, "\"%s\",", ((Item_func*) item)->func_name());
+            sprintf(funcname, "\"%s\"", ((Item_func*) item)->func_name());
             str_append(print_str, funcname);
-            str_append(print_str, "\"args\":[");
-            for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+            if (((Item_func*) item)->argument_count() > 0)
             {
-                Item *right_item= ((Item_func*) item)->arguments()[i];
-                print_item(thd, query_node, print_str, right_item, select_lex);
                 str_append(print_str, ",");
+                str_append(print_str, "\"args\":[");
+                for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+                {
+                    Item *right_item= ((Item_func*) item)->arguments()[i];
+                    print_item(thd, query_node, print_str, right_item, select_lex);
+                    str_append(print_str, ",");
+                }
+                str_truncate(print_str, 1);
+                str_append(print_str, "]");
             }
-
-            str_truncate(print_str, 1);
-            str_append(print_str, "]");
         }
         break;
 
@@ -11506,6 +11525,7 @@ print_item(
             str_append(print_str, "}");
         }
         break;
+    case Item::REF_ITEM:
     case Item::FIELD_ITEM:
         {
             table_info_t* tableinfo;
@@ -11514,37 +11534,84 @@ print_item(
             char dbname[FN_LEN];
             char tablename[FN_LEN];
             dbname[0]=fieldname[0]=tablename[0] = '\0';
-            str_append(print_str, "{");
-            str_append(print_str, "\"type\":\"FIELD_ITEM\",");
-            if (strcasecmp(((Item_field*)item)->field_name, "*"))
+            if (!strcasecmp(((Item_field*)item)->field_name, "*"))
             {
-                if (((Item_field*)item)->db_name)
-                    sprintf(dbname, "\"%s\",", ((Item_field*)item)->db_name);
-                if (((Item_field*)item)->table_name)
-                    sprintf(tablename, "\"%s\",", ((Item_field*)item)->table_name);
-                tablert = mysql_find_field_from_all_tables(
-                    thd, &query_node->rt_lst, select_lex, ((Item_field*)item)->db_name, 
-                    ((Item_field*)item)->table_name, ((Item_field*)item)->field_name); 
-                if (tablert)
-                {
-                    tableinfo = tablert->table_info;
-                    sprintf(fieldname, "\"%s\",", tableinfo->table_name);
-                    if (dbname[0] == '\0')
-                        sprintf(dbname, "\"%s\",", tableinfo->db_name);
-                    if (fieldname[0] == '\0')
-                        sprintf(fieldname, "\"%s\",", tableinfo->table_name);
-                }
-
-                str_append(print_str, "\"db\":");
-                str_append(print_str, dbname);
-                str_append(print_str, "\"table\":");
+                str_append(print_str, "{");
+                str_append(print_str, "\"type\":\"FIELD_ITEM\",");
+                str_append(print_str, "\"field\":");
+                sprintf(fieldname, "\"%s\"", ((Item_field*)item)->field_name);
                 str_append(print_str, fieldname);
+                str_append(print_str, "}");
+                break;
             }
 
-            str_append(print_str, "\"field\":");
-            sprintf(fieldname, "\"%s\"", ((Item_field*)item)->field_name);
-            str_append(print_str, fieldname);
-            str_append(print_str, "}");
+            if (((Item_field*)item)->db_name)
+                sprintf(dbname, "\"%s\",", ((Item_field*)item)->db_name);
+            if (((Item_field*)item)->table_name)
+                sprintf(tablename, "\"%s\",", ((Item_field*)item)->table_name);
+            tablert = mysql_find_field_from_all_tables(
+                thd, &query_node->rt_lst, select_lex, ((Item_field*)item)->db_name, 
+                ((Item_field*)item)->table_name, ((Item_field*)item)->field_name); 
+            if (tablert)
+            {
+                str_append(print_str, "{");
+                str_append(print_str, "\"type\":\"FIELD_ITEM\",");
+                if (strcasecmp(((Item_field*)item)->field_name, "*"))
+                {
+                    if (tablert)
+                    {
+                        tableinfo = tablert->table_info;
+                        sprintf(fieldname, "\"%s\",", tableinfo->table_name);
+                        if (dbname[0] == '\0')
+                            sprintf(dbname, "\"%s\",", tableinfo->db_name);
+                        if (fieldname[0] == '\0')
+                            sprintf(fieldname, "\"%s\",", tableinfo->table_name);
+                    }
+
+                    str_append(print_str, "\"db\":");
+                    str_append(print_str, dbname);
+                    str_append(print_str, "\"table\":");
+                    str_append(print_str, fieldname);
+                }
+
+                str_append(print_str, "\"field\":");
+                sprintf(fieldname, "\"%s\"", ((Item_field*)item)->field_name);
+                str_append(print_str, fieldname);
+                str_append(print_str, "}");
+            }
+            else if (select_lex->order_group_having)
+            {
+                Item* item_item;
+                List_iterator<Item> it(select_lex->item_list);
+                while ((item_item = it++))
+                {
+                    if (item_item->item_name.is_set())
+                    {
+                        if (!strcasecmp(item_item->item_name.ptr(), 
+                              ((Item_field*)item)->field_name))
+                        {
+                            str_append(print_str, "{");
+                            str_append(print_str, "\"type\":\"SELECT_ITEM\",");
+                            str_append(print_str, "\"field\":");
+                            sprintf(fieldname, "\"%s\"", ((Item_field*)item)->field_name);
+                            str_append(print_str, fieldname);
+                            str_append(print_str, "}");
+                            break;
+                        }
+                    }
+                }
+
+                if (item_item == NULL)
+                {
+                    my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                    mysql_errmsg_append(thd);
+                }
+            }
+            else
+            {
+                my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                mysql_errmsg_append(thd);
+            }
         }
         break;
     case Item::FUNC_ITEM:
@@ -11955,6 +12022,25 @@ int mysql_print_command(THD *thd)
     return 0;
 }
 
+int mysql_check_tables(
+    THD* thd, 
+    st_select_lex *select_lex,
+    TABLE_LIST* tables
+)
+{
+    TABLE_LIST* table;
+
+    for (table= tables; table; table= table->next_local)
+    {
+        if (table->is_view_or_derived())
+        {
+            mysql_check_subselect_item(thd, table->derived->first_select(), false);
+        }
+    }
+
+    return false;
+}
+
 int mysql_check_subselect_item(
     THD* thd, 
     st_select_lex *select_lex, 
@@ -11963,6 +12049,7 @@ int mysql_check_subselect_item(
 {
     Item* item;
     ORDER*   order;
+    TABLE_LIST *tables;
 
     if (!thd->rt_lst)
         thd->rt_lst = (rt_lst_t*)my_malloc(sizeof(rt_lst_t), MY_ZEROFILL);
@@ -11974,6 +12061,21 @@ int mysql_check_subselect_item(
     {
         mysql_check_item(thd,  item, select_lex);
     }
+
+    if (top && (thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
+        thd->lex->sql_command == SQLCOM_DELETE ||
+        thd->lex->sql_command == SQLCOM_DELETE_MULTI ||
+        thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
+        thd->lex->sql_command == SQLCOM_UPDATE))
+        tables = select_lex->table_list.first->next_local;
+    else
+        tables = select_lex->table_list.first;
+
+    if (tables)
+    {
+        mysql_check_tables(thd, select_lex, tables);
+    }
+
     if (select_lex->where)
     {
         mysql_check_item(thd,  select_lex->where, select_lex);
@@ -11981,23 +12083,29 @@ int mysql_check_subselect_item(
 
     if (select_lex->group_list.elements != 0)
     {
+        select_lex->order_group_having = true;	
         for (order= thd->lex->select_lex.group_list.first ; order; order= order->next)
         {
             mysql_check_item(thd,  *order->item, select_lex);
         }
+        select_lex->order_group_having = false;	
     }
 
     if (select_lex->having)
     {
+        select_lex->order_group_having = true;	
         mysql_check_item(thd,  select_lex->having, select_lex);
+        select_lex->order_group_having = false;	
     }
 
     if (select_lex->order_list.elements != 0)
     {
+        select_lex->order_group_having = true;	
         for (order= thd->lex->select_lex.order_list.first ; order; order= order->next)
         {
             mysql_check_item(thd,  *order->item, select_lex);
         }
+        select_lex->order_group_having = false;	
     }
 
     return 0;
@@ -12164,6 +12272,7 @@ mysql_check_item(
         }
         break;
     case Item::FIELD_ITEM:
+    case Item::REF_ITEM:
         {
             table_info_t* tableinfo;
             table_rt_t* tablert;
@@ -12175,6 +12284,33 @@ mysql_check_item(
                 if (tablert)
                 {
                     tableinfo = tablert->table_info;
+                }
+                else if (select_lex->order_group_having)
+                {
+                    Item* item_item;
+                    List_iterator<Item> it(select_lex->item_list);
+                    while ((item_item = it++))
+                    {
+                        if (item_item->item_name.is_set())
+                        {
+                            if (!strcasecmp(item_item->item_name.ptr(), 
+                                ((Item_field*)item)->field_name))
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    if (item_item == NULL)
+                    {
+                        my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                        mysql_errmsg_append(thd);
+                    }
+                }
+                else
+                {
+                    my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                    mysql_errmsg_append(thd);
                 }
             }
         }

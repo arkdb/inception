@@ -759,6 +759,7 @@ public:
   /// Array of pointers to top elements of all_fields list
   Ref_ptr_array ref_pointer_array;
 
+  int order_group_having;
   /*
     number of items in select_list and HAVING clause used to get number
     bigger then can be number of entries that will be added to all item
@@ -932,7 +933,7 @@ public:
 
   friend void lex_start(THD *thd);
   st_select_lex() : group_list_ptrs(NULL), order_list_ptrs(NULL),
-    n_sum_items(0), n_child_sum_items(0),
+    n_sum_items(0), n_child_sum_items(0),order_group_having(0),
     cur_pos_in_all_fields(ALL_FIELDS_UNDEF_POS)
   {}
   void make_empty_select()
