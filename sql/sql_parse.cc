@@ -5532,7 +5532,7 @@ int mysql_check_drop_column(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
-int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* columnname)
+int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* columnname, char* column_change)
 {
     char*           tmp_buf;
     char            buff_space[4096];
@@ -5545,7 +5545,7 @@ int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* colum
         return 0;
 
     sprintf(tmp_buf, "SHOW FULL FIELDS FROM `%s`.`%s` where field='%s';",
-            table_info->db_name, table_info->table_name, columnname);
+            table_info->db_name, table_info->table_name, column_change);
 
     mysql = thd->get_audit_connection();
     if (mysql == NULL)
@@ -5585,13 +5585,13 @@ int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* colum
 
         if (defaults && comment)
             sprintf(tmp_buf, "CHANGE COLUMN `%s` `%s` %s %s DEFAULT '%s' COMMENT '%s' ",
-                    columnname, columnname, source_row[1], notnull, defaults, comment);
+                    columnname,column_change, source_row[1], notnull, defaults, comment);
         else if (defaults && !comment)
             sprintf(tmp_buf, "CHANGE COLUMN `%s` `%s` %s %s DEFAULT '%s'",
-                    columnname, columnname, source_row[1], notnull, defaults);
+                    columnname,column_change, source_row[1], notnull, defaults);
         else if (!defaults && comment)
             sprintf(tmp_buf, "CHANGE COLUMN `%s` `%s` %s %s COMMENT '%s'",
-                    columnname, columnname, source_row[1], notnull, comment);
+                    columnname,column_change, source_row[1], notnull, comment);
         str_append(&thd->ddl_rollback, tmp_buf);
         str_append(&thd->ddl_rollback, ",");
         if (tmp_buf != buff_space)
@@ -5665,7 +5665,7 @@ int mysql_check_change_column(THD *thd)
             mysql_field_check(thd, field, table_info->table_name);
             mysql_check_column_default(thd, field->def, field->flags, 
                 field_info, field->field_name, field->sql_type);
-            mysql_change_column_rollback(thd, table_info, (char*)field->field_name);
+            mysql_change_column_rollback(thd, table_info, (char*)field->field_name,(char*)field->change);
         }
     }
 
