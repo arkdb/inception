@@ -7723,6 +7723,14 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
         return true;
     }
 
+    sprintf(tmp, "update `%s`.`transfer_checkpoint` set id=0, tid=0", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
+
     thd->close_all_connections();
     return false;
 }
