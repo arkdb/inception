@@ -142,7 +142,8 @@
 #define ER_TASK_ALREADY_EXISTED             2639
 #define ER_INVALID_TRANSFER_INFO            2640
 #define ER_DATACENTER_EXISTED               2641
-#define ER_ERROR_LAST                       2642
+#define ER_SET_OPTIONS_ERROR                2642
+#define ER_ERROR_LAST                       2643
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

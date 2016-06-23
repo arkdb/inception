@@ -667,6 +667,14 @@ const double log_10[] = {
   1e300, 1e301, 1e302, 1e303, 1e304, 1e305, 1e306, 1e307, 1e308
 };
 
+transfer_option_t default_transfer_options[]=
+{
+    {"ignore", 0,0,0},
+    {"option1",1,100,0},
+    {"option2",2,100,0},
+    {"option3",3,100,0}
+};
+
 time_t server_start_time, flush_status_time;
 
 char server_uuid[UUID_LENGTH+1];

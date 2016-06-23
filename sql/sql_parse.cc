@@ -281,6 +281,8 @@ int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
 int inception_table_create(THD *thd, String *create_sql);
 int mysql_cache_deinit_task(THD* thd);
 char* inception_get_task_sequence(THD* thd);
+int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
+int mysql_execute_inception_set_command_for_dc(THD* thd);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -4301,6 +4303,48 @@ inception_transfer_load_datacenter(
         mysql_mutex_unlock(&transfer_mutex); 
 
     mysql_free_result(source_res);
+    
+    //read options
+    source_res = NULL;
+    sprintf (tmp, "select * from `%s`.`transfer_option`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        thd->close_all_connections();
+        return NULL;
+    }
+    if ((source_res = mysql_store_result(mysql)) == NULL)
+    {
+        thd->close_all_connections();
+        return NULL;
+    }
+    source_row = mysql_fetch_row(source_res);
+    
+    for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+    {
+        transfer_option_t* op = (transfer_option_t*)my_malloc(sizeof(transfer_option_t) , MY_ZEROFILL);
+        memset(op, 0, sizeof(transfer_option_t));
+        strcpy(op->variable, default_transfer_options[i].variable);
+        op->value = default_transfer_options[i].value;
+        datacenter->option_list[i]=*op;
+    }
+    
+    while(source_row)
+    {
+        for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+        {
+            transfer_option_t* op = &datacenter->option_list[i];
+            if(strcmp(op->variable,source_row[0])==0)
+            {
+                /*char* endptr;
+                op->value =my_strtoll10(source_row[1], &endptr,NULL); */
+                op->value =atoi(source_row[1]);
+            }
+        }
+        source_row = mysql_fetch_row(source_res);
+    }
+    
+    mysql_free_result(source_res);
+
 
     source_res = NULL;
     //read the slaves
@@ -5015,31 +5059,122 @@ int mysql_inception_remote_show(THD* thd)
 
 int mysql_execute_inception_set_command(THD* thd)
 {
-    int error;
-
     DBUG_ENTER("mysql_execute_inception_set_command");
 
-    List_iterator_fast<set_var_base> it(thd->lex->var_list);
-
-    set_var_base *var;
-    while ((var=it++))
+    if(thd->lex->for_dc!=1)
     {
-        if ((error= var->check(thd)))
+        int error;
+        
+        
+        List_iterator_fast<set_var_base> it(thd->lex->var_list);
+        
+        set_var_base *var;
+        while ((var=it++))
         {
-            my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
-            DBUG_RETURN(FALSE);
+            if ((error= var->check(thd)))
+            {
+                my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
+                DBUG_RETURN(FALSE);
+            }
+            
+            if ((error = var->update(thd)))        // Returns 0, -1 or 1
+            {
+                my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
+                DBUG_RETURN(FALSE);
+            }
         }
+        
+        my_ok(thd);
+        DBUG_RETURN(FALSE);
+    }
+    else
+    {
+        DBUG_RETURN( mysql_execute_inception_set_command_for_dc(thd));
+    }
+};
 
-        if ((error = var->update(thd)))        // Returns 0, -1 or 1
-        {
-            my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
-            DBUG_RETURN(FALSE);
-        }
+int mysql_execute_inception_set_command_for_dc(THD* thd)
+{
+    char tmp[1024];
+    str_t  sql_space;
+    str_t* sql;
+    MYSQL* mysql;
+    transfer_cache_t* datacenter;
+    
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return false;
     }
 
-    my_ok(thd);
-    DBUG_RETURN(FALSE);
-}
+    Item_int* it = (Item_int*)thd->lex->value_dc;
+    int value_dc = strcmp("",thd->lex->value_dc->str_value.c_ptr())?atoi(thd->lex->value_dc->str_value.c_ptr()):it->value;
+    
+    transfer_option_t* default_t = NULL;
+    
+    for(int i=GATE_OPTION_FIRST+1; i<GATE_OPTION_LAST; ++i)
+    {
+        transfer_option_t tmp = default_transfer_options[i];
+        if(strcmp(thd->lex->name.str,tmp.variable)==0)
+        {
+            default_t = &tmp;
+        }
+    }
+    
+    if(value_dc>default_t->max_value||value_dc<default_t->min_value)
+    {
+        char error[1024];
+        sprintf(error,"The value is out of range.max is %d,min is %d",default_t->max_value,default_t->min_value);
+        my_error(ER_SET_OPTIONS_ERROR, MYF(0), error);
+        thd->close_all_connections();
+        return false;
+    }
+    
+    mysql_mutex_lock(&transfer_mutex);
+    
+    sql = &sql_space;
+    sql = str_init(sql);
+    sql = str_append(sql, "insert into ");
+    sprintf (tmp, "`%s`.`transfer_option`(option_variable,option_value) values('%s',%d) "
+             "ON DUPLICATE KEY UPDATE option_value=%d", thd->lex->ident.str,
+             thd->lex->name.str,value_dc,value_dc);
+    sql = str_append(sql, tmp);
+    if (mysql_real_query(mysql, str_get(sql), str_get_len(sql)))
+    {
+        mysql_mutex_unlock(&transfer_mutex);
+        
+        my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
+        return false;
+    }
+    thd->close_all_connections();
+    
+    
+    datacenter = inception_transfer_load_datacenter(thd, thd->lex->ident.str, false);
+    if (datacenter==NULL)
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), thd->lex->ident.str);
+        mysql_mutex_unlock(&transfer_mutex);
+        return false;
+    }
+    else
+    {
+        for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+        {
+            transfer_option_t* op = &datacenter->option_list[i];
+            if(strcmp(thd->lex->name.str,op->variable)==0)
+            {
+                op->value=value_dc;
+            }
+
+        }
+    }
+    
+    mysql_mutex_unlock(&transfer_mutex);
+
+    return false;
+};
 
 int inception_transfer_execute_sql(THD* thd, char* sql)
 {
@@ -5285,7 +5420,63 @@ int inception_transfer_instance_table_create(
         }
     }
 
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_option");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "option_variable varchar(64) comment 'option variable', ");
+    create_sql = str_append(create_sql, "option_value int comment 'option value', ");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`option_variable`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
+                            "'transfer option'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
+    }
+    else
+    {
+        if(init_transfer_options(thd,datacenter,mysql,create_sql))
+        {
+            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
+    }
+    
     thd->close_all_connections();
+    return false;
+}
+
+int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql)
+{
+    char tmp[1024];
+    str_truncate(insert_sql, str_get_len(insert_sql));
+    insert_sql = str_append(insert_sql, "INSERT INTO ");
+    sprintf (tmp, "`%s`.`%s` values", datacenter, "transfer_option");
+    insert_sql = str_append(insert_sql, tmp);
+    
+    for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+    {
+        transfer_option_t* op = &default_transfer_options[i];
+        sprintf (tmp, "('%s',%d)", op->variable,op->value);
+        insert_sql = str_append(insert_sql, tmp);
+        if(i!=GATE_OPTION_LAST-1)
+        {
+            insert_sql = str_append(insert_sql, ",");
+        }
+    }
+    
+    if (mysql_real_query(mysql, str_get(insert_sql), str_get_len(insert_sql)))
+    {
+        my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
     return false;
 }
 

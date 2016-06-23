@@ -426,6 +426,23 @@ struct mts_struct
     volatile int        checkpoint_age;
 };
 
+enum transfer_option_enum{
+    GATE_OPTION_FIRST=0,
+    gate_option1,
+    gate_option2,
+    gate_option3,
+    GATE_OPTION_LAST
+};
+
+typedef struct transfer_option_struct transfer_option_t;
+struct transfer_option_struct
+{
+    char        variable[64];
+    int         value;
+    int         max_value;
+    int         min_value;
+};
+
 typedef struct transfer_cache_struct transfer_cache_t;
 struct transfer_cache_struct
 {
@@ -502,6 +519,9 @@ struct transfer_cache_struct
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+    
+    //dc options
+    transfer_option_t option_list[GATE_OPTION_LAST];
 };
 
 typedef struct transfer_struct transfer_t;
@@ -662,6 +682,7 @@ struct sql_statistic_struct
 extern osc_cache_t global_osc_cache;
 extern task_cache_t global_task_cache;
 extern transfer_t global_transfer_cache;
+extern transfer_option_t default_transfer_options[];
 extern mysql_mutex_t osc_mutex;
 extern mysql_mutex_t task_mutex;
 extern mysql_mutex_t transfer_mutex;

@@ -64,6 +64,8 @@ using std::min;
 
 #define STR_OR_NIL(S) ((S) ? (S) : "<nil>")
 
+transfer_cache_t* inception_transfer_load_datacenter(THD* thd,char* datacenter_name,int need_lock);
+
 #ifdef WITH_PARTITION_STORAGE_ENGINE
 #include "ha_partition.h"
 #endif
@@ -5209,8 +5211,16 @@ int mysql_local_show_variables(THD *thd, int showall)
   enum_var_type option_type= OPT_GLOBAL;
   bool upper_case_names = 0;
   mysql_rwlock_rdlock(&LOCK_system_variables_hash);
-  res= show_status_array_for_inception(thd, wild, enumerate_sys_vars(thd, sorted_vars, option_type),
-      option_type, NULL, "", upper_case_names, showall);
+  if(thd->lex->ident.length==0)
+      res= show_status_array_for_inception(thd, wild, enumerate_sys_vars(thd, sorted_vars, option_type),
+                                           option_type, NULL, "", upper_case_names, showall);
+  else
+  {
+      transfer_cache_t* datacenter = inception_transfer_load_datacenter(thd,thd->lex->ident.str,true);
+      if(datacenter!=NULL)
+          res= show_status_array_for_inception(thd, wild, enumerate_datacenter_vars(thd, sorted_vars, option_type, datacenter),
+                                           option_type, NULL, "", upper_case_names, showall);
+  }
   mysql_rwlock_unlock(&LOCK_system_variables_hash);
   DBUG_RETURN(res);
 }
