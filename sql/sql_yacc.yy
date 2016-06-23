@@ -14308,7 +14308,7 @@ option_value_no_option_type:
               /* We're not parsing SP and this is a system variable. */
               if(lex->ident.length==0)
               {
-                  if(thd->lex->for_dc==1)
+                  if(thd->lex->is_dc_variable==1)
                   {
                       my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), $1.base_name.str);
                       MYSQL_YYABORT;
@@ -14322,7 +14322,7 @@ option_value_no_option_type:
               else
               {
                   LEX *lex=Lex;
-                  if(thd->lex->for_dc==0)
+                  if(thd->lex->is_dc_variable==0)
                   {
                       my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), $1.base_name.str);
                       MYSQL_YYABORT;

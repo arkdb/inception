@@ -2168,7 +2168,7 @@ sys_var *find_dc_var(THD *thd,const char *str, uint length)
         transfer_option_t* op = &default_transfer_options[i];
         if (!strcasecmp(op->variable, str))
         {
-            thd->lex->for_dc=1;
+            thd->lex->is_dc_variable=1;
             return (sys_var*) str;
         }
         
@@ -2204,7 +2204,7 @@ sys_var *find_sys_var(THD *thd, const char *str, uint length)
     mysql_rwlock_unlock(&LOCK_system_variables_hash);
   mysql_mutex_unlock(&LOCK_plugin);
 
-  thd->lex->for_dc=0;
+  thd->lex->is_dc_variable=0;
   if(!var)
   {
       var=find_dc_var(thd,str,length);

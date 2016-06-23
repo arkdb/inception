@@ -2357,7 +2357,7 @@ struct LEX: public Query_tables_list
   uint inception_cmd_sub_type;
   int nest_level;
   uint8 describe;
-  int for_dc;
+  int is_dc_variable;
   Item* value_dc;
 
   /*

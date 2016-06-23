@@ -5061,7 +5061,7 @@ int mysql_execute_inception_set_command(THD* thd)
 {
     DBUG_ENTER("mysql_execute_inception_set_command");
 
-    if(thd->lex->for_dc!=1)
+    if(thd->lex->is_dc_variable!=1)
     {
         int error;
         
