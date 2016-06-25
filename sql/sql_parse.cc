@@ -10612,8 +10612,14 @@ int mysql_execute_statement(
     sprintf(sql_cache_node->execute_time, "%.3f",  
         (double)(start_timer() - timer) / CLOCKS_PER_SEC);
 
-    sql_cache_node->affected_rows = mysql_affected_rows(mysql);
+    MYSQL_RES* source_res = mysql_store_result(mysql);
 
+    sql_cache_node->affected_rows = mysql_affected_rows(mysql);
+    
+    if (source_res != NULL)
+    {
+        mysql_free_result(source_res);
+    }
     print_warnings(thd, mysql, sql_cache_node);
 
     if (mysql_fetch_thread_id(mysql, &sql_cache_node->thread_id))
