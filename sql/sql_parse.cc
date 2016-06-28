@@ -4294,7 +4294,7 @@ inception_transfer_load_datacenter(
     str_init(&datacenter->errmsg);
     datacenter->stop_time = NULL;
     //default 50ms
-    datacenter->checkpoint_period = 50;
+    datacenter->option_list[CHECKPOINT_PERIOD].value = 50;
     LIST_INIT(datacenter->slave_lst);
     if (need_lock)
         mysql_mutex_lock(&transfer_mutex); 
@@ -4332,7 +4332,7 @@ inception_transfer_load_datacenter(
     {
         for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
         {
-            transfer_option_t* op = &datacenter->option_list[i];
+            transfer_option_t* op = (transfer_option_t *)&datacenter->option_list[i];
             if(strcmp(op->variable,source_row[0])==0)
             {
                 /*char* endptr;
@@ -4594,8 +4594,9 @@ int mysql_master_transfer_status(
     protocol->store(str_get(str), system_charset_info);
     protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
     protocol->store((longlong)osc_percent_node->table_cache.records);
-    protocol->store(osc_percent_node->parallel_workers);
-    protocol->store(osc_percent_node->queue_length);
+//    protocol->store(osc_percent_node->parallel_workers);
+    protocol->store(osc_percent_node->option_list[PARALLEL_WORKERS].value);
+    protocol->store(osc_percent_node->option_list[WORKER_QUEUE_LENGTH].value);
     time_diff = (long)(time(0) - osc_percent_node->start_time);
     if (osc_percent_node->transfer_on && time_diff > 0)
     {
@@ -4608,7 +4609,7 @@ int mysql_master_transfer_status(
     protocol->store(osc_percent_node->eps);
     protocol->store(osc_percent_node->tps);
     protocol->store(osc_percent_node->gtid_on ? "ON":"OFF", system_charset_info);
-    sprintf(tmp, "%d(ms)", osc_percent_node->checkpoint_period);
+    sprintf(tmp, "%d(ms)", osc_percent_node->option_list[CHECKPOINT_PERIOD].value);
     protocol->store(tmp, system_charset_info);
     mysql_mutex_unlock(&transfer_mutex);
 
@@ -4716,7 +4717,7 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         DBUG_RETURN(true);
     }
 
-    for (i=0; i < datacenter->parallel_workers; i++)
+    for (i=0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
     {
         mts_thread = &datacenter->mts->mts_thread[i];
         protocol->prepare_for_resend();
@@ -4725,8 +4726,8 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         protocol->store(mts_thread->dequeue_index);
 
         if (mts_thread->enqueue_index != mts_thread->dequeue_index)
-            protocol->store((int)((mts_thread->enqueue_index+ datacenter->queue_length - 
-                    mts_thread->dequeue_index) % datacenter->queue_length)+1);
+            protocol->store((int)((mts_thread->enqueue_index+ datacenter->option_list[WORKER_QUEUE_LENGTH].value -
+                    mts_thread->dequeue_index) % datacenter->option_list[WORKER_QUEUE_LENGTH].value)+1);
         else
             protocol->store(0);
 
@@ -5122,7 +5123,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
         }
     }
     
-    if(value_dc>default_t->max_value||value_dc<default_t->min_value)
+    if(value_dc > default_t->max_value || value_dc < default_t->min_value)
     {
         char error[1024];
         sprintf(error,"The value is out of range.max is %d,min is %d",default_t->max_value,default_t->min_value);
@@ -5162,7 +5163,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     {
         for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
         {
-            transfer_option_t* op = &datacenter->option_list[i];
+            transfer_option_t* op = (transfer_option_t *)&datacenter->option_list[i];
             if(strcmp(thd->lex->name.str,op->variable)==0)
             {
                 op->value=value_dc;
@@ -6100,9 +6101,10 @@ int inception_transfer_next_sequence(
 
     if (type == INCEPTION_TRANSFER_EIDENUM)
     {
+        transfer_cache_t* datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
         if (eventid > thd->event_id)
             thd->event_id = eventid;
-        if (thd->event_id % inception_transfer_event_sequence_sync==0)
+        if (thd->event_id % datacenter->option_list[INCEPTION_TRANSFER_EVENT_SEQUENCE_SYNC].value==0)
         {
             mysql = thd->get_transfer_connection();
             if (mysql == NULL)
@@ -6112,7 +6114,7 @@ int inception_transfer_next_sequence(
             }
             thd->event_id = eventid;
             sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
-                datacenter_name, inception_transfer_event_sequence_sync + 
+                datacenter_name, datacenter->option_list[INCEPTION_TRANSFER_EVENT_SEQUENCE_SYNC].value + 
                 thd->event_id, INCEPTION_TRANSFER_EIDNAME);
             if (mysql_real_query(mysql, sql, strlen(sql)))
             {
@@ -6124,9 +6126,10 @@ int inception_transfer_next_sequence(
     }
     else if (type == INCEPTION_TRANSFER_TIDENUM)
     {
+        transfer_cache_t* datacenter = inception_transfer_load_datacenter(thd, datacenter_name, false);
         if (trxid > thd->transaction_id)
             thd->transaction_id = trxid;
-        if (thd->transaction_id % inception_transfer_trx_sequence_sync==0)
+        if (thd->transaction_id % datacenter->option_list[INCEPTION_TRANSFER_TRX_SEQUENCE_SYNC].value==0)
         {
             mysql = thd->get_transfer_connection();
             if (mysql == NULL)
@@ -6136,7 +6139,7 @@ int inception_transfer_next_sequence(
             }
             thd->transaction_id = trxid;
             sprintf(sql, "update `%s`.transfer_sequence set sequence=%lld where idname='%s'", 
-                datacenter_name, inception_transfer_trx_sequence_sync + 
+                datacenter_name, datacenter->option_list[INCEPTION_TRANSFER_TRX_SEQUENCE_SYNC].value + 
                 thd->transaction_id, INCEPTION_TRANSFER_TIDNAME);
             if (mysql_real_query(mysql, sql, strlen(sql)))
             {
@@ -6187,7 +6190,7 @@ inception_mts_get_hash_value(
         p++;
     }
     //hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
-    return int(hash_value % datacenter->parallel_workers);
+    return int(hash_value % datacenter->option_list[PARALLEL_WORKERS].value);
 }
 
 str_t*
@@ -6204,7 +6207,7 @@ inception_mts_get_sql_buffer(
     int dequeue_index;
     int enqueue_index;
 
-    if (datacenter->parallel_workers == 0)
+    if (datacenter->option_list[PARALLEL_WORKERS].value == 0)
         return &datacenter->sql_buffer;
 
     datacenter->thread_stage = transfer_enqueue_reserve;
@@ -6224,13 +6227,13 @@ retry:
     //queue is not full
     dequeue_index = mts_thread->dequeue_index;
     enqueue_index = mts_thread->enqueue_index;
-    if ((enqueue_index+1) % datacenter->queue_length != dequeue_index)
+    if ((enqueue_index+1) % datacenter->option_list[WORKER_QUEUE_LENGTH].value != dequeue_index)
     {
         mts_queue = &mts_thread->thread_queue[mts_thread->enqueue_index];
         datacenter->mts_sql_buffer = &mts_queue->sql_buffer;
         datacenter->current_element = mts_queue;
         datacenter->current_thread = mts_thread;
-        mts_thread->enqueue_index = (enqueue_index + 1) % datacenter->queue_length;
+        mts_thread->enqueue_index = (enqueue_index + 1) % datacenter->option_list[WORKER_QUEUE_LENGTH].value;
         mysql_mutex_lock(&mts->mts_lock);
         mts->checkpoint_age += 1; 
         mysql_mutex_unlock(&mts->mts_lock);
@@ -6950,7 +6953,7 @@ inception_transfer_get_slaves_position(
     datacenter = mi->datacenter;
     thd = mi->thd;
 
-    if (thd->transaction_id % inception_transfer_slave_sync != 0)
+    if (thd->transaction_id % datacenter->option_list[INCEPTION_TRANSFER_SLAVE_SYNC].value != 0)
         return false;
 
     slave = LIST_GET_FIRST(datacenter->slave_lst);
@@ -7128,7 +7131,7 @@ inception_transfer_write_Xid(
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
         return true;
 
-    if (mi->datacenter->parallel_workers == 0)
+    if (mi->datacenter->option_list[PARALLEL_WORKERS].value == 0)
     {
         //still the privise trx, but is another event
         inception_transfer_fetch_binlogsha1(mi, ev);
@@ -7221,7 +7224,7 @@ inception_transfer_make_checkpoint(
     if (thd->event_id == 0)
         return false;
 
-    for (i = 0; i < datacenter->parallel_workers; i++)
+    for (i = 0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
     {
         mts_thread = &mts->mts_thread[i];
         //if not empty and last_eid have been updated
@@ -7652,7 +7655,7 @@ pthread_handler_t inception_mts_thread(void* arg)
         mts_thread->last_tid = element->tid;
         mysql_mutex_unlock(&element->element_lock);
 
-        mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % datacenter->queue_length;
+        mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % datacenter->option_list[WORKER_QUEUE_LENGTH].value;
     }
 
     mts_thread->thread_stage = transfer_mts_stopped;
@@ -7678,7 +7681,7 @@ pthread_handler_t inception_transfer_checkpoint(void* arg)
 
     while (datacenter->transfer_on && !inception_transfer_killed(datacenter->thd, datacenter))
     {
-        set_timespec_nsec(abstime, datacenter->checkpoint_period* 1000000ULL);
+        set_timespec_nsec(abstime, datacenter->option_list[CHECKPOINT_PERIOD].value* 1000000ULL);
         mysql_mutex_lock(&datacenter->thd->sleep_lock);
         mysql_cond_timedwait(&datacenter->thd->sleep_cond, &datacenter->thd->sleep_lock, &abstime);
         mysql_mutex_unlock(&datacenter->thd->sleep_lock);
@@ -7757,7 +7760,7 @@ pthread_handler_t inception_transfer_delete1(void* arg)
     while (datacenter->transfer_on)
     {
         inception_transfer_delete(thd, datacenter->datacenter_name, 
-            (char*)"transfer_data", inception_transfer_binlog_expire_hours);
+            (char*)"transfer_data", datacenter->option_list[INCEPTION_TRANSFER_BINLOG_EXPIRE_HOURS].value);
     }
 
     delete thd;
@@ -7781,7 +7784,7 @@ pthread_handler_t inception_transfer_delete2(void* arg)
     while (datacenter->transfer_on)
     {
         inception_transfer_delete(thd, datacenter->datacenter_name, 
-            (char*)"slave_positions", inception_transfer_binlog_expire_hours);
+            (char*)"slave_positions", datacenter->option_list[INCEPTION_TRANSFER_BINLOG_EXPIRE_HOURS].value);
     }
 
     delete thd;
@@ -7888,26 +7891,26 @@ int inception_create_mts(
     mts_thread_queue_t* mts_queue;
     mts_thread_t*   mts_thread;
 
-    if (datacenter->parallel_workers > 0)
+    if (datacenter->option_list[PARALLEL_WORKERS].value > 0)
     {
         mts = (mts_t*)my_malloc(sizeof(mts_t) , MY_ZEROFILL);
         mts->mts_thread = (mts_thread_t*)my_malloc(
-            sizeof(mts_thread_t) * datacenter->parallel_workers, MY_ZEROFILL);
+            sizeof(mts_thread_t) * datacenter->option_list[PARALLEL_WORKERS].value, MY_ZEROFILL);
         datacenter->mts = mts;
         mysql_mutex_init(NULL, &mts->mts_lock, MY_MUTEX_INIT_FAST);
         mysql_cond_init(NULL, &mts->mts_cond, NULL);
-        for(i = 0; i < datacenter->parallel_workers; i++)
+        for(i = 0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
         {
             mts_thread = &mts->mts_thread[i];
             mts_thread->thread_queue = (mts_thread_queue_t*)my_malloc(
-                sizeof(mts_thread_queue_t)*datacenter->queue_length, MY_ZEROFILL);
+                sizeof(mts_thread_queue_t)*datacenter->option_list[WORKER_QUEUE_LENGTH].value, MY_ZEROFILL);
             mts_thread->dequeue_index = 0;
             mts_thread->enqueue_index = 0;
             mts_thread->last_tid = 0;
             mts_thread->last_eid = 0;
             mts_thread->datacenter = datacenter;
             mts_thread->thread_stage = transfer_mts_not_start;
-            for (j = 0; j < datacenter->queue_length; j++)
+            for (j = 0; j < datacenter->option_list[WORKER_QUEUE_LENGTH].value; j++)
             {
                 mts_queue = &mts_thread->thread_queue[j];
                 mysql_mutex_init(NULL, &mts_queue->element_lock, MY_MUTEX_INIT_FAST);
@@ -8051,7 +8054,7 @@ reconnect:
 	      //save the last_master_timestamp, for read event
 	      last_master_timestamp = datacenter->last_master_timestamp;
         datacenter->last_master_timestamp = 0;
-        if (datacenter->parallel_workers > 0)
+        if (datacenter->option_list[PARALLEL_WORKERS].value > 0)
             mysql_cond_broadcast(&datacenter->mts->mts_cond);
         event_len = mysql_read_event_for_transfer(mi, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
@@ -8179,13 +8182,13 @@ inception_wait_mts_threads_finish(
     mts_thread_t* mts_thread;
     int i;
 
-    if (datacenter->parallel_workers == 0)
+    if (datacenter->option_list[PARALLEL_WORKERS].value == 0)
         return false;
 
     datacenter->thread_stage = transfer_waiting_threads_exit;
     mysql_cond_broadcast(&datacenter->mts->mts_cond);
     mts = datacenter->mts;
-    for (i = 0; i < datacenter->parallel_workers; i++)
+    for (i = 0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
     {
         mts_thread = &mts->mts_thread[i];
 retry:
@@ -8211,11 +8214,11 @@ inception_free_mts(
     int i,j;
     mts_thread_queue_t* element;
 
-    if (datacenter->parallel_workers == 0)
+    if (datacenter->option_list[PARALLEL_WORKERS].value == 0)
         return false;
 
     mts = datacenter->mts;
-    for (i = 0; i < datacenter->parallel_workers; i++)
+    for (i = 0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
     {
         mts_thread = &mts->mts_thread[i];
 retry:
@@ -8241,10 +8244,10 @@ retry0:
     inception_transfer_make_checkpoint(datacenter->thd, datacenter);
 
     //free mts
-    for (i = 0; i < datacenter->parallel_workers; i++)
+    for (i = 0; i < datacenter->option_list[PARALLEL_WORKERS].value; i++)
     {
         mts_thread = &mts->mts_thread[i];
-        for (j = 0; j < datacenter->queue_length && mts_thread->thread_queue; j++)
+        for (j = 0; j < datacenter->option_list[WORKER_QUEUE_LENGTH].value && mts_thread->thread_queue; j++)
         {
             element = &mts_thread->thread_queue[j]; 
             mysql_mutex_destroy(&element->element_lock);
@@ -8270,7 +8273,7 @@ inception_wait_and_free_mts(
     int need_lock
 )
 {
-    if (datacenter->parallel_workers == 0)
+    if (datacenter->option_list[PARALLEL_WORKERS].value == 0)
         return false;
 
     //notify the mts thread to exit
@@ -8485,8 +8488,8 @@ int inception_transfer_start_replicate(
 
     str_init(&datacenter->sql_buffer);
     datacenter->transfer_on = TRUE;
-    datacenter->parallel_workers = inception_transfer_parallel_workers;
-    datacenter->queue_length = inception_transfer_worker_queue_length;
+//    datacenter->parallel_workers = inception_transfer_parallel_workers;
+//    datacenter->queue_length = inception_transfer_worker_queue_length;
 
     mysql_mutex_unlock(&transfer_mutex);
     //start replicate
@@ -12731,7 +12734,7 @@ int inception_transfer_execute_store_simple(
 
     DBUG_ENTER("inception_transfer_execute_store_simple");
 
-    if (mi->datacenter->parallel_workers > 0)
+    if (mi->datacenter->option_list[PARALLEL_WORKERS].value > 0)
     {
         inception_mts_enqueue(mi->datacenter, false);
         DBUG_RETURN(false);
@@ -12820,14 +12823,14 @@ int inception_mts_get_commit_positions(
     transfer_cache_t* datacenter;
 
     datacenter = mi->datacenter;
-    if (mi->datacenter->parallel_workers == 0)
+    if (mi->datacenter->option_list[PARALLEL_WORKERS].value == 0)
         return false;
 
     thd = mi->thd;
     str_t *backup_sql = &datacenter->current_element->commit_sql_buffer;
     str_truncate_0(backup_sql);
 
-    if (thd->transaction_id % inception_transfer_master_sync != 0)
+    if (thd->transaction_id % datacenter->option_list[INCEPTION_TRANSFER_MASTER_SYNC].value != 0)
         return false;
 
     str_append(backup_sql, "UPDATE ");
@@ -12856,7 +12859,7 @@ int inception_transfer_execute_store_with_transaction(
     datacenter = mi->datacenter;
     DBUG_ENTER("inception_transfer_execute_store_with_transaction");
 
-    if (mi->datacenter->parallel_workers > 0)
+    if (mi->datacenter->option_list[PARALLEL_WORKERS].value > 0)
     {
         inception_mts_enqueue(mi->datacenter, true);
         DBUG_RETURN(false);

@@ -428,19 +428,24 @@ struct mts_struct
 
 enum transfer_option_enum{
     GATE_OPTION_FIRST=0,
-    gate_option1,
-    gate_option2,
-    gate_option3,
+    CHECKPOINT_PERIOD,
+    INCEPTION_TRANSFER_BINLOG_EXPIRE_HOURS,
+    INCEPTION_TRANSFER_EVENT_SEQUENCE_SYNC,
+    INCEPTION_TRANSFER_TRX_SEQUENCE_SYNC,
+    INCEPTION_TRANSFER_SLAVE_SYNC,
+    INCEPTION_TRANSFER_MASTER_SYNC,
+    PARALLEL_WORKERS,
+    WORKER_QUEUE_LENGTH,
     GATE_OPTION_LAST
 };
 
 typedef struct transfer_option_struct transfer_option_t;
 struct transfer_option_struct
 {
-    char        variable[64];
-    int         value;
-    int         max_value;
-    int         min_value;
+    char                 variable[64];
+    volatile int         value;
+    volatile int         max_value;
+    volatile int         min_value;
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
@@ -468,7 +473,7 @@ struct transfer_cache_struct
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
-    volatile int           checkpoint_period;
+//    volatile int           checkpoint_period;
     long clock_diff_with_master;
     time_t last_master_timestamp;
     time_t last_event_timestamp;
@@ -487,8 +492,8 @@ struct transfer_cache_struct
     str_t dupchar_buffer;
     HASH table_cache;
     int doempty;
-    int parallel_workers;
-    int queue_length;
+//    int parallel_workers;
+//    int queue_length;
     //for qps stat
     time_t start_time;
     longlong events_count;

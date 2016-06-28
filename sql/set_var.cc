@@ -517,8 +517,8 @@ SHOW_VAR* enumerate_datacenter_vars(THD *thd, bool sorted, enum enum_var_type ty
         
         for (i= GATE_OPTION_FIRST+1; i < count; i++)
         {
-            show->name= datacenter->option_list[i].variable;
-            show->value= (char*)&datacenter->option_list[i].value;
+            show->name= (char *)datacenter->option_list[i].variable;
+            show->value= (char *)&datacenter->option_list[i].value;
             show->type= SHOW_INT;
             show++;
         }
