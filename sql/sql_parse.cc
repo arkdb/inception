@@ -619,6 +619,13 @@ out:
 
 //inception start
 //
+
+//to fix the bug ,thread_id from int to unsigned long
+void make_opid_time(char* tmp_buf,int exec_time,unsigned long thread_id,int seqno){
+    sprintf(tmp_buf, "\'%d_%lu_%d\'", exec_time,  thread_id, seqno);
+}
+
+
 int mysql_get_remote_backup_dbname(
     char* host,
     uint port,
@@ -1046,8 +1053,9 @@ int mysql_send_all_results(THD* thd)
 
             protocol->store(sql_cache_node->affected_rows);
 
-            sprintf(tmp_buf, "\'%ld_%d_%d\'", sql_cache_node->exec_time,
-                    (int)sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+//            sprintf(tmp_buf, "\'%ld_%lu_%d\'", sql_cache_node->exec_time,
+//                    sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+            make_opid_time(tmp_buf, sql_cache_node->exec_time, sql_cache_node->thread_id, (int)sql_cache_node->seqno);
             protocol->store(tmp_buf, system_charset_info);
 
             protocol->store(sql_cache_node->backup_dbname, system_charset_info);
@@ -14537,6 +14545,8 @@ int mysql_get_field_string(
     return result;
 }
 
+
+
 int mysql_execute_backup_info_insert_sql(
     Master_info*  mi,
     sql_cache_node_t* sql_cache_node
@@ -14559,9 +14569,11 @@ int mysql_execute_backup_info_insert_sql(
     sprintf(tmp_buf, "`%s`.`%s` VALUES (", dbname, REMOTE_BACKUP_TABLE);
     backup_sql->append(tmp_buf);
 
-    sprintf(tmp_buf, "\'%ld_%d_%d\',", sql_cache_node->exec_time,
-            (int)sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+//    sprintf(tmp_buf, "\'%ld_%lu_%d\',", sql_cache_node->exec_time,
+//            sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+    make_opid_time(tmp_buf, sql_cache_node->exec_time, sql_cache_node->thread_id, (int)sql_cache_node->seqno);
     backup_sql->append(tmp_buf);
+    backup_sql->append(",");
     sprintf(tmp_buf, "\'%s\',", sql_cache_node->start_binlog_file);
     backup_sql->append(tmp_buf);
     sprintf(tmp_buf, "%d,", sql_cache_node->start_binlog_pos);
@@ -14779,7 +14791,11 @@ int mysql_generate_field_insert_values(
     }
 
     backup_sql->append("',");
-    sprintf(tmp_buf, "\'%d_%d_%d\'", (int)mi->exec_time, (int)mi->thread_id, (int)mi->seqno);
+    //mi->thread_id = 2247483647;
+    
+    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
+    make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
+    
     backup_sql->append(tmp_buf);
 
     return 0;
@@ -14838,7 +14854,8 @@ int mysql_generate_backup_sql_by_record_for_update_after(
     backup_sql->append(dupcharfield);
     backup_sql->append("',");
 
-    sprintf(tmp_buf, "\'%d_%d_%d\'", (int)mi->exec_time, (int)mi->thread_id, (int)mi->seqno);
+    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
+    make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
     backup_sql->append(tmp_buf);
 
     backup_sql->append(");");
@@ -15315,7 +15332,8 @@ int mysql_generate_backup_field_insert_values_for_ddl(
     backup_sql->append(dupcharfield);
 
     backup_sql->append("',");
-    sprintf(tmp_buf, "\'%d_%d_%d\'", (int)mi->exec_time, (int)mi->thread_id, (int)mi->seqno);
+    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
+    make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
     backup_sql->append(tmp_buf);
 
     return 0;
