@@ -366,7 +366,7 @@ find_sys_var_null_base(THD *thd, struct sys_var_with_base *tmp)
   if (tmp->var == NULL)
     my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), tmp->base_name.str);
   /* else
-    tmp->base_name= null_lex_str; */
+    tmp->base_name= null_lex_str; */ //注释掉是因为判断dc变量的时候用了base_name,没有删除的原因是目前没测出来这里不赋值为空有什么影响。
   
   return thd->is_error();
 }

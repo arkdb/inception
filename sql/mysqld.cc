@@ -600,13 +600,6 @@ char* inception_datacenter_host=NULL;
 int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
-ulong inception_transfer_trx_sequence_sync=0;
-ulong inception_transfer_event_sequence_sync=0;
-ulong inception_transfer_binlog_expire_hours=0;
-ulong inception_transfer_slave_sync=0;
-ulong inception_transfer_master_sync=0;
-ulong inception_transfer_worker_queue_length=0;
-ulong inception_transfer_parallel_workers=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
