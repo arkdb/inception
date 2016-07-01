@@ -671,11 +671,11 @@ transfer_option_t default_transfer_options[]=
 {
     {"ignore", 0,0,0},
     {"checkpoint_period",1,100,0},
-    {"inception_transfer_binlog_expire_hours",1,100,0},
-    {"inception_transfer_event_sequence_sync",1,100,0},
-    {"inception_transfer_trx_sequence_sync",1,100,0},
-    {"inception_transfer_slave_sync",1,100,0},
-    {"inception_transfer_master_sync",1,100,0},
+    {"binlog_expire_hours",1,100,0},
+    {"event_sequence_sync",1,100,0},
+    {"trx_sequence_sync",1,100,0},
+    {"slave_sync_position",1,100,0},
+    {"master_sync_position",1,100,0},
     {"parallel_workers",1,100,0},
     {"worker_queue_length",1,100,0}
 };

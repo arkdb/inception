@@ -2165,8 +2165,7 @@ sys_var *find_dc_var(THD *thd,const char *str, uint length)
 {
     for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
     {
-        transfer_option_t* op = &default_transfer_options[i];
-        if (!strcasecmp(op->variable, str))
+        if (!strcasecmp(OPTION_GET_VARIABLE( &default_transfer_options[i] ), str))
         {
             thd->lex->is_dc_variable=1;
             return (sys_var*) str;

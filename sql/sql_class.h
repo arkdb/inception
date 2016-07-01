@@ -53,6 +53,67 @@
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
+#define OPTION_CPY(OPTION_TO,OPTION_FROM)\
+do{\
+    strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
+    (OPTION_TO)->value = (OPTION_FROM)->value;\
+    (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
+    (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
+}while(0)
+
+#define OPTION_GET_VARIABLE(OPTION)\
+    (OPTION)->variable
+
+#define OPTION_CMP_VARIABLE(OPTION_TO,OPTION_FROM)\
+    strcmp((OPTION_TO)->variable,(OPTION_FROM)->variable)
+
+#define OPTION_SET_VARIABLE(OPTION_TO,OPTION_FROM)\
+do{\
+    strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
+}while(0)
+
+#define OPTION_GET_VALUE(OPTION)\
+    (OPTION)->value
+
+#define OPTION_CPY_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->value = (OPTION_FROM)->value;\
+}while(0)
+
+#define OPTION_SET_VALUE(OPTION_TO,VALUE)\
+do{\
+    (OPTION_TO)->value = VALUE;\
+}while(0)
+
+#define OPTION_GET_MAX_VALUE(OPTION)\
+    (OPTION)->max_value
+
+#define OPTION_CPY_MAX_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
+}while(0)
+
+#define OPTION_SET_MAX_VALUE(OPTION_TO,VALUE)\
+do{\
+    (OPTION_TO)->max_value = VALUE;\
+}while(0)
+
+#define OPTION_GET_MIN_VALUE(OPTION)\
+    (OPTION)->min_value
+
+#define OPTION_CPY_MIN_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
+}while(0)
+
+#define OPTION_SET_MIN_VALUE(OPTION_TO,VALUE)\
+do{\
+    (OPTION_TO)->min_value = VALUE;\
+}while(0)
+
+#define OPTION_VALUE_INVALID(OPTION,VALUE)\
+    VALUE > (OPTION)->max_value || VALUE < (OPTION)->min_value
+
 /**
   The meat of thd_proc_info(THD*, char*), a macro that packs the last
   three calling-info parameters.
@@ -210,6 +271,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_DO_UNKNOWN               0
 #define INCEPTION_DO_DO                    1
 #define INCEPTION_DO_IGNORE                2
+
 
 
 // typedef struct datacenter_struct datacenter_t;
@@ -429,11 +491,11 @@ struct mts_struct
 enum transfer_option_enum{
     GATE_OPTION_FIRST=0,
     CHECKPOINT_PERIOD,
-    INCEPTION_TRANSFER_BINLOG_EXPIRE_HOURS,
-    INCEPTION_TRANSFER_EVENT_SEQUENCE_SYNC,
-    INCEPTION_TRANSFER_TRX_SEQUENCE_SYNC,
-    INCEPTION_TRANSFER_SLAVE_SYNC,
-    INCEPTION_TRANSFER_MASTER_SYNC,
+    BINLOG_EXPIRE_HOURS,
+    EVENT_SEQUENCE_SYNC,
+    TRX_SEQUENCE_SYNC,
+    SLAVE_SYNC_POSITION,
+    MASTER_SYNC_POSITION,
     PARALLEL_WORKERS,
     WORKER_QUEUE_LENGTH,
     GATE_OPTION_LAST
