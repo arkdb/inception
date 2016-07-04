@@ -4293,8 +4293,7 @@ inception_transfer_load_datacenter(
     strcpy(datacenter->instance_name, instance_name);
     str_init(&datacenter->errmsg);
     datacenter->stop_time = NULL;
-    //default 50ms
-    OPTION_SET_VALUE(&datacenter->option_list[CHECKPOINT_PERIOD], 50);
+
     LIST_INIT(datacenter->slave_lst);
     if (need_lock)
         mysql_mutex_lock(&transfer_mutex); 

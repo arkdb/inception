@@ -663,14 +663,14 @@ const double log_10[] = {
 transfer_option_t default_transfer_options[]=
 {
     {"ignore", 0,0,0},
-    {"checkpoint_period",1,100,0},
-    {"binlog_expire_hours",1,100,0},
-    {"event_sequence_sync",1,100,0},
-    {"trx_sequence_sync",1,100,0},
-    {"slave_sync_position",1,100,0},
-    {"master_sync_position",1,100,0},
-    {"parallel_workers",1,100,0},
-    {"worker_queue_length",1,100,0}
+    {"checkpoint_period",50,100000000,1},/* 单位是ms */
+    {"binlog_expire_hours",1,10000,1}, /* 单位是小时 */
+    {"event_sequence_sync",50000,100000000,1},/* 发号器大小,event个数 */
+    {"trx_sequence_sync",10000,100000000,1},/* 发号器大小,事务个数 */
+    {"slave_sync_position",10000,100000000,1},/* 单位是事务个数 */
+    {"master_sync_position",10000,100000000,1},/* 单位是事务个数 */
+    {"parallel_workers",1,999,1},/* 并发线程数 */
+    {"worker_queue_length",10000,100000,1}/* 队列长度 */
 };
 
 time_t server_start_time, flush_status_time;
