@@ -2843,6 +2843,7 @@ mysql_copy_table_info(
 
 table_info_t*
 mysql_convert_desc_to_table_info(
+    THD* thd,
     MYSQL_RES* source_res,
     char*  dbname,
     char*  tablename
@@ -2887,7 +2888,19 @@ mysql_convert_desc_to_table_info(
         if (source_row[2] != NULL)
             field_info->charset = get_charset(get_collation_number(source_row[2]),MYF(0));
 
-        strcpy(field_info->data_type, source_row[1]);
+        if (!strncasecmp("set(", source_row[1], 4))
+            strcpy(field_info->data_type, "set");
+        else if (!strncasecmp("enum(", source_row[1], 5))
+            strcpy(field_info->data_type, "enum");
+        else if (strlen(source_row[1]) > FN_LEN)
+        {
+            sql_print_information("Existed unknown data type in table %s.%s(%s:%d): %s", 
+               table_info->db_name, table_info->table_name, thd->thd_sinfo->host, 
+               thd->thd_sinfo->port, source_row[1]);
+            strcpy(field_info->data_type, "UNKNOWN");
+        }
+        else
+            strcpy(field_info->data_type, source_row[1]);
 
         LIST_ADD_LAST(link, table_info->field_lst, field_info);
         source_row = mysql_fetch_row(source_res);
@@ -2938,7 +2951,7 @@ mysql_query_table_from_source(
         DBUG_RETURN(NULL);
     }
 
-    table_info = mysql_convert_desc_to_table_info(source_res, dbname, tablename);
+    table_info = mysql_convert_desc_to_table_info(thd, source_res, dbname, tablename);
 
     DBUG_RETURN(table_info);
 }
