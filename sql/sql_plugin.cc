@@ -2168,7 +2168,7 @@ sys_var *find_dc_var(THD *thd,const char *str, uint length)
         if (!strcasecmp(OPTION_GET_VARIABLE( &default_transfer_options[i] ), str))
         {
             thd->lex->is_dc_variable=1;
-            return (sys_var*) str;
+            return (sys_var*) "ok";
         }
         
     }
@@ -2207,11 +2207,6 @@ sys_var *find_sys_var(THD *thd, const char *str, uint length)
   if(!var)
   {
       var=find_dc_var(thd,str,length);
-      if(var)
-      {
-        var->name.str=str;
-        var->name.length = strlen(str);
-      }
   }
     
   if (!var)
