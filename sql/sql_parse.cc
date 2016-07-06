@@ -5155,7 +5155,6 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     if (mysql_real_query(mysql, str_get(sql), str_get_len(sql)))
     {
         mysql_mutex_unlock(&transfer_mutex);
-        
         my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
         thd->close_all_connections();
         return false;
@@ -5166,8 +5165,8 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     datacenter = inception_transfer_load_datacenter(thd, thd->lex->ident.str, false);
     if (datacenter==NULL)
     {
-        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), thd->lex->ident.str);
         mysql_mutex_unlock(&transfer_mutex);
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), thd->lex->ident.str);
         return false;
     }
     else
@@ -5179,10 +5178,10 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
             {
                 if(OPTION_IS_ONLINE(&datacenter->option_list[i])==0&&datacenter->transfer_on)
                 {
+                    mysql_mutex_unlock(&transfer_mutex);
                     char error[1024];
                     sprintf(error,"This option is not online option,please stop transfer before set.");
                     my_error(ER_SET_OPTIONS_ERROR, MYF(0), error);
-                    thd->close_all_connections();
                     return false;
                 }
                 else
