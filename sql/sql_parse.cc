@@ -5177,7 +5177,16 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
             if(strncasecmp(thd->lex->name.str,OPTION_GET_VARIABLE(&datacenter->option_list[i])
                            ,thd->lex->name.length)==0)
             {
-                OPTION_SET_VALUE(&datacenter->option_list[i], value_dc);
+                if(OPTION_IS_ONLINE(&datacenter->option_list[i])==0&&datacenter->transfer_on)
+                {
+                    char error[1024];
+                    sprintf(error,"This option is not online option,please stop transfer before set.");
+                    my_error(ER_SET_OPTIONS_ERROR, MYF(0), error);
+                    thd->close_all_connections();
+                    return false;
+                }
+                else
+                    OPTION_SET_VALUE(&datacenter->option_list[i], value_dc);
             }
 
         }

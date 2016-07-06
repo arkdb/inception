@@ -59,6 +59,7 @@ do{\
     (OPTION_TO)->value = (OPTION_FROM)->value;\
     (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
     (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
+    (OPTION_TO)->is_online = (OPTION_FROM)->is_online;\
 }while(0)
 
 #define OPTION_GET_VARIABLE(OPTION)\
@@ -66,11 +67,6 @@ do{\
 
 #define OPTION_CMP_VARIABLE(OPTION_TO,OPTION_FROM)\
     strcmp((OPTION_TO)->variable,(OPTION_FROM)->variable)
-
-#define OPTION_SET_VARIABLE(OPTION_TO,OPTION_FROM)\
-do{\
-    strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
-}while(0)
 
 #define OPTION_GET_VALUE(OPTION)\
     (OPTION)->value
@@ -93,11 +89,6 @@ do{\
     (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
 }while(0)
 
-#define OPTION_SET_MAX_VALUE(OPTION_TO,VALUE)\
-do{\
-    (OPTION_TO)->max_value = VALUE;\
-}while(0)
-
 #define OPTION_GET_MIN_VALUE(OPTION)\
     (OPTION)->min_value
 
@@ -106,10 +97,8 @@ do{\
     (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
 }while(0)
 
-#define OPTION_SET_MIN_VALUE(OPTION_TO,VALUE)\
-do{\
-    (OPTION_TO)->min_value = VALUE;\
-}while(0)
+#define OPTION_IS_ONLINE(OPTION)\
+    (OPTION)->is_online
 
 #define OPTION_VALUE_INVALID(OPTION,VALUE)\
     VALUE > (OPTION)->max_value || VALUE < (OPTION)->min_value
@@ -506,8 +495,9 @@ struct transfer_option_struct
 {
     char                 variable[64];
     volatile int         value;
-    volatile int         max_value;
-    volatile int         min_value;
+    int                  max_value;
+    int                  min_value;
+    int                  is_online;
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
