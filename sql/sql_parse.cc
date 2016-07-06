@@ -6687,9 +6687,9 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         if (parse_sql(query_thd, &parser_state, NULL))
         {
             sql_print_error("transfer parse query event error: %s, SQL: %s", 
-                thd->get_stmt_da()->message(), query_thd->query());
+                query_thd->get_stmt_da()->message(), query_thd->query());
             inception_transfer_set_errmsg(thd, mi->datacenter, 
-                ER_TRANSFER_INTERRUPT, thd->get_stmt_da()->message());
+                ER_TRANSFER_INTERRUPT, query_thd->get_stmt_da()->message());
             DBUG_RETURN(true);
         }
         else
@@ -6781,8 +6781,7 @@ inception_transfer_query_event(
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_EIDENUM))
         DBUG_RETURN(true);
 
-    inception_transfer_sql_parse(mi, ev);
-    DBUG_RETURN(false);
+    DBUG_RETURN(inception_transfer_sql_parse(mi, ev));
 }
 
 MYSQL_RES*

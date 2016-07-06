@@ -7948,10 +7948,7 @@ analyze:
           {
             THD *thd= YYTHD;
             LEX* lex= thd->lex;
-            DBUG_ASSERT(!lex->m_sql_cmd);
-//             lex->m_sql_cmd= new (thd->mem_root) Sql_cmd_analyze_table();
-            if (lex->m_sql_cmd == NULL)
-              MYSQL_YYABORT;
+            lex->sql_command = SQLCOM_ANALYZE;
           }
         ;
 
