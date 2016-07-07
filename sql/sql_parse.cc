@@ -5788,6 +5788,7 @@ inception_transfer_table_map(
         return true;
     }
 
+    table_info->binlog_table_id = 0;
     if (table_info)
         table_info->binlog_table_id = tab_map_ev->get_table_id();
     //check compatiable
@@ -6535,18 +6536,19 @@ int inception_transfer_write_ddl_event(Master_info* mi, Log_event* ev, transfer_
     int optype=0;
     str_t* backup_sql;
     THD *thd;
+    table_info_t* table_info;
 
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
     thd = mi->thd;
     query_thd = thd->query_thd;
-    mi->table_info = inception_transfer_get_table_object(mi->thd, 
+    table_info = inception_transfer_get_table_object(mi->thd, 
                      query_thd->lex->query_tables->db, 
                      query_thd->lex->query_tables->table_name, mi->datacenter);
-    if (mi->table_info == NULL)
+    if (table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE))
         DBUG_RETURN(false);
        
-    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, true);
+    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, table_info, true);
     if (backup_sql == NULL)
         DBUG_RETURN(true);
 
