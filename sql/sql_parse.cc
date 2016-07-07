@@ -5788,7 +5788,6 @@ inception_transfer_table_map(
         return true;
     }
 
-    table_info->binlog_table_id = 0;
     if (table_info)
         table_info->binlog_table_id = tab_map_ev->get_table_id();
     //check compatiable
