@@ -282,6 +282,7 @@ struct table_info_struct
     longlong mts_ref_count;
     int mts_index;
 
+    ulong binlog_table_id;
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;
 };

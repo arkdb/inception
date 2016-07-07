@@ -275,13 +275,14 @@ int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
 int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
 ulong mysql_read_event(MYSQL* mysql);
 int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_event** evlog);
-int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev);
+int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev, table_info_t* table_info);
 table_info_t* mysql_get_table_object(THD* thd, char* dbname, char* tablename, int not_exist_report);
 int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index, int qurot_flag,  int doublequtor_escape);
 int inception_transfer_execute_store_with_transaction( Master_info* mi, Log_event* ev, char*  sql);
 int inception_transfer_execute_store_simple( Master_info* mi, Log_event* ev, char*  sql);
 int mysql_unpack_row(
     Master_info* mi,
+    ulong          m_table_id,
     uchar const *const row_data,
     MY_BITMAP const *cols,
     uchar const **const row_end,
@@ -303,6 +304,7 @@ int mysql_cache_deinit_task(THD* thd);
 char* inception_get_task_sequence(THD* thd);
 int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
 void mysql_dup_char( char* src, char* dest, char chr);
+table_info_t* mysql_get_table_info_by_id( Master_info* mi, ulong m_table_id);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -5763,12 +5765,13 @@ inception_transfer_table_map(
     table_info_t*   table_info;
 
     tab_map_ev = (Table_map_log_event*)ev;
-    if (mysql_parse_table_map_log_event(mi, ev))
-        sql_print_error("transfer parse table map event failed, db: %s, table: %s", 
-		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
     table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
+
+    if (mysql_parse_table_map_log_event(mi, ev, table_info))
+        sql_print_error("transfer parse table map event failed, db: %s, table: %s", 
+		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
     if (!table_info && 
          (strcmp(tab_map_ev->get_table_name(), mi->last_report_table) ||
@@ -5782,17 +5785,17 @@ inception_transfer_table_map(
 
     if (!table_info && mi->thd->is_error())
     {
-        mi->table_info = NULL;
         return true;
     }
 
-    mi->table_info = table_info;
+    if (table_info)
+        table_info->binlog_table_id = tab_map_ev->get_table_id();
     //check compatiable
     for (RPL_TABLE_LIST *ptr= mi->tables_to_lock ; ptr != NULL ; 
         ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global))
     {
-        if (mi->table_info && strcasecmp(ptr->db, mi->table_info->db_name) == 0
-          && strcasecmp(ptr->table_name , mi->table_info->table_name) == 0)
+        if (table_info && strcasecmp(ptr->db, table_info->db_name) == 0
+          && strcasecmp(ptr->table_name , table_info->table_name) == 0)
         {
             if ((static_cast<RPL_TABLE_LIST*>(ptr)->m_tabledef).size() != 
                 LIST_GET_LEN(table_info->field_lst) && table_info->doignore != INCEPTION_DO_IGNORE)
@@ -6129,17 +6132,19 @@ int inception_transfer_write_row(
     Write_rows_log_event*  write_ev;
     int       error= 0;
     str_t* backup_sql;
+    table_info_t* table_info;
 
     DBUG_ENTER("inception_transfer_write_row");
     write_ev = (Write_rows_log_event*)ev;
 
-    if ((mi->table_info && mi->table_info->doignore == INCEPTION_DO_IGNORE) ||
-        mi->table_info == NULL)
+    table_info = mysql_get_table_info_by_id(mi, write_ev->m_table_id);
+    if ((table_info && table_info->doignore == INCEPTION_DO_IGNORE) ||
+        table_info == NULL)
         DBUG_RETURN(error);
         
     do
     {
-        backup_sql = inception_mts_get_sql_buffer(mi->datacenter, mi->table_info, false);
+        backup_sql = inception_mts_get_sql_buffer(mi->datacenter, table_info, false);
         if (backup_sql == NULL)
         {
             error=true;
@@ -6153,8 +6158,8 @@ int inception_transfer_write_row(
             goto error;
         }
 
-        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
-            &write_ev->m_curr_row_end, write_ev->m_rows_end))
+        if (mysql_unpack_row(mi, write_ev->get_table_id(), write_ev->m_curr_row, 
+              write_ev->get_cols(), &write_ev->m_curr_row_end, write_ev->m_rows_end))
         {
             error=true;
             goto error;
@@ -6181,8 +6186,8 @@ int inception_transfer_write_row(
 
         if (optype == SQLCOM_UPDATE)
         {
-            if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
-                &write_ev->m_curr_row_end, write_ev->m_rows_end))
+            if (mysql_unpack_row(mi, write_ev->get_table_id(), write_ev->m_curr_row, 
+                  write_ev->get_cols(), &write_ev->m_curr_row_end, write_ev->m_rows_end))
             {
                 error=true;
                 goto error;
@@ -7772,9 +7777,19 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name)
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
         return true;
     }
 
+    sprintf(tmp, "truncate table `%s`.`master_positions`", datacenter_name);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
+
+    thd->close_all_connections();
     return false;
 }
 
@@ -13919,7 +13934,11 @@ enum_tbl_map_status
     DBUG_RETURN(res);
 }
 
-int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev)
+int mysql_parse_table_map_log_event(
+    Master_info *mi, 
+    Log_event* ev,
+    table_info_t*   table_info
+)
 {
     RPL_TABLE_LIST *table_list;
     char *db_mem, *tname_mem;
@@ -13946,6 +13965,7 @@ int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev)
 
     table_list->table_id= tab_map_ev->get_table_id();
     table_list->updating= 1;
+    table_list->table_info = table_info;
 
     enum_tbl_map_status tblmap_status= check_table_map(mi, table_list);
     if (tblmap_status == OK_TO_PROCESS)
@@ -14012,20 +14032,46 @@ param_data : length;
     return from+len;
 }
 
-bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **conv_table_var)
+table_info_t* mysql_get_table_info_by_id(
+    Master_info* mi, 
+    ulong m_table_id
+)
 {
-    DBUG_ENTER("mysql_get_table_data");
+    DBUG_ENTER("mysql_get_table_info_by_id");
 
     for (RPL_TABLE_LIST *ptr= mi->tables_to_lock ; ptr != NULL ; 
         ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global))
     {
-        if (mi->table_info && strcasecmp(ptr->db, mi->table_info->db_name) == 0
-          && strcasecmp(ptr->table_name , mi->table_info->table_name) == 0)
+        if (m_table_id == ptr->table_id)
+        {
+            DBUG_RETURN((table_info_t*)(ptr->table_info));
+        }
+    }
+
+    DBUG_RETURN(NULL);
+}
+
+table_info_t* mysql_get_table_data(
+    Master_info* mi, 
+    ulong m_table_id, 
+    table_def **tabledef_var, 
+    TABLE **conv_table_var
+)
+{
+    DBUG_ENTER("mysql_get_table_data");
+    table_info_t* table_info = NULL;
+
+    for (RPL_TABLE_LIST *ptr= mi->tables_to_lock ; ptr != NULL ; 
+        ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global))
+    {
+        if (m_table_id == ptr->table_id)
         {
             TABLE *conv_table = NULL;
             *tabledef_var= &static_cast<RPL_TABLE_LIST*>(ptr)->m_tabledef;
             *conv_table_var= static_cast<RPL_TABLE_LIST*>(ptr)->m_conv_table;
 
+            table_info  = (table_info_t*)ptr->table_info;
+            mi->table_info = table_info;
             if (!(static_cast<RPL_TABLE_LIST*>(ptr)->m_conv_table) && 
                 !ptr->m_tabledef.compatible_with(mi->thd, NULL, 
                 mi->table_info, &conv_table, mi->get_lock_tables_mem_root()))
@@ -14037,33 +14083,31 @@ bool mysql_get_table_data(Master_info* mi, table_def **tabledef_var, TABLE **con
                     sql_print_information("convert table failed, db: %s, table: %s",
                         ptr->db, ptr->table_name);
 
-                DBUG_RETURN(FALSE);
+                DBUG_RETURN(NULL);
             }
 
             if (conv_table)
                 ptr->m_conv_table= conv_table;
             *tabledef_var= &static_cast<RPL_TABLE_LIST*>(ptr)->m_tabledef;
             *conv_table_var= static_cast<RPL_TABLE_LIST*>(ptr)->m_conv_table;
-            DBUG_RETURN(TRUE);
+            DBUG_RETURN(table_info);
         }
     }
 
-    if (mi->table_info)
-    {
-        if (mi->datacenter)
-            sql_print_information("[%s] can not find binlog table, db: %s, table: %s",
-            mi->datacenter->datacenter_name, mi->table_info->db_name, mi->table_info->table_name);
-        else
-            sql_print_information("can not find binlog table, db: %s, table: %s",
-            mi->table_info->db_name, mi->table_info->table_name);
-    }
+    if (mi->datacenter)
+        sql_print_information("[%s] can not find binlog table, db: %s, table: %s",
+        mi->datacenter->datacenter_name, mi->table_info->db_name, mi->table_info->table_name);
+    else
+        sql_print_information("can not find binlog table, db: %s, table: %s",
+        mi->table_info->db_name, mi->table_info->table_name);
 
-    DBUG_RETURN(FALSE);
+    DBUG_RETURN(NULL);
 }
 
 int
 mysql_unpack_row(
     Master_info* mi,
+    ulong          m_table_id,
     uchar const *const row_data,
     MY_BITMAP const *cols,
     uchar const **const row_end,
@@ -14088,8 +14132,6 @@ mysql_unpack_row(
         DBUG_RETURN(error);
     }
 
-    table_info = mi->table_info;
-
     DBUG_ASSERT(null_ptr < row_data + master_null_byte_count);
 
     unsigned int null_mask= 1U;
@@ -14098,7 +14140,8 @@ mysql_unpack_row(
     table_def *tabledef= NULL;
     TABLE *conv_table= NULL;
 
-    if (!mysql_get_table_data(mi, &tabledef, &conv_table))
+    table_info = mysql_get_table_data(mi, m_table_id, &tabledef, &conv_table);
+    if (!table_info)
     {
         my_error(ER_SLAVE_CORRUPT_EVENT, MYF(0));
         DBUG_RETURN(ER_SLAVE_CORRUPT_EVENT);
@@ -14916,7 +14959,8 @@ int mysql_parse_write_row_log_event(Master_info *mi, Log_event* ev)
 
     do
     {
-        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+        if (mysql_unpack_row(mi, write_ev->get_table_id(), 
+              write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
             DBUG_RETURN(true);
 
@@ -14947,7 +14991,8 @@ int mysql_parse_delete_row_log_event(Master_info *mi, Log_event* ev)
 
     do
     {
-        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+        if (mysql_unpack_row(mi, write_ev->get_table_id(), 
+              write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
             DBUG_RETURN(true);
 
@@ -14979,7 +15024,8 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
     do
     {
         rollback_sql.truncate();
-        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+        if (mysql_unpack_row(mi, write_ev->get_table_id(), 
+              write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
             DBUG_RETURN(true);
 
@@ -14995,7 +15041,8 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
 
-        if (mysql_unpack_row(mi, write_ev->m_curr_row, write_ev->get_cols(),
+        if (mysql_unpack_row(mi, write_ev->get_table_id(), 
+              write_ev->m_curr_row, write_ev->get_cols(),
             &write_ev->m_curr_row_end, write_ev->m_rows_end))
             DBUG_RETURN(true);
 
@@ -15078,7 +15125,7 @@ int mysql_parse_event_and_backup(
     switch(ev->get_type_code())
     {
     case TABLE_MAP_EVENT:
-        err = mysql_parse_table_map_log_event(mi, ev);
+        err = mysql_parse_table_map_log_event(mi, ev, mi->table_info);
         break;
 
     case WRITE_ROWS_EVENT_V1:

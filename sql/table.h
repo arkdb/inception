@@ -1570,6 +1570,7 @@ struct TABLE_LIST
   TABLE_LIST *next_local;
   /* link in a global list of all queries tables */
   TABLE_LIST *next_global, **prev_global;
+  void* table_info; /*for binlog parse*/
   char		*db, *alias, *table_name, *schema_table_name;
   char          *option;                /* Used by cache index  */
 
