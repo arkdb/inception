@@ -5519,7 +5519,7 @@ int inception_transfer_instance_table_create(
     
     if(inception_transfer_additional_tables_init(thd,datacenter,mysql))
     {
-        my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+        my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
         thd->close_all_connections();
         return true;
     }
@@ -5549,11 +5549,8 @@ int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t
     }
     
     if (mysql_real_query(mysql, str_get(insert_sql), str_get_len(insert_sql)))
-    {
-        my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
-        thd->close_all_connections();
         return true;
-    }
+    
     return false;
 }
 
@@ -5577,21 +5574,14 @@ int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* m
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
-        {
-            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
-            thd->close_all_connections();
             return true;
-        }
     }
     else
     {
         if(inception_transfer_options_init(thd,datacenter,mysql,create_sql))
-        {
-            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
-            thd->close_all_connections();
             return true;
-        }
     }
+    
     return false;
 }
 
