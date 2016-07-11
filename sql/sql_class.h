@@ -661,7 +661,8 @@ typedef struct split_cache_node_struct split_cache_node_t;
 struct split_cache_node_struct
 {
     str_t                                  sql_statements;
-    int                                     ddlflag;
+    int                                    ddlflag;
+    int                                    size;
     
     LIST_NODE_T(split_cache_node_t)         link;
 };

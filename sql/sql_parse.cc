@@ -878,6 +878,7 @@ int mysql_send_split_results(THD* thd)
     field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("sql_statement", FN_REFLEN));
     field_list.push_back(new Item_return_int("ddlflag", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("size", 20, MYSQL_TYPE_LONG));
 
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -908,6 +909,7 @@ int mysql_send_split_results(THD* thd)
 
             protocol->store(str_get(&sql_cache_node->sql_statements), thd->charset());
             protocol->store(sql_cache_node->ddlflag);
+            protocol->store(sql_cache_node->size);
 
             if (protocol->write())
                 break;
@@ -3190,11 +3192,13 @@ int mysql_add_new_one_cache_node(THD* thd,
     split_node = (split_cache_node_t*)my_malloc(sizeof(split_cache_node_t), MY_ZEROFILL);
     str_init(&split_node->sql_statements);
 
+    split_node->size = 0;
     //每次新建节点时，都将最新的 set names...及 use db 加在前面
     if (thd->lex->sql_command != SQLCOM_SET_OPTION) {
         if (str_get_len(&thd->setnames)) {
             str_append(&split_node->sql_statements, str_get(&thd->setnames));
             str_append(&split_node->sql_statements, ";\n");
+            split_node->size++;
         }
     }
 
@@ -3202,11 +3206,13 @@ int mysql_add_new_one_cache_node(THD* thd,
         if (str_get_len(&thd->usedb)) {
             str_append(&split_node->sql_statements, str_get(&thd->usedb));
             str_append(&split_node->sql_statements, ";\n");
+            split_node->size++;
         }
     }
     str_append_with_length(&split_node->sql_statements, thd->query(), thd->query_length());
     str_append(&split_node->sql_statements, ";\n");
     LIST_ADD_LAST(link, split_cache->field_lst, split_node);
+    split_node->size++;
 
     split_table = (split_table_t*)my_malloc(sizeof(split_table_t), MY_ZEROFILL);
 
@@ -3241,6 +3247,7 @@ int mysql_add_split_sql_node(
     split_cache_t*      split_cache;
     split_table_t*      split_table;
     split_cache_node_t* split_last;
+    int                 is_added=0;
 
     split_cache = thd->split_cache;
     if (LIST_GET_LEN(split_cache->field_lst) == 0 /*|| tablename == NULL*/) {
@@ -3248,8 +3255,9 @@ int mysql_add_split_sql_node(
         mysql_add_new_one_cache_node(thd, split_cache, dbname, tablename, sqltype, sql_command);
         return false;
     }
-
+    
     split_table = LIST_GET_FIRST(split_cache->table_lst);
+    
     while (split_table) {
         if ((!dbname || !tablename) || 
             (dbname && strcasecmp(split_table->dbname, dbname) != 0) ||
@@ -3263,10 +3271,10 @@ int mysql_add_split_sql_node(
             mysql_add_new_one_cache_node(thd, split_cache, dbname, tablename,sqltype, sql_command);
             return false;
         }
-
+        is_added=1;
         split_table = LIST_GET_NEXT(link, split_table);
     }
-
+    
     split_last = LIST_GET_LAST(split_cache->field_lst);
     //append to the last node
     if (thd->setnamesflag) {
@@ -3288,6 +3296,7 @@ int mysql_add_split_sql_node(
 
     str_append_with_length(&split_last->sql_statements, thd->query(), thd->query_length());
     str_append(&split_last->sql_statements, ";\n");
+    split_last->size++;
 
     split_table = (split_table_t*)my_malloc(sizeof(split_table_t), MY_ZEROFILL);
     if (dbname)
@@ -3299,8 +3308,10 @@ int mysql_add_split_sql_node(
     if (sql_command == SQLCOM_ALTER_TABLE)
         split_last->ddlflag = 1;
     split_table->sqltype = sqltype;
-    LIST_ADD_LAST(link, split_cache->table_lst, split_table);
 
+    if(LIST_GET_LEN(split_cache->table_lst)==1||is_added==0)
+        LIST_ADD_LAST(link, split_cache->table_lst, split_table);
+    
     return false;
 }
 
