@@ -358,7 +358,6 @@ void case_stmt_action_end_case(LEX *lex, bool simple)
   sp->m_parser_data.do_cont_backpatch(sp->instructions());
 }
 
-
 static bool
 find_sys_var_null_base(THD *thd, struct sys_var_with_base *tmp)
 {
@@ -366,9 +365,9 @@ find_sys_var_null_base(THD *thd, struct sys_var_with_base *tmp)
 
   if (tmp->var == NULL)
     my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), tmp->base_name.str);
-  else
-    tmp->base_name= null_lex_str;
-
+  /* else
+    tmp->base_name= null_lex_str; */ //注释掉是因为判断dc变量的时候用了base_name,没有删除的原因是目前没测出来这里不赋值为空有什么影响。
+  
   return thd->is_error();
 }
 
@@ -1857,7 +1856,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
         query verb_clause create change select do drop insert replace insert2
         insert_values update delete truncate rename
         show describe load alter optimize keycache preload flush
-        reset purge inception_magic_start inception_magic_commit 
+        reset purge inception_magic_start inception_magic_commit
         begin commit rollback savepoint release inception inception_show_param
         repair analyze check start checksum
         field_list field_list_item field_spec kill column_def key_def
@@ -14224,6 +14223,11 @@ opt_var_ident_type:
         | SESSION_SYM '.' { $$=OPT_SESSION; }
         ;
 
+inception_dc:
+          /* empty */   {LEX *lex= Lex;lex->ident.length=0;}
+        | FOR_SYM DATACENTER_SYM ident {LEX *lex= Lex; lex->ident=$3; }
+        ;
+
 // Option values with preceeding option_type.
 option_value_following_option_type:
           internal_variable_name equal set_expr_or_default
@@ -14231,7 +14235,7 @@ option_value_following_option_type:
             THD *thd= YYTHD;
             LEX *lex= Lex;
 
-            if ($1.var && $1.var != trg_new_row_fake_var)
+            if ( $1.var && $1.var != trg_new_row_fake_var )
             {
               /* It is a system variable. */
               if (set_system_variable(thd, &$1, lex->option_type, $3))
@@ -14258,7 +14262,7 @@ option_value_no_option_type:
             if (sp)
               sp->m_parser_data.push_expr_start_ptr(YY_TOKEN_START);
           }
-          set_expr_or_default
+          set_expr_or_default inception_dc
           {
             THD *thd= YYTHD;
             LEX *lex= Lex;
@@ -14299,9 +14303,33 @@ option_value_no_option_type:
             else if ($1.var)
             {
               /* We're not parsing SP and this is a system variable. */
-
-              if (set_system_variable(thd, &$1, lex->option_type, $4))
-                MYSQL_YYABORT;
+              if(lex->ident.length==0)
+              {
+                  if(thd->lex->is_dc_variable==1)
+                  {
+                      my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), $1.base_name.str);
+                      MYSQL_YYABORT;
+                  }
+                  else
+                  {
+                    if (set_system_variable(thd, &$1, lex->option_type, $4))
+                        MYSQL_YYABORT;
+                  }
+              }
+              else
+              {
+                  LEX *lex=Lex;
+                  if(thd->lex->is_dc_variable==0)
+                  {
+                      my_error(ER_UNKNOWN_SYSTEM_VARIABLE, MYF(0), $1.base_name.str);
+                      MYSQL_YYABORT;
+                  }
+                  else
+                  {
+                      lex->name = $1.base_name;
+                      lex->value_dc = $4;
+                  }
+              }
             }
             else
             {
@@ -15355,7 +15383,7 @@ inception_show_param:
         lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
         lex->sql_command = SQLCOM_INCEPTION;
     }
-    | GET_SYM local_show_param
+    | GET_SYM local_show_param inception_dc
     {    
             LEX *lex=Lex;
         lex->sql_command = SQLCOM_INCEPTION;
@@ -15470,16 +15498,17 @@ inception:
             lex->inception_cmd_type = INCEPTION_COMMAND_REMOTE_SHOW;
             lex->sql_command = SQLCOM_INCEPTION;
         }
-        | INCEPTION_SYM SET 
+        | INCEPTION_SYM SET
         {
-                LEX *lex=Lex;
+            LEX *lex=Lex;
             lex->var_list.empty();
             lex->inception_cmd_type = INCEPTION_COMMAND_LOCAL_SET;
-                lex->sql_command = SQLCOM_INCEPTION;
-                Lex->option_type= OPT_GLOBAL;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->option_type= OPT_GLOBAL;
         }
-        option_value    
+         option_value
         {
+           
         }
         | INCEPTION_SYM CREATE DATACENTER_SYM ident
         {

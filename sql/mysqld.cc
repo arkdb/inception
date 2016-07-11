@@ -600,13 +600,6 @@ char* inception_datacenter_host=NULL;
 int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
-ulong inception_transfer_trx_sequence_sync=0;
-ulong inception_transfer_event_sequence_sync=0;
-ulong inception_transfer_binlog_expire_hours=0;
-ulong inception_transfer_slave_sync=0;
-ulong inception_transfer_master_sync=0;
-ulong inception_transfer_worker_queue_length=0;
-ulong inception_transfer_parallel_workers=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
@@ -665,6 +658,19 @@ const double log_10[] = {
   1e280, 1e281, 1e282, 1e283, 1e284, 1e285, 1e286, 1e287, 1e288, 1e289,
   1e290, 1e291, 1e292, 1e293, 1e294, 1e295, 1e296, 1e297, 1e298, 1e299,
   1e300, 1e301, 1e302, 1e303, 1e304, 1e305, 1e306, 1e307, 1e308
+};
+
+transfer_option_t default_transfer_options[]=
+{
+    {"ignore", 0,0,0,0},
+    {"checkpoint_period",50,100000000,1,1},/* 单位是ms */
+    {"binlog_expire_hours",1,10000,1,1}, /* 单位是小时 */
+    {"event_sequence_sync",50000,100000000,1,1},/* 发号器大小,event个数 */
+    {"trx_sequence_sync",10000,100000000,1,1},/* 发号器大小,事务个数 */
+    {"slave_sync_position",10000,100000000,1,1},/* 单位是事务个数 */
+    {"master_sync_position",10000,100000000,1,1},/* 单位是事务个数 */
+    {"parallel_workers",1,999,1,0},/* 并发线程数 */
+    {"worker_queue_length",10000,100000,1,0}/* 队列长度 */
 };
 
 time_t server_start_time, flush_status_time;

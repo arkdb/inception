@@ -53,6 +53,56 @@
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
+#define OPTION_CPY(OPTION_TO,OPTION_FROM)\
+do{\
+    strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
+    (OPTION_TO)->value = (OPTION_FROM)->value;\
+    (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
+    (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
+    (OPTION_TO)->is_online = (OPTION_FROM)->is_online;\
+}while(0)
+
+#define OPTION_GET_VARIABLE(OPTION)\
+    (OPTION)->variable
+
+#define OPTION_CMP_VARIABLE(OPTION_TO,OPTION_FROM)\
+    strcmp((OPTION_TO)->variable,(OPTION_FROM)->variable)
+
+#define OPTION_GET_VALUE(OPTION)\
+    (OPTION)->value
+
+#define OPTION_CPY_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->value = (OPTION_FROM)->value;\
+}while(0)
+
+#define OPTION_SET_VALUE(OPTION_TO,VALUE)\
+do{\
+    (OPTION_TO)->value = VALUE;\
+}while(0)
+
+#define OPTION_GET_MAX_VALUE(OPTION)\
+    (OPTION)->max_value
+
+#define OPTION_CPY_MAX_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
+}while(0)
+
+#define OPTION_GET_MIN_VALUE(OPTION)\
+    (OPTION)->min_value
+
+#define OPTION_CPY_MIN_VALUE(OPTION_TO,OPTION_FROM)\
+do{\
+    (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
+}while(0)
+
+#define OPTION_IS_ONLINE(OPTION)\
+    (OPTION)->is_online
+
+#define OPTION_VALUE_INVALID(OPTION,VALUE)\
+    VALUE > (OPTION)->max_value || VALUE < (OPTION)->min_value
+
 /**
   The meat of thd_proc_info(THD*, char*), a macro that packs the last
   three calling-info parameters.
@@ -210,6 +260,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_DO_UNKNOWN               0
 #define INCEPTION_DO_DO                    1
 #define INCEPTION_DO_IGNORE                2
+
 
 
 // typedef struct datacenter_struct datacenter_t;
@@ -426,6 +477,29 @@ struct mts_struct
     mysql_mutex_t       mts_lock;
 };
 
+enum transfer_option_enum{
+    GATE_OPTION_FIRST=0,
+    CHECKPOINT_PERIOD,
+    BINLOG_EXPIRE_HOURS,
+    EVENT_SEQUENCE_SYNC,
+    TRX_SEQUENCE_SYNC,
+    SLAVE_SYNC_POSITION,
+    MASTER_SYNC_POSITION,
+    PARALLEL_WORKERS,
+    WORKER_QUEUE_LENGTH,
+    GATE_OPTION_LAST
+};
+
+typedef struct transfer_option_struct transfer_option_t;
+struct transfer_option_struct
+{
+    char                 variable[64];
+    volatile int         value;
+    int                  max_value;
+    int                  min_value;
+    int                  is_online;
+};
+
 typedef struct transfer_cache_struct transfer_cache_t;
 struct transfer_cache_struct
 {
@@ -451,7 +525,7 @@ struct transfer_cache_struct
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
-    volatile int           checkpoint_period;
+//    volatile int           checkpoint_period;
     long clock_diff_with_master;
     time_t last_master_timestamp;
     time_t last_event_timestamp;
@@ -471,8 +545,8 @@ struct transfer_cache_struct
     str_t dupchar_buffer;
     HASH table_cache;
     int doempty;
-    int parallel_workers;
-    int queue_length;
+//    int parallel_workers;
+//    int queue_length;
     //for qps stat
     time_t start_time;
     longlong events_count;
@@ -504,6 +578,9 @@ struct transfer_cache_struct
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+    
+    //dc options
+    transfer_option_t option_list[GATE_OPTION_LAST];
 };
 
 typedef struct transfer_struct transfer_t;
@@ -589,7 +666,8 @@ typedef struct split_cache_node_struct split_cache_node_t;
 struct split_cache_node_struct
 {
     str_t                                  sql_statements;
-    int                                     ddlflag;
+    int                                    ddlflag;
+    int                                    sql_count;
     
     LIST_NODE_T(split_cache_node_t)         link;
 };
@@ -668,6 +746,7 @@ struct sql_statistic_struct
 extern osc_cache_t global_osc_cache;
 extern task_cache_t global_task_cache;
 extern transfer_t global_transfer_cache;
+extern transfer_option_t default_transfer_options[];
 extern mysql_mutex_t osc_mutex;
 extern mysql_mutex_t task_mutex;
 extern mysql_mutex_t transfer_mutex;

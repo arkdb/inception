@@ -2358,6 +2358,9 @@ struct LEX: public Query_tables_list
   uint inception_cmd_sub_type;
   int nest_level;
   uint8 describe;
+  int is_dc_variable;
+  Item* value_dc;
+
   /*
     A flag that indicates what kinds of derived tables are present in the
     query (0 if no derived tables, otherwise a combination of flags
