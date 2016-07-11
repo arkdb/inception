@@ -662,7 +662,7 @@ struct split_cache_node_struct
 {
     str_t                                  sql_statements;
     int                                    ddlflag;
-    int                                    size;
+    int                                    sql_count;
     
     LIST_NODE_T(split_cache_node_t)         link;
 };
