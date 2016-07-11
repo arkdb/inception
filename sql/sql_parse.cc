@@ -305,7 +305,8 @@ char* inception_get_task_sequence(THD* thd);
 int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
 void mysql_dup_char( char* src, char* dest, char chr);
 table_info_t* mysql_get_table_info_by_id( Master_info* mi, ulong m_table_id);
-int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
+int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
+int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* mysql);
 int mysql_execute_inception_set_command_for_dc(THD* thd);
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
@@ -4368,6 +4369,12 @@ inception_transfer_load_datacenter(
 
     mysql_free_result(source_res);
     
+    if(inception_transfer_additional_tables_init(thd,datacenter_name,mysql))
+    {
+        thd->close_all_connections();
+        return NULL;
+    }
+    
     //read options
     source_res= NULL;
     sprintf (tmp, "select * from `%s`.`transfer_option`", datacenter_name);
@@ -5509,40 +5516,19 @@ int inception_transfer_instance_table_create(
             return true;
         }
     }
-
-    str_truncate(create_sql, str_get_len(create_sql));
-    create_sql = str_append(create_sql, "CREATE TABLE ");
-    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_option");
-    create_sql = str_append(create_sql, tmp);
-    create_sql = str_append(create_sql, "option_variable varchar(64) comment 'option variable', ");
-    create_sql = str_append(create_sql, "option_value int comment 'option value', ");
-    create_sql = str_append(create_sql, "PRIMARY KEY (`option_variable`))");
-    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
-                            "'transfer option'");
-    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    
+    if(inception_transfer_additional_tables_init(thd,datacenter,mysql))
     {
-        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
-        {
-            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
-            thd->close_all_connections();
-            return true;
-        }
-    }
-    else
-    {
-        if(init_transfer_options(thd,datacenter,mysql,create_sql))
-        {
-            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
-            thd->close_all_connections();
-            return true;
-        }
+        my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
     }
     
     thd->close_all_connections();
     return false;
 }
 
-int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql)
+int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql)
 {
     char tmp[1024];
     str_truncate(insert_sql, str_get_len(insert_sql));
@@ -5567,6 +5553,44 @@ int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_s
         my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
         thd->close_all_connections();
         return true;
+    }
+    return false;
+}
+
+int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* mysql)
+{
+    char tmp[1024];
+    str_t  create_sql_space;
+    str_t* create_sql;
+    create_sql = &create_sql_space;
+    create_sql = str_init(create_sql);
+    
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_option");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "option_variable varchar(64) comment 'option variable', ");
+    create_sql = str_append(create_sql, "option_value int comment 'option value', ");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`option_variable`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
+                            "'transfer option'");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
+    }
+    else
+    {
+        if(inception_transfer_options_init(thd,datacenter,mysql,create_sql))
+        {
+            my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
     }
     return false;
 }
