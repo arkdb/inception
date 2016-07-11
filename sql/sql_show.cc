@@ -5216,8 +5216,8 @@ int mysql_local_show_variables(THD *thd, int showall)
                                            option_type, NULL, "", upper_case_names, showall);
   else
   {
-      transfer_cache_t* datacenter = inception_transfer_load_datacenter(thd,thd->lex->ident.str,true);
-      if(datacenter!=NULL)
+      transfer_cache_t* datacenter= inception_transfer_load_datacenter(thd,thd->lex->ident.str,true);
+      if(datacenter != NULL)
           res= show_status_array_for_inception(thd, wild, enumerate_datacenter_vars(thd, sorted_vars, option_type, datacenter),
                                            option_type, NULL, "", upper_case_names, showall);
   }

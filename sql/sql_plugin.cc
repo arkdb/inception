@@ -2163,11 +2163,11 @@ static void update_func_str(THD *thd, struct st_mysql_sys_var *var,
 ****************************************************************************/
 sys_var *find_dc_var(THD *thd,const char *str, uint length)
 {
-    for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
     {
-        if (!strcasecmp(OPTION_GET_VARIABLE( &default_transfer_options[i] ), str))
+        if (!strcasecmp(OPTION_GET_VARIABLE(&default_transfer_options[i]), str))
         {
-            thd->lex->is_dc_variable=1;
+            thd->lex->is_dc_variable = 1;
             return (sys_var*) "ok";
         }
         
@@ -2203,10 +2203,10 @@ sys_var *find_sys_var(THD *thd, const char *str, uint length)
     mysql_rwlock_unlock(&LOCK_system_variables_hash);
   mysql_mutex_unlock(&LOCK_plugin);
 
-  thd->lex->is_dc_variable=0;
+  thd->lex->is_dc_variable= 0;
   if(!var)
   {
-      var=find_dc_var(thd,str,length);
+      var= find_dc_var(thd, str, length);
   }
     
   if (!var)

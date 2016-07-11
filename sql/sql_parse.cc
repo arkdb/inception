@@ -3192,7 +3192,7 @@ int mysql_add_new_one_cache_node(THD* thd,
     split_node = (split_cache_node_t*)my_malloc(sizeof(split_cache_node_t), MY_ZEROFILL);
     str_init(&split_node->sql_statements);
 
-    split_node->sql_count = 0;
+    split_node->sql_count= 0;
     //每次新建节点时，都将最新的 set names...及 use db 加在前面
     if (thd->lex->sql_command != SQLCOM_SET_OPTION) {
         if (str_get_len(&thd->setnames)) {
@@ -3247,7 +3247,7 @@ int mysql_add_split_sql_node(
     split_cache_t*      split_cache;
     split_table_t*      split_table;
     split_cache_node_t* split_last;
-    int                 is_added=0;
+    int                 is_added= 0;
 
     split_cache = thd->split_cache;
     if (LIST_GET_LEN(split_cache->field_lst) == 0 /*|| tablename == NULL*/) {
@@ -3271,7 +3271,7 @@ int mysql_add_split_sql_node(
             mysql_add_new_one_cache_node(thd, split_cache, dbname, tablename,sqltype, sql_command);
             return false;
         }
-        is_added=1;
+        is_added= 1;
         break;
     }
     
@@ -3302,14 +3302,14 @@ int mysql_add_split_sql_node(
     if (sql_command == SQLCOM_ALTER_TABLE)
         split_last->ddlflag = 1;
 
-    if(LIST_GET_LEN(split_cache->table_lst)==1||is_added==0)
+    if (is_added == 0)
     {
-        split_table = (split_table_t*)my_malloc(sizeof(split_table_t), MY_ZEROFILL);
+        split_table= (split_table_t*)my_malloc(sizeof(split_table_t), MY_ZEROFILL);
         if (dbname)
             strcpy(split_table->dbname, dbname);
         if (tablename)
             strcpy(split_table->tablename, tablename);
-        split_table->sqltype = sqltype;
+        split_table->sqltype= sqltype;
         LIST_ADD_LAST(link, split_cache->table_lst, split_table);
     }
     
@@ -4316,36 +4316,36 @@ inception_transfer_load_datacenter(
     mysql_free_result(source_res);
     
     //read options
-    source_res = NULL;
+    source_res= NULL;
     sprintf (tmp, "select * from `%s`.`transfer_option`", datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         thd->close_all_connections();
         return NULL;
     }
-    if ((source_res = mysql_store_result(mysql)) == NULL)
+    if ((source_res= mysql_store_result(mysql)) == NULL)
     {
         thd->close_all_connections();
         return NULL;
     }
-    source_row = mysql_fetch_row(source_res);
+    source_row= mysql_fetch_row(source_res);
     
-    for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
     {
         OPTION_CPY(&datacenter->option_list[i], &default_transfer_options[i]);
     }
     
     while(source_row)
     {
-        for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+        for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
         {
-            if(strcasecmp(OPTION_GET_VARIABLE(&datacenter->option_list[i]),source_row[0])==0)
+            if(strcasecmp(OPTION_GET_VARIABLE(&datacenter->option_list[i]), source_row[0]) == 0)
             {
-                int error=0;
-                OPTION_SET_VALUE(&datacenter->option_list[i], my_strtoll10(source_row[1], NULL,&error));
+                int error= 0;
+                OPTION_SET_VALUE(&datacenter->option_list[i], my_strtoll10(source_row[1], NULL, &error));
             }
         }
-        source_row = mysql_fetch_row(source_res);
+        source_row= mysql_fetch_row(source_res);
     }
     
     mysql_free_result(source_res);
@@ -5107,36 +5107,36 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     transfer_cache_t* datacenter;
     int value_dc;
     transfer_option_t* default_option = NULL;
-    Item_int* it = (Item_int*)thd->lex->value_dc;
+    Item_int* it= (Item_int*)thd->lex->value_dc;
     
-    mysql = thd->get_transfer_connection();
+    mysql= thd->get_transfer_connection();
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
         return false;
     }
     
-    if(strcmp("",thd->lex->value_dc->str_value.c_ptr()))
+    if(strcmp("", thd->lex->value_dc->str_value.c_ptr()))
     {
         int error=0;
-        value_dc = my_strtoll10(thd->lex->value_dc->str_value.c_ptr(), NULL,&error);
+        value_dc= my_strtoll10(thd->lex->value_dc->str_value.c_ptr(), NULL, &error);
     }
     else
     {
-        value_dc = it->value;
+        value_dc= it->value;
     }
     
-    for(int i=GATE_OPTION_FIRST+1; i<GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST+1; i < GATE_OPTION_LAST; ++i)
     {
-        if(strncasecmp(thd->lex->name.str,OPTION_GET_VARIABLE(&default_transfer_options[i])
-                       ,thd->lex->name.length)==0)
+        if(strncasecmp(thd->lex->name.str, OPTION_GET_VARIABLE(&default_transfer_options[i])
+                       ,thd->lex->name.length) == 0)
         {
-            default_option = &default_transfer_options[i];
+            default_option= &default_transfer_options[i];
             break;
         }
     }
     
-    if(default_option==NULL)
+    if(default_option == NULL)
     {
         char error[1024];
         sprintf(error,"Invalid option");
@@ -5145,7 +5145,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
         return false;
     }
     
-    if(OPTION_VALUE_INVALID(default_option,value_dc))
+    if(OPTION_VALUE_INVALID(default_option, value_dc))
     {
         char error[1024];
         sprintf(error,"The value is out of range.max is %d,min is %d",OPTION_GET_MAX_VALUE(default_option)
@@ -5157,13 +5157,13 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     
     mysql_mutex_lock(&transfer_mutex);
     
-    sql = &sql_space;
-    sql = str_init(sql);
-    sql = str_append(sql, "insert into ");
+    sql= &sql_space;
+    sql= str_init(sql);
+    sql= str_append(sql, "insert into ");
     sprintf (tmp, "`%s`.`transfer_option`(option_variable,option_value) values('%s',%d) "
              "ON DUPLICATE KEY UPDATE option_value=%d", thd->lex->ident.str,
              OPTION_GET_VARIABLE(default_option),value_dc,value_dc);
-    sql = str_append(sql, tmp);
+    sql= str_append(sql, tmp);
     if (mysql_real_query(mysql, str_get(sql), str_get_len(sql)))
     {
         mysql_mutex_unlock(&transfer_mutex);
@@ -5174,8 +5174,8 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     thd->close_all_connections();
     
     
-    datacenter = inception_transfer_load_datacenter(thd, thd->lex->ident.str, false);
-    if (datacenter==NULL)
+    datacenter= inception_transfer_load_datacenter(thd, thd->lex->ident.str, false);
+    if (datacenter == NULL)
     {
         mysql_mutex_unlock(&transfer_mutex);
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), thd->lex->ident.str);
@@ -5183,12 +5183,12 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     }
     else
     {
-        for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+        for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
         {
             if(strncasecmp(thd->lex->name.str,OPTION_GET_VARIABLE(&datacenter->option_list[i])
-                           ,thd->lex->name.length)==0)
+                           ,thd->lex->name.length) == 0)
             {
-                if(OPTION_IS_ONLINE(&datacenter->option_list[i])==0&&datacenter->transfer_on)
+                if(OPTION_IS_ONLINE(&datacenter->option_list[i]) == 0 && datacenter->transfer_on)
                 {
                     mysql_mutex_unlock(&transfer_mutex);
                     char error[1024];
@@ -5488,19 +5488,19 @@ int init_transfer_options(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_s
 {
     char tmp[1024];
     str_truncate(insert_sql, str_get_len(insert_sql));
-    insert_sql = str_append(insert_sql, "INSERT INTO ");
+    insert_sql= str_append(insert_sql, "INSERT INTO ");
     sprintf (tmp, "`%s`.`%s` values", datacenter, "transfer_option");
-    insert_sql = str_append(insert_sql, tmp);
+    insert_sql= str_append(insert_sql, tmp);
     
-    for(int i=GATE_OPTION_FIRST; i<GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
     {
         sprintf (tmp, "('%s',%d)", OPTION_GET_VARIABLE(&default_transfer_options[i])
                  ,OPTION_GET_VALUE(&default_transfer_options[i]));
         
-        insert_sql = str_append(insert_sql, tmp);
-        if(i!=GATE_OPTION_LAST-1)
+        insert_sql= str_append(insert_sql, tmp);
+        if(i != GATE_OPTION_LAST-1)
         {
-            insert_sql = str_append(insert_sql, ",");
+            insert_sql= str_append(insert_sql, ",");
         }
     }
     
