@@ -18,4 +18,6 @@ pages:
  - [osc.md, '13. Inception 对OSC的支持']
  - [statistic.md, '14. Inception 的统计功能']
  - [queryprint.md, '15. Inception 语法树打印']
- - [release.md, '16. Inception 发布日志']
+ - [inception_gate_rd.md, '16. Inception Gate开发者手册']
+ - [inception_gate_dba.md, '17. Inception Gate DBA运维手册']
+ - [release.md, '18. Inception 发布日志']
