@@ -1,0 +1,21 @@
+site_name: Inception使用规范及说明文档
+theme: readthedocs
+pages: 
+ - [index.md, 'Inception使用规范及说明文档']
+ - [chapter1.md, 'Inception序']
+ - [source.md, '1. Inception 是如何诞生的']
+ - [inception.md, '2. Inception 总述及体系结构']
+ - [install.md, '3. Inception 安装说明']
+ - [usage.md, '4. Inception 使用方法']
+ - [option.md, '5. Inception 支持选项及意义']
+ - [backup.md, '6. Inception 备份功能说明']
+ - [rules.md, '7. Inception 审核规范及原则']
+ - [variables.md, '8. Inception所支持的参数变量']
+ - [results.md, '9. Inception结果集']
+ - [command.md, '10. Inception命令集']
+ - [requires.md, '11. Inception 对线上配置需求']
+ - [extras.md, '12. Inception 额外功能说明']
+ - [osc.md, '13. Inception 对OSC的支持']
+ - [statistic.md, '14. Inception 的统计功能']
+ - [queryprint.md, '15. Inception 语法树打印']
+ - [release.md, '16. Inception 发布日志']
