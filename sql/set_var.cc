@@ -527,7 +527,7 @@ int inception_show_datacenter_variables(THD* thd,transfer_cache_t* datacenter)
         protocol->prepare_for_resend();
         protocol->store(OPTION_GET_VARIABLE(&datacenter->option_list[i]), system_charset_info);
         protocol->store(OPTION_GET_VALUE(&datacenter->option_list[i]));
-        protocol->store(OPTION_GET_UNIT(&datacenter->option_list[i]), system_charset_info);
+        protocol->store(OPTION_GET_COMMENT(&datacenter->option_list[i]), system_charset_info);
         
         protocol->write();
     }

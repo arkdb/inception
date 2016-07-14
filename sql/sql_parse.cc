@@ -340,13 +340,14 @@ str_init(str_t* str)
     str->str = str->str_buf;
     str->str_len = NAME_CHAR_LEN;
     str->cur_len = 0;
+    str->extend_len = 0;
     memset(str->str, 0, NAME_CHAR_LEN);
 
     return str;
 }
 
 str_t*
-str_init(str_t* str, int extend_len)
+str_init_with_extend(str_t* str, int extend_len)
 {
     str->str = str->str_buf;
     str->str_len = NAME_CHAR_LEN;
@@ -454,7 +455,10 @@ str_deinit(str_t* str)
         return;
 
     if (str->str != str->str_buf)
+    {
         free(str->str);
+        str->str = str->str_buf;
+    }
 }
 
 char*
@@ -3258,7 +3262,7 @@ int mysql_add_new_one_cache_node(THD* thd,
     }
 
     split_node = (split_cache_node_t*)my_malloc(sizeof(split_cache_node_t), MY_ZEROFILL);
-    str_init(&split_node->sql_statements, 10240);
+    str_init_with_extend(&split_node->sql_statements, 10240);
 
     split_node->sql_count= 0;
     //每次新建节点时，都将最新的 set names...及 use db 加在前面

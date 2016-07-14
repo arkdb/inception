@@ -60,7 +60,7 @@ do{\
     (OPTION_TO)->max_value = (OPTION_FROM)->max_value;\
     (OPTION_TO)->min_value = (OPTION_FROM)->min_value;\
     (OPTION_TO)->is_online = (OPTION_FROM)->is_online;\
-    strcpy((OPTION_TO)->unit,(OPTION_FROM)->unit);\
+    strcpy((OPTION_TO)->comment,(OPTION_FROM)->comment);\
 }while(0)
 
 #define OPTION_GET_VARIABLE(OPTION)\
@@ -104,8 +104,8 @@ do{\
 #define OPTION_VALUE_INVALID(OPTION,VALUE)\
     VALUE > (OPTION)->max_value || VALUE < (OPTION)->min_value
 
-#define OPTION_GET_UNIT(OPTION)\
-    (OPTION)->unit
+#define OPTION_GET_COMMENT(OPTION)\
+    (OPTION)->comment
 
 /**
   The meat of thd_proc_info(THD*, char*), a macro that packs the last
@@ -502,7 +502,7 @@ struct transfer_option_struct
     int                  max_value;
     int                  min_value;
     int                  is_online;
-    char                 unit[128];
+    char                 comment[128];
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
