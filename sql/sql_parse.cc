@@ -314,7 +314,10 @@ str_deinit(str_t* str)
         return;
 
     if (str->str != str->str_buf)
+    {
         free(str->str);
+        str->str = str->str_buf;
+    }
 }
 
 char*
@@ -11294,6 +11297,7 @@ int mysql_deinit_sql_cache(THD* thd)
         while (split_cache_node) {
 
             split_cache_node_next = LIST_GET_NEXT(link, split_cache_node);
+            str_deinit(&(split_cache_node->sql_statements));
             LIST_REMOVE(link, thd->split_cache->field_lst, split_cache_node);
             my_free(split_cache_node);
 
