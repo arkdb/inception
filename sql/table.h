@@ -104,6 +104,7 @@ struct str_struct
 	char*	str;
 	int		str_len;
 	int		cur_len;
+    int     extend_len;
 };
 
 typedef struct select_info_struct select_info_t;

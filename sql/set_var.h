@@ -321,7 +321,7 @@ extern SHOW_COMP_OPTION have_compress;
 */
 
 SHOW_VAR* enumerate_sys_vars(THD *thd, bool sorted, enum enum_var_type type);
-SHOW_VAR* enumerate_datacenter_vars(THD *thd, bool sorted, enum enum_var_type type,transfer_cache_t* datacenter);
+int inception_show_datacenter_variables(THD *thd,transfer_cache_t* datacenter);
 
 sys_var *find_sys_var(THD *thd, const char *str, uint length=0);
 int sql_set_variables(THD *thd, List<set_var_base> *var_list);

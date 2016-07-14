@@ -346,13 +346,28 @@ str_init(str_t* str)
 }
 
 str_t*
+str_init(str_t* str, int extend_len)
+{
+    str->str = str->str_buf;
+    str->str_len = NAME_CHAR_LEN;
+    str->cur_len = 0;
+    str->extend_len = extend_len;
+    memset(str->str, 0, NAME_CHAR_LEN);
+    
+    return str;
+}
+
+str_t*
 str_relloc(str_t* str, int namelen)
 {
     char*   select_item_tmp;
     int    buflen ;
     int    newlen ;
 
-    newlen = namelen + STR_EXTEND_LENGTH;
+    if(str->extend_len > 0)
+        newlen = namelen + str->extend_len;
+    else
+        newlen = namelen + STR_EXTEND_LENGTH;
     select_item_tmp = (char*)my_malloc(newlen, MY_ZEROFILL);
     buflen = newlen;
     strcpy(select_item_tmp, str->str);
@@ -726,6 +741,7 @@ void mysql_compute_sql_sha1(THD* thd, sql_cache_node_t* sql_cache_node)
     String str(str_get(sqlinfo), system_charset_info);
     calculate_password(&str, m_hashed_password_buffer);
     strcpy(sql_cache_node->sqlsha1, m_hashed_password_buffer);
+    str_deinit(sqlinfo);
 }
 
 int mysql_cache_one_sql(THD* thd)
@@ -3242,7 +3258,7 @@ int mysql_add_new_one_cache_node(THD* thd,
     }
 
     split_node = (split_cache_node_t*)my_malloc(sizeof(split_cache_node_t), MY_ZEROFILL);
-    str_init(&split_node->sql_statements);
+    str_init(&split_node->sql_statements, 10240);
 
     split_node->sql_count= 0;
     //每次新建节点时，都将最新的 set names...及 use db 加在前面
@@ -3345,7 +3361,7 @@ int mysql_add_split_sql_node(
 
         thd->useflag = 0;
     }
-
+    
     str_append_with_length(&split_last->sql_statements, thd->query(), thd->query_length());
     str_append(&split_last->sql_statements, ";\n");
     split_last->sql_count++;
@@ -4397,7 +4413,7 @@ inception_transfer_load_datacenter(
     
     while(source_row)
     {
-        for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
+        for(int i= GATE_OPTION_FIRST + 1; i < GATE_OPTION_LAST; ++i)
         {
             if(strcasecmp(OPTION_GET_VARIABLE(&datacenter->option_list[i]), source_row[0]) == 0)
             {
@@ -4680,6 +4696,7 @@ int mysql_master_transfer_status(
 
     protocol->write();
 
+    str_deinit(str);
     my_eof(thd);
     DBUG_RETURN(res);
 }
@@ -5191,7 +5208,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
         value_dc= it->value;
     }
     
-    for(int i= GATE_OPTION_FIRST+1; i < GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST + 1; i < GATE_OPTION_LAST; ++i)
     {
         if(strncasecmp(thd->lex->name.str, OPTION_GET_VARIABLE(&default_transfer_options[i])
                        ,thd->lex->name.length) == 0)
@@ -5231,6 +5248,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     sql= str_append(sql, tmp);
     if (mysql_real_query(mysql, str_get(sql), str_get_len(sql)))
     {
+        str_deinit(sql);
         mysql_mutex_unlock(&transfer_mutex);
         my_error(ER_SET_OPTIONS_ERROR, MYF(0), mysql_error(mysql));
         thd->close_all_connections();
@@ -5242,19 +5260,21 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     datacenter= inception_transfer_load_datacenter(thd, thd->lex->ident.str, false);
     if (datacenter == NULL)
     {
+        str_deinit(sql);
         mysql_mutex_unlock(&transfer_mutex);
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), thd->lex->ident.str);
         return false;
     }
     else
     {
-        for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
+        for(int i= GATE_OPTION_FIRST + 1; i < GATE_OPTION_LAST; ++i)
         {
             if(strncasecmp(thd->lex->name.str,OPTION_GET_VARIABLE(&datacenter->option_list[i])
                            ,thd->lex->name.length) == 0)
             {
                 if(OPTION_IS_ONLINE(&datacenter->option_list[i]) == 0 && datacenter->transfer_on)
                 {
+                    str_deinit(sql);
                     mysql_mutex_unlock(&transfer_mutex);
                     char error[1024];
                     sprintf(error,"This option is not online option,please stop transfer before set.");
@@ -5268,6 +5288,7 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
         }
     }
     
+    str_deinit(sql);
     mysql_mutex_unlock(&transfer_mutex);
 
     return false;
@@ -5332,6 +5353,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5369,6 +5391,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5400,6 +5423,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5426,6 +5450,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5445,6 +5470,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5459,6 +5485,7 @@ int inception_transfer_instance_table_create(
         if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5480,6 +5507,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5498,6 +5526,7 @@ int inception_transfer_instance_table_create(
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5512,6 +5541,7 @@ int inception_transfer_instance_table_create(
         if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+            str_deinit(create_sql);
             thd->close_all_connections();
             return true;
         }
@@ -5520,10 +5550,12 @@ int inception_transfer_instance_table_create(
     if(inception_transfer_additional_tables_init(thd,datacenter,mysql))
     {
         my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
+        str_deinit(create_sql);
         thd->close_all_connections();
         return true;
     }
     
+    str_deinit(create_sql);
     thd->close_all_connections();
     return false;
 }
@@ -5536,7 +5568,7 @@ int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t
     sprintf (tmp, "`%s`.`%s` values", datacenter, "transfer_option");
     insert_sql= str_append(insert_sql, tmp);
     
-    for(int i= GATE_OPTION_FIRST; i < GATE_OPTION_LAST; ++i)
+    for(int i= GATE_OPTION_FIRST + 1; i < GATE_OPTION_LAST; ++i)
     {
         sprintf (tmp, "('%s',%d)", OPTION_GET_VARIABLE(&default_transfer_options[i])
                  ,OPTION_GET_VALUE(&default_transfer_options[i]));
@@ -5574,14 +5606,21 @@ int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* m
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            str_deinit(create_sql);
             return true;
+        }
     }
     else
     {
         if(inception_transfer_options_init(thd,datacenter,mysql,create_sql))
+        {
+            str_deinit(create_sql);
             return true;
+        }
     }
     
+    str_deinit(create_sql);
     return false;
 }
 
@@ -5721,6 +5760,7 @@ int inception_transfer_add_instance(
     create_sql = str_append(create_sql, tmp);
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
+        str_deinit(create_sql);
         my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
         goto error;
     }
@@ -5732,6 +5772,7 @@ int inception_transfer_add_instance(
         my_free(datacenter);
     }
 
+    str_deinit(create_sql);
 error:
     mysql_mutex_unlock(&transfer_mutex);
     thd->close_all_connections();
@@ -16066,8 +16107,8 @@ int mysql_execute_alter_table_osc(
     sql_cache_node_t* sql_cache_node
 )
 {
-    str_t       osc_cmd;
-    str_t*      osc_cmd_ptr;
+ //   str_t       osc_cmd;
+ //   str_t*      osc_cmd_ptr;
     char        cmd_line[100];
     int         ret;
     char*       oscargv[100];
@@ -16078,7 +16119,7 @@ int mysql_execute_alter_table_osc(
 
     DBUG_ENTER("mysql_execute_alter_table_osc");
     osc_prepend_PATH(inception_osc_bin_dir, thd, sql_cache_node);
-    osc_cmd_ptr = str_init(&osc_cmd);
+//    osc_cmd_ptr = str_init(&osc_cmd);
     oscargv[count++] = strdup("pt-online-schema-change");
     oscargv[count++] = strdup("--alter");
     oscargv[count++] = strdup(mysql_get_alter_table_post_part(
@@ -17115,8 +17156,11 @@ int mysql_deinit_sql_cache(THD* thd)
     if (thd->split_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache_node = LIST_GET_FIRST(thd->split_cache->field_lst);
         while (split_cache_node) {
-
+            
             split_cache_node_next = LIST_GET_NEXT(link, split_cache_node);
+            
+            str_deinit(&(split_cache_node->sql_statements));
+            
             LIST_REMOVE(link, thd->split_cache->field_lst, split_cache_node);
             my_free(split_cache_node);
 

@@ -505,33 +505,36 @@ SHOW_VAR* enumerate_sys_vars(THD *thd, bool sorted, enum enum_var_type type)
   return result;
 }
 
-SHOW_VAR* enumerate_datacenter_vars(THD *thd, bool sorted, enum enum_var_type type,transfer_cache_t* datacenter)
+int inception_show_datacenter_variables(THD* thd,transfer_cache_t* datacenter)
 {
-    int count= GATE_OPTION_LAST, i;
-    int size= sizeof(SHOW_VAR) * (count + 1);
-    SHOW_VAR *result= (SHOW_VAR*) thd->alloc(size);
+    DBUG_ENTER("inception_show_datacenter_variables");
+    int res= 0;
+    List<Item>    field_list;
+    Protocol *    protocol= thd->protocol;
     
-    if (result)
+    field_list.push_back(new Item_empty_string("Variable_name", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Value", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Comment", FN_REFLEN));
+    
+    if (protocol->send_result_set_metadata(&field_list,
+                                           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+        DBUG_RETURN(true);
+    
+    mysql_mutex_lock(&transfer_mutex);
+    
+    for (int i= GATE_OPTION_FIRST + 1; i < GATE_OPTION_LAST; i++)
     {
-        SHOW_VAR *show= result;
+        protocol->prepare_for_resend();
+        protocol->store(OPTION_GET_VARIABLE(&datacenter->option_list[i]), system_charset_info);
+        protocol->store(OPTION_GET_VALUE(&datacenter->option_list[i]));
+        protocol->store(OPTION_GET_UNIT(&datacenter->option_list[i]), system_charset_info);
         
-        for (i= GATE_OPTION_FIRST+1; i < count; i++)
-        {
-            show->name= OPTION_GET_VARIABLE(&datacenter->option_list[i]);
-            show->value= (char *)&OPTION_GET_VALUE(&datacenter->option_list[i]);;
-            show->type= SHOW_INT;
-            show++;
-        }
-        
-        /* sort into order */
-        if (sorted)
-            my_qsort(result, show-result, sizeof(SHOW_VAR),
-                     (qsort_cmp) show_cmp);
-        
-        /* make last element empty */
-        memset(show, 0, sizeof(SHOW_VAR));
+        protocol->write();
     }
-    return result;
+    
+    mysql_mutex_unlock(&transfer_mutex);
+    my_eof(thd);
+    DBUG_RETURN(res);
 }
 
 /**
