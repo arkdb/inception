@@ -456,7 +456,7 @@ str_deinit(str_t* str)
 
     if (str->str != str->str_buf)
     {
-        free(str->str);
+        my_free(str->str);
         str->str = str->str_buf;
     }
 }
@@ -3902,9 +3902,9 @@ void mysql_free_explain_info(explain_info_t* explain)
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-            {
                 free(select_info->possible_keys[i++]);
-            }
+            free(select_info->possible_keys);
+            select_info->possible_keys = NULL;
         }
 
         my_free(select_info);
@@ -9416,6 +9416,26 @@ err:
 }
 
 dbinfo_t*
+mysql_free_db_object(
+    THD *  thd
+)
+{
+    dbinfo_t* dbinfo;
+    dbinfo_t* dbinfo_next;
+
+    dbinfo = LIST_GET_FIRST(thd->dbcache.dbcache_lst);
+    while (dbinfo != NULL)
+    {
+        dbinfo_next = LIST_GET_NEXT(link, dbinfo);
+        LIST_REMOVE(link, thd->dbcache.dbcache_lst, dbinfo);
+        my_free(dbinfo);
+        dbinfo = dbinfo_next;
+    }
+
+    return NULL;
+}
+
+dbinfo_t*
 mysql_get_db_object(
     THD *  thd,
     char*  db_name,
@@ -12614,10 +12634,10 @@ mysql_check_item(
         {
             String* stringval;
             String tmp;
-            char* fieldname;
+            // char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
-            sprintf(fieldname, "\"%s\"", stringval->ptr());
+            // fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
+            // sprintf(fieldname, "\"%s\"", stringval->ptr());
         }
         break;
     case Item::FIELD_ITEM:
@@ -12723,7 +12743,7 @@ mysql_check_item(
             String tmp;
             char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            // fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
         }
         break;
     default:
@@ -17208,6 +17228,7 @@ int mysql_deinit_sql_cache(THD* thd)
     mysql_cache_deinit_task(thd);
     thd->current_execute = NULL;
     str_deinit(thd->errmsg);
+    my_free(thd->errmsg);
     thd->errmsg = NULL;
     if (thd->sql_cache == NULL)
     {
@@ -17226,6 +17247,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
         str_deinit(sql_cache_node->errmsg);
         str_deinit(sql_cache_node->stagereport);
+        my_free(sql_cache_node->stagereport);
         str_deinit(sql_cache_node->ddl_rollback);
 
         if (sql_cache_node->sqlsha1[0] != '\0')
@@ -17256,6 +17278,7 @@ int mysql_deinit_sql_cache(THD* thd)
             query_rt = query_rt_next;
         }
 
+        my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
         sql_cache_node = sql_cache_node_next;
     }
@@ -17300,6 +17323,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
     my_free(thd->query_print_cache);
     thd->query_print_cache= NULL;
+    mysql_free_db_object(thd);
 
     DBUG_RETURN(FALSE);
 }
