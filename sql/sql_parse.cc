@@ -17236,10 +17236,10 @@ int mysql_deinit_sql_cache(THD* thd)
             }
 
             my_free(query_rt);
-            my_free(sql_cache_node->rt_lst);
             query_rt = query_rt_next;
         }
 
+        my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
         sql_cache_node = sql_cache_node_next;
     }
