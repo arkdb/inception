@@ -3902,9 +3902,9 @@ void mysql_free_explain_info(explain_info_t* explain)
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-            {
                 free(select_info->possible_keys[i++]);
-            }
+            free(select_info->possible_keys);
+            select_info->possible_keys = NULL;
         }
 
         my_free(select_info);
@@ -9395,6 +9395,26 @@ int mysql_check_charset(const char* charsetname)
 err:
     my_free(charset);
     return ret;
+}
+
+dbinfo_t*
+mysql_free_db_object(
+    THD *  thd
+)
+{
+    dbinfo_t* dbinfo;
+    dbinfo_t* dbinfo_next;
+
+    dbinfo = LIST_GET_FIRST(thd->dbcache.dbcache_lst);
+    while (dbinfo != NULL)
+    {
+        dbinfo_next = LIST_GET_NEXT(link, dbinfo);
+        LIST_REMOVE(link, thd->dbcache.dbcache_lst, dbinfo);
+        my_free(dbinfo);
+        dbinfo = dbinfo_next;
+    }
+
+    return NULL;
 }
 
 dbinfo_t*
@@ -17190,6 +17210,7 @@ int mysql_deinit_sql_cache(THD* thd)
     mysql_cache_deinit_task(thd);
     thd->current_execute = NULL;
     str_deinit(thd->errmsg);
+    my_free(thd->errmsg);
     thd->errmsg = NULL;
     if (thd->sql_cache == NULL)
     {
@@ -17284,6 +17305,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
     my_free(thd->query_print_cache);
     thd->query_print_cache= NULL;
+    mysql_free_db_object(thd);
 
     DBUG_RETURN(FALSE);
 }
