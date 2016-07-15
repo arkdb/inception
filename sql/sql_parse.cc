@@ -12596,10 +12596,10 @@ mysql_check_item(
         {
             String* stringval;
             String tmp;
-            char* fieldname;
+            // char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
-            sprintf(fieldname, "\"%s\"", stringval->ptr());
+            // fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
+            // sprintf(fieldname, "\"%s\"", stringval->ptr());
         }
         break;
     case Item::FIELD_ITEM:
@@ -12705,7 +12705,7 @@ mysql_check_item(
             String tmp;
             char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            // fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
         }
         break;
     default:
@@ -17208,6 +17208,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
         str_deinit(sql_cache_node->errmsg);
         str_deinit(sql_cache_node->stagereport);
+        my_free(sql_cache_node->stagereport);
         str_deinit(sql_cache_node->ddl_rollback);
 
         if (sql_cache_node->sqlsha1[0] != '\0')
@@ -17235,6 +17236,7 @@ int mysql_deinit_sql_cache(THD* thd)
             }
 
             my_free(query_rt);
+            my_free(sql_cache_node->rt_lst);
             query_rt = query_rt_next;
         }
 
