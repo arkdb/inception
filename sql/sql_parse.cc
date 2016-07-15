@@ -4111,6 +4111,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     Mem_root_array<thread_info*, true> thread_infos(thd->mem_root);
     ulong max_query_length= (verbose ? thd->variables.max_allowed_packet : PROCESS_LIST_WIDTH);
     Protocol *protocol= thd->protocol;
+    str_t progress_str;
     DBUG_ENTER("mysql_execute_inception_processlist");
 
     field_list.push_back(new Item_int(NAME_STRING("Id"), 0, MY_INT64_NUM_DECIMAL_DIGITS));
@@ -4123,9 +4124,13 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     field_list.push_back(new Item_return_int("Time",20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Info",max_query_length));
     field_list.push_back(new Item_empty_string("Current_Execute",max_query_length));
+    field_list.push_back(new Item_empty_string("Progress",FN_REFLEN));
+    
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
         DBUG_RETURN(false);
+    
+    str_init(&progress_str);
 
     if (!thd->killed)
     {
@@ -4138,7 +4143,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             THD *tmp= *it;
             Security_context *tmp_sctx= tmp->security_ctx;
             thread_info *thd_info= new thread_info;
-
+            
             //id
             thd_info->thread_id=tmp->thread_id;
             //from host
@@ -4166,6 +4171,15 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             {
                 char *q= thd->strmake(tmp->current_execute->sql_statement, 100);
                 thd_info->query_string_e= CSET_STRING(q, q ? 100: 0, system_charset_info);
+                
+                char num[1024];
+                memset(num, 0, sizeof(char)*1024);
+                int10_to_str(tmp->current_execute->seqno, num, 10);
+                str_append(&progress_str, num);
+                str_append(&progress_str, "/");
+                memset(num, 0, sizeof(char)*1024);
+                int10_to_str(LIST_GET_LEN(tmp->sql_cache->field_lst), num, 10);
+                str_append(&progress_str, num);
             }
 
             //info
@@ -4228,9 +4242,13 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
         protocol->store(thd_info->query_string.str(), thd_info->query_string.charset());
         //execute
         protocol->store(thd_info->query_string_e.str(), thd_info->query_string_e.charset());
+        //percent
+        protocol->store(progress_str.str, system_charset_info);
         if (protocol->write())
             break; /* purecov: inspected */
     }
+    
+    str_deinit(&progress_str);
     my_eof(thd);
     DBUG_RETURN(false);
 }
