@@ -456,7 +456,7 @@ str_deinit(str_t* str)
 
     if (str->str != str->str_buf)
     {
-        free(str->str);
+        my_free(str->str);
         str->str = str->str_buf;
     }
 }
