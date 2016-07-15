@@ -4111,7 +4111,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     Mem_root_array<thread_info*, true> thread_infos(thd->mem_root);
     ulong max_query_length= (verbose ? thd->variables.max_allowed_packet : PROCESS_LIST_WIDTH);
     Protocol *protocol= thd->protocol;
-    str_t progress_str;
+        
     DBUG_ENTER("mysql_execute_inception_processlist");
 
     field_list.push_back(new Item_int(NAME_STRING("Id"), 0, MY_INT64_NUM_DECIMAL_DIGITS));
@@ -4129,8 +4129,6 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
         DBUG_RETURN(false);
-    
-    str_init(&progress_str);
 
     if (!thd->killed)
     {
@@ -4138,7 +4136,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
         thread_infos.reserve(get_thread_count());
         Thread_iterator it= global_thread_list_begin();
         Thread_iterator end= global_thread_list_end();
-        for (; it != end; ++it)
+        for (int i= 0; it != end; ++it, ++i)
         {
             THD *tmp= *it;
             Security_context *tmp_sctx= tmp->security_ctx;
@@ -4167,19 +4165,14 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             }
             
             thd_info->state = tmp->thread_state;
+            
+            memset(thd_info->progress, 0, 64);
             if (tmp->current_execute && tmp->current_execute->sql_statement)
             {
                 char *q= thd->strmake(tmp->current_execute->sql_statement, 100);
                 thd_info->query_string_e= CSET_STRING(q, q ? 100: 0, system_charset_info);
                 
-                char num[1024];
-                memset(num, 0, sizeof(char)*1024);
-                int10_to_str(tmp->current_execute->seqno, num, 10);
-                str_append(&progress_str, num);
-                str_append(&progress_str, "/");
-                memset(num, 0, sizeof(char)*1024);
-                int10_to_str(LIST_GET_LEN(tmp->sql_cache->field_lst), num, 10);
-                str_append(&progress_str, num);
+                sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
 
             //info
@@ -4243,12 +4236,11 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
         //execute
         protocol->store(thd_info->query_string_e.str(), thd_info->query_string_e.charset());
         //percent
-        protocol->store(progress_str.str, system_charset_info);
+        protocol->store(thd_info->progress, system_charset_info);
         if (protocol->write())
             break; /* purecov: inspected */
     }
     
-    str_deinit(&progress_str);
     my_eof(thd);
     DBUG_RETURN(false);
 }
@@ -14572,6 +14564,50 @@ mysql_dup_char(
 }
 
 void
+mysql_dup_char_array(
+               char* src,
+               char* dest,
+               char* chr,
+               int len
+               )
+{
+    char* p = src;
+    int flag = 0;
+    
+    while (*src)
+    {
+        for(int i=0; i < len; ++i)
+        {
+            //对于存在转义的情况，则不做替换
+            if (*src == chr[i] && (p == src || *(src-1) != '\\'))
+            {
+                *dest= chr[i];
+                *(++dest) = chr[i];
+                if (chr[i] == '\\')
+                {
+                    *(++dest) = chr[i];
+                    *(++dest) = chr[i];
+                }
+                flag = 1;
+            }
+        }
+        
+        if (flag == 0)
+        {
+            *dest = *src;
+        }
+        else
+        {
+            flag = 0;
+        }
+        
+        dest++;
+        src++;
+    }
+    
+}
+
+void
 mysql_dup_char_with_escape(
     char* src,
     str_t* dest,
@@ -14838,8 +14874,11 @@ int mysql_get_field_string(
                     backupsql->append("\'");
                 res=field->val_str(&buffer);
                 dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-                mysql_dup_char(res->c_ptr(), dupcharfield, '\'');
-
+                
+                char tag[3]={'\'','\\'};
+                
+                mysql_dup_char_array(res->c_ptr(), dupcharfield, tag, 2);
+                
                 backupsql->append(dupcharfield);
                 my_free(dupcharfield);
                 qutor_end =1;

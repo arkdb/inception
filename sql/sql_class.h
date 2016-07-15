@@ -810,6 +810,7 @@ class thread_info
     char* dest_user;
     int dest_port;
     int state;
+    char progress[64];
     CSET_STRING query_string;
     CSET_STRING query_string_e;
 };
