@@ -10,10 +10,11 @@ Inception打印变量时，不支持像原来的MySQL服务器一样可以**`sho
 |:----------|:--------------------|
 |inception get variables ‘variable_name’;	|通过variable_name指定变量名称，只显示指定的变量名的值|
 |inception get variables;	|显示Inception所有变量的值|
+|inception get variables for datacenter datacenter_name;	|显示该datacenter下的所有变量的值|
 |inception set variable_name=value;	|设置变量名为variable_name的变量的值|   
 
 -----
-Inception目前所支持的变量参数如下表所示：
+Inception目前所支持的变量参数如下表所示（without for datacenter datacenter_name）：
 
 -----------------
 |参数名字                                 	 |可选参数        	 |默认值    	 |功能说明|  
@@ -57,6 +58,21 @@ Inception目前所支持的变量参数如下表所示：
 |inception_enable_sql_statistic|ON/OFF|ON|设置是不是支持统计Inception执行过的语句中，各种语句分别占多大比例，如果打开这个参数，则每次执行的情况都会在备份数据库实例中的inception库的statistic表中以一条记录存储这次操作的统计情况，每次操作对应一条记录，这条记录中含有的信息是各种类型的语句执行次数情况，具体的信息需要参考后面一章<<**Inception 的统计功能**>>|
 |inception_read_only|ON/OFF|OFF|设置当前Inception服务器是不是只读的，这是为了防止一些人具有修改权限的帐号时，通过Inception误修改一些数据，如果inception_read_only设置为ON，则即使开了enable-execute，同时又有执行权限，也不会去执行，审核完成即返回|
 |inception_check_identifier|ON/OFF|ON|打开与关闭Inception对SQL语句中各种名字的检查，如果设置为ON，则如果发现名字中存在除数字、字母、下划线之外的字符时，会报Identifier "invalidname" is invalid, valid options: [a-z,A-Z,0-9,_].|
+
+-------
+Inception目前所支持的变量参数如下表所示（with for datacenter datacenter_name）：
+
+-----------------
+|参数名字                                 	 |可选参数        	 |默认值    	 |功能说明|  
+|:-------------------------------------------------|:-----------------------|:---------------:|:-----------|
+|checkpoint_period             	         |1-100000000          	 |50        	 |checkpoint时间周期，单位是ms|  
+|binlog_expire_hours                	 |1-10000           	 |168        	 |binlog过期时间，单位是hour|  
+|event_sequence_sync                	 |1-100000000          	 |50000        	 |event发号器一次申请长度，单位是个数|  
+|trx_sequence_sync              	     |1-100000000          	 |10000        	 |事务发号器一次申请长度，单位是个数|  
+|slave_sync_position             	     |1-100000000          	 |10000        	 |从节点同步事务个数，单位是事务个数|  
+|master_sync_position            	     |1-100000000          	 |10000        	 |主节点同步事务个数，单位是事务个数|  
+|parallel_workers            	         |1-999             	 |5         	 |执行线程个数，单位是线程的个数|  
+|worker_queue_length                	 |1-10000           	 |10000        	 |队列长度，单位是event个数|  
 
 -------
 
