@@ -14875,9 +14875,9 @@ int mysql_get_field_string(
                 res=field->val_str(&buffer);
                 dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
                 
-                char tag[3]={'\'','\\'};
+                char dup_chars[2]={'\'','\\'};
                 
-                mysql_dup_char_array(res->c_ptr(), dupcharfield, tag, 2);
+                mysql_dup_char_array(res->c_ptr(), dupcharfield, dup_chars, 2);
                 
                 backupsql->append(dupcharfield);
                 my_free(dupcharfield);
