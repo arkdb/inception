@@ -303,7 +303,7 @@ int inception_table_create(THD *thd, String *create_sql);
 int mysql_cache_deinit_task(THD* thd);
 char* inception_get_task_sequence(THD* thd);
 int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
-void mysql_dup_char( char* src, char* dest, char chr);
+int mysql_dup_char( char* src, char* dest, char chr);
 table_info_t* mysql_get_table_info_by_id( Master_info* mi, ulong m_table_id);
 int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
 int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* mysql);
@@ -14536,16 +14536,19 @@ mysql_unpack_row(
     DBUG_RETURN(error);
 }
 
-void
+int
 mysql_dup_char(
     char* src,
     char* dest,
     char chr
 )
 {
+    int ret = 0;
     char* p = src;
     while (*src)
     {
+        if (*src == '\\')
+            ret=1;
         //对于存在转义的情况，则不做替换
         if (*src == chr && (p == src || *(src-1) != '\\'))
         {
@@ -14560,51 +14563,7 @@ mysql_dup_char(
         dest++;
         src++;
     }
-
-}
-
-void
-mysql_dup_char_array(
-               char* src,
-               char* dest,
-               char* chr,
-               int len
-               )
-{
-    char* p = src;
-    int flag = 0;
-    
-    while (*src)
-    {
-        for(int i=0; i < len; ++i)
-        {
-            //对于存在转义的情况，则不做替换
-            if (*src == chr[i] && (p == src || *(src-1) != '\\'))
-            {
-                *dest= chr[i];
-                *(++dest) = chr[i];
-                if (chr[i] == '\\')
-                {
-                    *(++dest) = chr[i];
-                    *(++dest) = chr[i];
-                }
-                flag = 1;
-            }
-        }
-        
-        if (flag == 0)
-        {
-            *dest = *src;
-        }
-        else
-        {
-            flag = 0;
-        }
-        
-        dest++;
-        src++;
-    }
-    
+    return ret;
 }
 
 void
@@ -14836,6 +14795,7 @@ int mysql_get_field_string(
     String buffer((char*) buff,sizeof(buff),&my_charset_bin);
     String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
     char* dupcharfield;
+    char* dupcharfieldforbackslash;
 
     // backupsql->append(separated);
 
@@ -14874,12 +14834,16 @@ int mysql_get_field_string(
                     backupsql->append("\'");
                 res=field->val_str(&buffer);
                 dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-                
-                char dup_chars[2]={'\'','\\'};
-                
-                mysql_dup_char_array(res->c_ptr(), dupcharfield, dup_chars, 2);
-                
-                backupsql->append(dupcharfield);
+
+                if(mysql_dup_char(res->c_ptr(), dupcharfield, '\''))
+                {
+                    dupcharfieldforbackslash = (char*)my_malloc((res->length() * 4 + 1) * 2, MY_ZEROFILL);
+                    mysql_dup_char(dupcharfield, dupcharfieldforbackslash, '\\');
+                    backupsql->append(dupcharfieldforbackslash);
+                    my_free(dupcharfieldforbackslash);
+                }
+                else
+                    backupsql->append(dupcharfield);
                 my_free(dupcharfield);
                 qutor_end =1;
                 append_flag = FALSE;

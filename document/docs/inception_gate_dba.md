@@ -187,6 +187,18 @@ CREATE TABLE `transfer_sequence` (
 * idname：存储的只有两个值，分别是："ID"和"TID"，分别表示是事件id还是事务id。
 * sequence：表示的是，在Incepiton Gate中的当前datacenter中，当ID或者TID达到当前表中的值后，会自动更新为当前值加上一个参数配置的值，也就是为当前操作分配了一段空间，减少冲突。但也有可能会有空洞，但没关系。
 
+####transfer_option
+这个表是用来存储复制涉及到的一些参数，下面是表结构：
+````
+CREATE TABLE `transfer_option` (
+`option_variable` varchar(64) NOT NULL DEFAULT '' COMMENT 'option variable',
+`option_value` int(11) DEFAULT NULL COMMENT 'option value',
+PRIMARY KEY (`option_variable`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='transfer option'
+````
+* option_variable：存储的是参数的名字。
+* option_value：存储的是参数的值。
+
 ###增加复制节点信息
 语法：
 ````
@@ -314,6 +326,16 @@ inception get {do|ignore} list for datacenter {dc_name}
 
 ![](inception_images/doignore.png)
 
+###参数设置
+这里可以设置一些复制相关的参数，比如复制的线程数，binlog过期时间和checkpoint时间周期等等。
+语法：
+````
+inception set variable_name=variable_value for datacenter {dc_name};
+````
+设置成功与mysql设置参数成功结果一致；
+设置失败的时候会返回具体错误原因，如：不是系统参数，参数值不在值范围内（同时会提示最大值和最小值）。
+
+
 ##过期数据的清除
 
 -----------------
@@ -325,18 +347,32 @@ Incpetion Gate提供了一种自己删除数据的机制，只要复制在运行
 
 ##支持参数
 
+全局参数：
+
 -----------------
 |参数名字                                 	 |可选参数        	 |默认值    	 |功能说明|  
 |:-------------------------------------------------|:-----------------------|:---------------:|:-----------|
-|inception_transfer_slave_sync              |1-4294967295|16 |这个参数用来设置多少个主库的Master事务才去取一次SLAVE位置信息，因为本身在Failover时，不可能做到无缝，只能保证不丢，都是会多出来的，为了提高效率，减少延迟，可以将这个值设置大一些，Inception Gate不会频繁去取Slave的位置时间信息，有一个不好之处就是，如果设置太大，会导致切换后，冗余数据会多一些。|  
-|inception_transfer_binlog_expire_days|1-4294967295|7|这个参数用来设置复制的数据多少时间算过期，在这个天之前的数据，都会在后台自动删掉|
-|inception_transfer_trx_sequence_sync|10-4294967295|1000|这个参数用来设置TID发号器的步长|
-|inception_transfer_event_sequence_sync|100-4294967295|10000|这个参数用来设置ID发号器的步长|
 |inception_transfer_server_id|2-4294967295|0|这个参数和MySQL中的server_id是一样的，在Inception Gate中必须要设置，同时不能与Master及Slave相同|
 |inception_datacenter_host|无|0|Inception Gate对应的DC数据库实例地址|
 |inception_datacenter_port|无|0|Inception Gate对应的DC数据库实例端口|
 |inception_datacenter_user|无|0|Inception Gate对应的DC实例操作用户名|
 |inception_datacenter_password|无|0|Inception Gate对应的DC实例操作用户密码|
+
+-----------------
+
+Datacenter专属参数：
+
+-----------------
+|参数名字                                 	 |可选参数        	 |默认值    	 |功能说明|  
+|:-------------------------------------------------|:-----------------------|:---------------:|:-----------|
+|master_sync_position|1-100000000|10000|这个参数用来设置一次记录master中同步事务的个数，即每次只按该数值为单位保存已同步了多少事务。| 
+|slave_sync_position|1-100000000|10000|这个参数用来设置多少个主库的Master事务才去取一次SLAVE位置信息，因为本身在Failover时，不可能做到无缝，只能保证不丢，都是会多出来的，为了提高效率，减少延迟，可以将这个值设置大一些，Inception Gate不会频繁去取Slave的位置时间信息，有一个不好之处就是，如果设置太大，会导致切换后，冗余数据会多一些。|  
+|trx_sequence_sync|1-100000000|10000|这个参数用来设置TID发号器的步长|
+|event_sequence_sync|1-100000000|50000|这个参数用来设置ID发号器的步长|
+|checkpoint_period|1-100000000|50|checkpoint时间周期，单位是ms|
+|binlog_expire_hours|1-10000|168|这个参数用来设置复制的数据多少时间算过期，在这个天之前的数据，都会在后台自动删掉，单位是小时。|
+|parallel_workers|1-999 |5|执行复制的线程个数，单位是线程的个数|  
+|worker_queue_length|1-10000|10000|队列长度，这个队列用来存放要执行的event，单位是event个数|  
 
 -----------------
 
