@@ -1956,6 +1956,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_COLLATION_CHARSET_MISMATCH:
     case ER_VIEW_SELECT_CLAUSE:
     case ER_NOT_SUPPORTED_ITEM_TYPE:
+    case ER_INCEPTION_EMPTY_QUERY:
         return INCEPTION_PARSE;
 
     default:
