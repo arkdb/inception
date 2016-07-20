@@ -598,6 +598,7 @@ void mysql_compute_sql_sha1(THD* thd, sql_cache_node_t* sql_cache_node)
     String str(str_get(sqlinfo), system_charset_info);
     calculate_password(&str, m_hashed_password_buffer);
     strcpy(sql_cache_node->sqlsha1, m_hashed_password_buffer);
+    str_deinit(sqlinfo);
 }
 
 int mysql_cache_one_sql(THD* thd)
@@ -3690,9 +3691,9 @@ void mysql_free_explain_info(explain_info_t* explain)
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-            {
                 free(select_info->possible_keys[i++]);
-            }
+            free(select_info->possible_keys);
+            select_info->possible_keys = NULL;
         }
 
         my_free(select_info);
@@ -4624,6 +4625,26 @@ int mysql_check_charset(const char* charsetname)
 err:
     my_free(charset);
     return ret;
+}
+
+dbinfo_t*
+mysql_free_db_object(
+                     THD *  thd
+                     )
+{
+    dbinfo_t* dbinfo;
+    dbinfo_t* dbinfo_next;
+    
+    dbinfo = LIST_GET_FIRST(thd->dbcache.dbcache_lst);
+    while (dbinfo != NULL)
+    {
+        dbinfo_next = LIST_GET_NEXT(link, dbinfo);
+        LIST_REMOVE(link, thd->dbcache.dbcache_lst, dbinfo);
+        my_free(dbinfo);
+        dbinfo = dbinfo_next;
+    }
+    
+    return NULL;
 }
 
 int mysql_check_db_existed(
@@ -6917,6 +6938,7 @@ print_item(
             str_append(print_str, "\"value\":");
             str_append(print_str, fieldname);
             str_append(print_str, "}");
+            my_free(fieldname);
         }
         break;
     case Item::FIELD_ITEM:
@@ -7063,6 +7085,7 @@ print_item(
             str_append(print_str, "\"value\":");
             str_append(print_str, fieldname);
             str_append(print_str, "}");
+            my_free(fieldname);
         }
         break;
     default:
@@ -10381,8 +10404,8 @@ int mysql_execute_alter_table_osc(
     sql_cache_node_t* sql_cache_node
 )
 {
-    str_t       osc_cmd;
-    str_t*      osc_cmd_ptr;
+//    str_t       osc_cmd;
+//    str_t*      osc_cmd_ptr;
     char        cmd_line[100];
     int         ret;
     char*       oscargv[100];
@@ -10393,7 +10416,7 @@ int mysql_execute_alter_table_osc(
 
     DBUG_ENTER("mysql_execute_alter_table_osc");
     osc_prepend_PATH(inception_osc_bin_dir, thd, sql_cache_node);
-    osc_cmd_ptr = str_init(&osc_cmd);
+//    osc_cmd_ptr = str_init(&osc_cmd);
     oscargv[count++] = strdup("pt-online-schema-change");
     oscargv[count++] = strdup("--alter");
     oscargv[count++] = strdup(mysql_get_alter_table_post_part(
@@ -11338,6 +11361,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
     thd->current_execute = NULL;
     str_deinit(thd->errmsg);
+    my_free(thd->errmsg);
     thd->errmsg = NULL;
     if (thd->sql_cache == NULL)
     {
@@ -11356,6 +11380,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
         str_deinit(sql_cache_node->errmsg);
         str_deinit(sql_cache_node->stagereport);
+        my_free(sql_cache_node->stagereport);
         str_deinit(sql_cache_node->ddl_rollback);
 
         if (sql_cache_node->sqlsha1[0] != '\0')
@@ -11384,6 +11409,7 @@ int mysql_deinit_sql_cache(THD* thd)
             query_rt = query_rt_next;
         }
 
+        my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
         sql_cache_node = sql_cache_node_next;
     }
@@ -11426,6 +11452,7 @@ int mysql_deinit_sql_cache(THD* thd)
 
     my_free(thd->query_print_cache);
     thd->query_print_cache= NULL;
+    mysql_free_db_object(thd);
 
     DBUG_RETURN(FALSE);
 }
