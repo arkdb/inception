@@ -7290,6 +7290,8 @@ inception_transfer_fetch_epoch(
     String str(tmp_buf, system_charset_info);
     calculate_password(&str, m_hashed_password_buffer);
     strcpy(datacenter->datacenter_epoch, m_hashed_password_buffer);
+    sql_print_information("[%s] transfer new epoch: %s",
+        datacenter->datacenter_name, datacenter->datacenter_epoch);
 }
 
 int 
@@ -8048,7 +8050,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     return false;
 }
 
-int inception_reset_transfer_position(THD* thd, char* datacenter_name)
+int inception_reset_transfer_position(THD* thd, char* datacenter_name, int mp_trunc)
 {
     MYSQL* mysql;
     char tmp[1024];
@@ -8069,12 +8071,15 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name)
         return true;
     }
 
-    sprintf(tmp, "truncate table `%s`.`master_positions`", datacenter_name);
-    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    if (mp_trunc)
     {
-        my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
-        thd->close_all_connections();
-        return true;
+        sprintf(tmp, "truncate table `%s`.`master_positions`", datacenter_name);
+        if (mysql_real_query(mysql, tmp, strlen(tmp)))
+        {
+            my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
+            thd->close_all_connections();
+            return true;
+        }
     }
 
     thd->close_all_connections();
@@ -8201,7 +8206,7 @@ pthread_handler_t inception_transfer_thread(void* arg)
         goto error; 
     }
 
-    if(inception_reset_transfer_position(thd, datacenter->datacenter_name))
+    if(inception_reset_transfer_position(thd, datacenter->datacenter_name, false))
         goto error; 
 
 reconnect:
@@ -8838,7 +8843,7 @@ inception_transfer_reset_transfer(THD* thd, char* datacenter_name)
         return true;
     }
 
-    if(inception_reset_transfer_position(thd, datacenter_name))
+    if(inception_reset_transfer_position(thd, datacenter_name, true))
     {
         mysql_mutex_unlock(&transfer_mutex); 
         return true;
