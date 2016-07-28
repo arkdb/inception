@@ -239,6 +239,16 @@ static bool is_native_function(THD *thd, const LEX_STRING *name)
   return false;
 }
 
+int symbol_is_reserved(const char *s, unsigned int len)
+{
+    SYMBOL* sym;
+
+    sym = get_hash_symbol(s, len, 0);
+    if (sym && sym->reserved == TOK_RESERVE)
+        return true;
+    else
+        return false;
+}
 
 /**
   Helper action for a case statement (entering the CASE).
@@ -13562,7 +13572,7 @@ IDENT_sys:
         }
 
         mysql_check_identified(thd, $1.str, $1.length);
-        if (thd->have_begin && get_hash_symbol($1.str, $1.length,0))
+        if (thd->have_begin && symbol_is_reserved($1.str, $1.length))
         {
             my_error(ER_IDENT_USE_KEYWORD, MYF(0), $1.str);
             mysql_errmsg_append(thd);
@@ -13629,7 +13639,7 @@ ident:
               MYSQL_YYABORT;
             $$.length= $1.length;
         mysql_check_identified(thd, $$.str, $$.length);
-        if (thd->have_begin && get_hash_symbol($$.str, $$.length,0))
+        if (thd->have_begin && symbol_is_reserved($1.str, $1.length))
         {
             my_error(ER_IDENT_USE_KEYWORD, MYF(0), $$.str);
             mysql_errmsg_append(thd);
@@ -13781,6 +13791,7 @@ keyword:
         | WRAPPER_SYM           {}
         | XA_SYM                {}
         | UPGRADE_SYM           {}
+        | INCEPTION_SYM            {}
         ;
 
 /*
