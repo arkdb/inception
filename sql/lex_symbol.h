@@ -27,6 +27,7 @@ typedef struct st_symbol {
   uint	tok;
   uint length;
   struct st_sym_group *group;
+  int reserved;
 } SYMBOL;
 
 typedef struct st_lex_symbol
@@ -44,5 +45,8 @@ typedef struct st_sym_group {
 extern SYM_GROUP sym_group_common;
 extern SYM_GROUP sym_group_geom;
 extern SYM_GROUP sym_group_rtree;
+
+#define TOK_RESERVE 1
+#define TOK_KEYWORD 2
 
 #endif /* _lex_symbol_h */
