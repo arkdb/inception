@@ -2646,7 +2646,11 @@ int thd_parse_options(
         strcpy(thd->thd_sinfo->password, global_source.password);
     }
 
-    if (global_source.query_print == 1)
+    if (global_source.optimize== 1)
+        thd->thd_sinfo->optype = INCEPTION_TYPE_OPTIMIZE;
+    else if (global_source.format == 1)
+        thd->thd_sinfo->optype = INCEPTION_TYPE_FORMAT;
+    else if (global_source.query_print == 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_PRINT;
     else if (global_source.split == 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_SPLIT;
@@ -2657,6 +2661,8 @@ int thd_parse_options(
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE ||
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
+        // inception_get_type(thd) == INCEPTION_TYPE_FORMAT ||
+        inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE ||
         inception_get_type(thd) == INCEPTION_TYPE_PRINT)
     {
         if (thd->thd_sinfo->user[0] == '\0' ||
@@ -2669,7 +2675,8 @@ int thd_parse_options(
 
     //只能设置一个操作类型
     if (global_source.query_print + global_source.check +
-        global_source.execute + global_source.split != 1)
+        global_source.execute + global_source.split + 
+        global_source.optimize + global_source.format != 1)
     {
         my_error(ER_SQL_INVALID_SOURCE, MYF(0));
         goto ERROR;
@@ -12341,6 +12348,72 @@ int mysql_print_not_support(THD* thd)
     return false;
 }
 
+int mysql_format_command(THD *thd)
+{
+    thd->thread_state = INCEPTION_STATE_EXECUTING;
+    int err;
+    switch (thd->lex->sql_command)
+    {
+    case SQLCOM_INSERT:
+    case SQLCOM_INSERT_SELECT:
+        err = mysql_print_insert(thd);
+        break;
+
+    case SQLCOM_DELETE:
+    case SQLCOM_DELETE_MULTI:
+        err = mysql_print_delete(thd);
+        break;
+
+    case SQLCOM_UPDATE:
+    case SQLCOM_UPDATE_MULTI:
+        err = mysql_print_update(thd);
+        break;
+
+    case SQLCOM_SELECT:
+        err = mysql_print_select(thd);
+        break;
+
+    default:
+        mysql_print_not_support(thd);
+        break;
+    }
+
+    return 0;
+}
+
+int mysql_optimize_command(THD *thd)
+{
+    thd->thread_state = INCEPTION_STATE_EXECUTING;
+    int err;
+    switch (thd->lex->sql_command)
+    {
+    case SQLCOM_INSERT:
+    case SQLCOM_INSERT_SELECT:
+        err = mysql_print_insert(thd);
+        break;
+
+    case SQLCOM_DELETE:
+    case SQLCOM_DELETE_MULTI:
+        err = mysql_print_delete(thd);
+        break;
+
+    case SQLCOM_UPDATE:
+    case SQLCOM_UPDATE_MULTI:
+        err = mysql_print_update(thd);
+        break;
+
+    case SQLCOM_SELECT:
+        err = mysql_print_select(thd);
+        break;
+
+    default:
+        mysql_print_not_support(thd);
+        break;
+    }
+
+    return 0;
+}
+
 int mysql_print_command(THD *thd)
 {
     thd->thread_state = INCEPTION_STATE_EXECUTING;
@@ -17434,10 +17507,19 @@ int mysql_process_command(THD *thd, Parser_state *parser_state)
     if ((err = mysql_check_after_parse(thd)) != FALSE)
         DBUG_RETURN(err);
       
-    if (inception_get_type(thd) == INCEPTION_TYPE_PRINT)
-        DBUG_RETURN(mysql_print_command(thd));
-        
-    DBUG_RETURN(mysql_check_command(thd));
+    switch (inception_get_type(thd))
+    {
+        case INCEPTION_TYPE_PRINT:
+            DBUG_RETURN(mysql_print_command(thd));
+        case INCEPTION_TYPE_OPTIMIZE:
+            DBUG_RETURN(mysql_optimize_command(thd));
+        case INCEPTION_TYPE_FORMAT:
+            DBUG_RETURN(mysql_format_command(thd));
+        default:
+            DBUG_RETURN(mysql_check_command(thd));
+    }
+
+    DBUG_RETURN(err);
 }
 
 /*

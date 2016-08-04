@@ -5232,6 +5232,15 @@ struct my_option my_isql_options[]=
   {"query_print", 0, "print the query tree.",
     &global_source.query_print, &global_source.query_print, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+
+  {"optimize", 0, "optimize the query automatic.",
+    &global_source.optimize, &global_source.optimize, 0,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+
+  {"format", 0, "format the query automatic.",
+    &global_source.format, &global_source.format, 0,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+
   {0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
 };
 

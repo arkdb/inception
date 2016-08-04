@@ -347,7 +347,9 @@ enum enum_inception_optype {
     INCEPTION_TYPE_CHECK,
     INCEPTION_TYPE_EXECUTE,
     INCEPTION_TYPE_SPLIT,
-    INCEPTION_TYPE_PRINT
+    INCEPTION_TYPE_PRINT,
+    INCEPTION_TYPE_OPTIMIZE,
+    INCEPTION_TYPE_FORMAT,
 };
 
 typedef struct source_info_struct sinfo_t;
@@ -364,6 +366,8 @@ struct source_info_struct
     uint        ignore_warnings;
     uint        split;
     uint        query_print;
+    uint        format;
+    uint        optimize;
     ulonglong   sleep_nms;
     char*       task_sequence;
 };
