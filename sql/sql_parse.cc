@@ -14684,7 +14684,6 @@ int mysql_get_field_string_for_tranfer(
         case MYSQL_TYPE_BIT:
         case MYSQL_TYPE_NEWDECIMAL:
             {
-		//str_truncate_0(dupcharfield);
                 if (qutor_flag)
                     str_append(backup_sql, "\'");
                 res=field->val_str(&buffer);
@@ -14696,8 +14695,6 @@ int mysql_get_field_string_for_tranfer(
                 }
                 else
                     mysql_dup_char_with_escape(res->c_ptr(), backup_sql, (char*)"\'", (char*)"\"");
-                //str_append(backup_sql, str_get(dupcharfield));
-                //str_append(backup_sql, "Hello");
                 qutor_end =1;
                 append_flag = FALSE;
                 break;
@@ -15179,12 +15176,10 @@ int mysql_generate_field_insert_values(
         backup_sql->append(dupcharfield);
     }
 
+    my_free(dupcharfield);
     backup_sql->append("',");
-    //mi->thread_id = 2247483647;
     
-    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
     make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
-    
     backup_sql->append(tmp_buf);
 
     return 0;
@@ -15243,7 +15238,6 @@ int mysql_generate_backup_sql_by_record_for_update_after(
     backup_sql->append(dupcharfield);
     backup_sql->append("',");
 
-    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
     make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
     backup_sql->append(tmp_buf);
 
@@ -15723,9 +15717,9 @@ int mysql_generate_backup_field_insert_values_for_ddl(
     mysql_dup_char(str_get(sql_cache_node->ddl_rollback), dupcharfield, '\'');
     backup_sql->append("'");
     backup_sql->append(dupcharfield);
+    my_free(dupcharfield);
 
     backup_sql->append("',");
-    //sprintf(tmp_buf, "\'%d_%lu_%d\'", (int)mi->exec_time, mi->thread_id, (int)mi->seqno);
     make_opid_time(tmp_buf, mi->exec_time, mi->thread_id, (int)mi->seqno);
     backup_sql->append(tmp_buf);
 
