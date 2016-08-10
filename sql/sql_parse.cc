@@ -16359,9 +16359,11 @@ int mysql_execute_statement(
     sprintf(sql_cache_node->execute_time, "%.3f",  
         (double)(start_timer() - timer) / CLOCKS_PER_SEC);
 
+    //print the warnings only when execute SQL directly
+    if (!sql_cache_node->use_osc)
+        print_warnings(thd, mysql, sql_cache_node);
+    
     sql_cache_node->affected_rows = mysql_affected_rows(mysql);
-
-    print_warnings(thd, mysql, sql_cache_node);
 
     if (mysql_fetch_thread_id(mysql, &sql_cache_node->thread_id))
         DBUG_RETURN(true);
