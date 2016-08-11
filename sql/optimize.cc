@@ -178,6 +178,14 @@ int mysql_optimize_subselect(
     return 0;
 }
 
+int mysql_optimize_change_db(THD* thd)
+{
+    LEX_STRING db_str= { (char *) thd->lex->select_lex.db, strlen(thd->lex->select_lex.db) };
+    mysql_change_db(thd, &db_str, FALSE);
+
+    return false;
+}
+
 int mysql_optimize_select(THD* thd)
 {
     SELECT_LEX* select_lex = &thd->lex->select_lex;
@@ -188,14 +196,28 @@ int mysql_optimize_select(THD* thd)
     optimize_cache_node = (optimize_cache_node_t*)my_malloc(
         sizeof(optimize_cache_node_t), MY_ZEROFILL);
 
+    thd->current_optimize = optimize_cache_node;
     mysql_optimize_subselect(thd, optimize_cache_node, select_lex, true);
 
     LIST_ADD_LAST(link, optimize_cache->field_lst, optimize_cache_node);
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        thd->errmsg = NULL;
-    }
 
+    return false;
+}
+
+int mysql_optimize_not_support(THD* thd)
+{
+    optimize_cache_node_t* optimize_cache_node;
+    optimize_cache_t* optimize_cache = NULL;
+
+    optimize_cache = thd->optimize_cache;
+    optimize_cache_node = (optimize_cache_node_t*)my_malloc(
+        sizeof(optimize_cache_node_t), MY_ZEROFILL);
+
+    thd->current_optimize = optimize_cache_node;
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0));
+    mysql_errmsg_append(thd);
+
+    LIST_ADD_LAST(link, optimize_cache->field_lst, optimize_cache_node);
     return false;
 }
 

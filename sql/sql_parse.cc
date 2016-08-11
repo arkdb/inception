@@ -106,7 +106,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql_common.h"
 #include "derror.h"
 #include "mysys_err.h"
-#include <sql_class.h>
+#include "sql_class.h"
 #include "sql_show.h"
 #include "ptosc.h"
 #include <algorithm>
@@ -470,6 +470,8 @@ str_get(str_t* str)
 int
 str_get_len(str_t* str)
 {
+    if (str->str == NULL)
+        return 0;
     return strlen(str->str);
 }
 
@@ -748,6 +750,53 @@ void mysql_compute_sql_sha1(THD* thd, sql_cache_node_t* sql_cache_node)
     str_deinit(sqlinfo);
 }
 
+int mysql_cache_optimize_sql(THD* thd)
+{
+    int               errmsg_len;
+    optimize_cache_node_t* optimize_cache_node;
+    optimize_cache_t* optimize_cache = NULL;
+
+    DBUG_ENTER("mysql_cache_optimize_sql");
+
+    if (!thd->have_begin)
+    {
+        my_error(ER_START_AS_BEGIN, MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+
+    optimize_cache = thd->optimize_cache;
+    if (!thd->current_optimize)
+    {
+        optimize_cache_node = (optimize_cache_node_t*)my_malloc(
+            sizeof(optimize_cache_node_t), MY_ZEROFILL);
+        LIST_ADD_LAST(link, optimize_cache->field_lst, optimize_cache_node);
+    }
+    else
+    {
+        optimize_cache_node = thd->current_optimize;
+    }
+
+    thd->current_optimize = NULL;
+    String sql_with_charset(thd->query(), thd->query_length(), thd->query_charset());
+    thd->convert_string(&sql_with_charset, sql_with_charset.charset(), system_charset_info);
+    errmsg_len = sql_with_charset.length();
+    //hide internal tag 'inception_magic_commit'
+    if (thd->parse_error)
+        errmsg_len = truncate_inception_commit(sql_with_charset.ptr(), errmsg_len);
+
+    optimize_cache_node->sql_statements = (char*)my_malloc(sql_with_charset.length() + 10, 
+        MY_ZEROFILL);
+
+    strncpy(optimize_cache_node->sql_statements, sql_with_charset.ptr(), errmsg_len);
+    if (thd->errmsg != NULL)
+    {
+        optimize_cache_node->errmsg = thd->errmsg;
+        thd->errmsg = NULL;
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
 int mysql_cache_one_sql(THD* thd)
 {
     int               errmsg_len;
@@ -920,17 +969,18 @@ int mysql_send_query_print_results(THD* thd)
 
 int mysql_send_optimize_results(THD* thd)
 {
-    split_cache_node_t*  sql_cache_node;
+    optimize_cache_node_t*  sql_cache_node;
     Protocol *    protocol= thd->protocol;
     List<Item>    field_list;
     int      id = 1;
 
     DBUG_ENTER("mysql_send_optimize_results");
 
-    field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("sql_statement", FN_REFLEN));
-    field_list.push_back(new Item_return_int("ddlflag", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_return_int("sql_count", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("Id", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("SQL_Statement", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Suggests", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("New_SQL_Statement", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Error_Message", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -938,30 +988,29 @@ int mysql_send_optimize_results(THD* thd)
         DBUG_RETURN(true);
     }
 
-    if (thd->errmsg) {
-        protocol->prepare_for_resend();
-
-        protocol->store(0);
-        protocol->store(str_get(thd->errmsg), thd->charset());
-        protocol->store(0);
-
-        protocol->write();
-        thd->clear_error();
-        my_eof(thd);
-        DBUG_RETURN(false);
-    }
-
-    if (thd->split_cache) {
-        sql_cache_node = LIST_GET_FIRST(thd->split_cache->field_lst);
+    if (thd->optimize_cache) {
+        sql_cache_node = LIST_GET_FIRST(thd->optimize_cache->field_lst);
         while (sql_cache_node != NULL)
         {
             protocol->prepare_for_resend();
 
             protocol->store(id++);
 
-            protocol->store(str_get(&sql_cache_node->sql_statements), thd->charset());
-            protocol->store(sql_cache_node->ddlflag);
-            protocol->store(sql_cache_node->sql_count);
+            protocol->store(sql_cache_node->sql_statements, thd->charset());
+            if (str_get_len(&sql_cache_node->suggests))
+                protocol->store(str_get(&sql_cache_node->suggests), thd->charset());
+            else
+                protocol->store("NULL", thd->charset());
+
+            if (str_get_len(&sql_cache_node->new_sql_statements))
+                protocol->store(str_get(&sql_cache_node->new_sql_statements), thd->charset());
+            else
+                protocol->store("NULL", thd->charset());
+
+            if (sql_cache_node->errmsg && str_get_len(sql_cache_node->errmsg))
+                protocol->store(str_get(sql_cache_node->errmsg), thd->charset());
+            else
+                protocol->store("NULL", thd->charset());
 
             if (protocol->write())
                 break;
@@ -12450,19 +12499,8 @@ int mysql_optimize_command(THD *thd)
     int err;
     switch (thd->lex->sql_command)
     {
-    case SQLCOM_INSERT:
-    case SQLCOM_INSERT_SELECT:
-        err = mysql_print_insert(thd);
-        break;
-
-    case SQLCOM_DELETE:
-    case SQLCOM_DELETE_MULTI:
-        err = mysql_print_delete(thd);
-        break;
-
-    case SQLCOM_UPDATE:
-    case SQLCOM_UPDATE_MULTI:
-        err = mysql_print_update(thd);
+    case SQLCOM_CHANGE_DB:
+        err = mysql_optimize_change_db(thd);
         break;
 
     case SQLCOM_SELECT:
@@ -12470,7 +12508,7 @@ int mysql_optimize_command(THD *thd)
         break;
 
     default:
-        mysql_print_not_support(thd);
+        mysql_optimize_not_support(thd);
         break;
     }
 
@@ -13810,6 +13848,11 @@ bool mysql_change_db(THD *thd, const LEX_STRING *new_db_name, bool force_switch)
         DBUG_RETURN(TRUE);
     }
 
+    db_default_cl= get_default_db_collation(thd, new_db_file_name.str);
+    mysql_change_db_impl(thd, &new_db_file_name, db_access, db_default_cl);
+
+    strcpy(thd->thd_sinfo->db, thd->db);
+
     //to do ...做DB缓存，不然创建库然后马上使用会有问题
     if (inception_get_type(thd) != INCEPTION_TYPE_SPLIT) {
         if (thd->have_begin && mysql_check_db_existed(thd, new_db_file_name.str))
@@ -13819,11 +13862,6 @@ bool mysql_change_db(THD *thd, const LEX_STRING *new_db_name, bool force_switch)
             DBUG_RETURN(TRUE);
         }
     }
-
-    db_default_cl= get_default_db_collation(thd, new_db_file_name.str);
-    mysql_change_db_impl(thd, &new_db_file_name, db_access, db_default_cl);
-
-    strcpy(thd->thd_sinfo->db, thd->db);
 
     DBUG_RETURN(FALSE);
 }
@@ -17622,10 +17660,15 @@ void mysql_parse(THD *thd, uint length, Parser_state *parser_state)
     mysql_reset_thd_for_next_command(thd);
 
     err = mysql_process_command(thd, parser_state);
-    if (err != ER_NO && err != ER_WARNING && 
-        (inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
-        inception_get_type(thd) == INCEPTION_TYPE_EXECUTE))
-        mysql_cache_one_sql(thd);
+    if (err != ER_NO && err != ER_WARNING)
+    {
+        if (inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
+            inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
+            mysql_cache_one_sql(thd);
+
+        if (inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE)
+            mysql_cache_optimize_sql(thd);
+    }
 
     thd->end_statement();
     thd->cleanup_after_query();
