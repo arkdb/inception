@@ -731,6 +731,11 @@ struct query_print_cache_struct
 typedef struct optimize_cache_node_struct optimize_cache_node_t;
 struct optimize_cache_node_struct 
 {
+    char*                                 sql_statements;
+    str_t                                 suggests;
+    str_t                                 new_sql_statements;
+    str_t*                                errmsg;
+    int                                   not_support;
     rt_lst_t                              rt_lst;
     LIST_NODE_T(optimize_cache_node_t)    link;
 };
@@ -3545,6 +3550,7 @@ public:
   split_cache_t* split_cache;
   query_print_cache_t* query_print_cache;
   optimize_cache_t* optimize_cache;
+  optimize_cache_node_t* current_optimize;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
 
   int backup_flag;
@@ -5864,6 +5870,8 @@ char* str_get(str_t* str);
 int str_get_len(str_t* str);
 int str_get_alloc_len(str_t* str);
 int mysql_load_tables( THD* thd, rt_lst_t* rt_lst, st_select_lex *select_lex);
+int mysql_optimize_not_support(THD* thd);
+int mysql_optimize_change_db(THD* thd);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */
