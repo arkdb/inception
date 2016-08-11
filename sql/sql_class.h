@@ -728,6 +728,19 @@ struct query_print_cache_struct
     LIST_BASE_NODE_T(query_print_cache_node_t)    field_lst;
 };
 
+typedef struct optimize_cache_node_struct optimize_cache_node_t;
+struct optimize_cache_node_struct 
+{
+    rt_lst_t                              rt_lst;
+    LIST_NODE_T(optimize_cache_node_t)    link;
+};
+
+typedef struct optimize_cache_struct optimize_cache_t;
+struct optimize_cache_struct 
+{
+    LIST_BASE_NODE_T(optimize_cache_node_t)    field_lst;
+};
+
 typedef struct sql_statistic_struct sql_statistic_t;
 struct sql_statistic_struct
 {
@@ -3531,6 +3544,7 @@ public:
   sql_cache_t* sql_cache;
   split_cache_t* split_cache;
   query_print_cache_t* query_print_cache;
+  optimize_cache_t* optimize_cache;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
 
   int backup_flag;
@@ -5836,6 +5850,20 @@ int mysql_check_table_existed(THD* thd);
 int mysql_check_charset(const char* charsetname);
 int truncate_inception_commit(const char* msg, int length);
 int mysql_check_identified(THD* thd, char* name, int len);
+int mysql_optimize_select(THD* thd);
+str_t* str_init(str_t* str);
+str_t* str_init_with_extend(str_t* str, int extend_len);
+str_t* str_relloc(str_t* str, int namelen);
+str_t* str_append_1( str_t*  str, const char* new_string);
+str_t* str_append_with_length( str_t*  str, const char* new_string, int len);
+str_t* str_append( str_t*  str, const char* new_string);
+str_t* str_truncate_0(str_t* str);
+str_t* str_truncate(str_t* str, int endlen);
+void str_deinit(str_t* str);
+char* str_get(str_t* str);
+int str_get_len(str_t* str);
+int str_get_alloc_len(str_t* str);
+int mysql_load_tables( THD* thd, rt_lst_t* rt_lst, st_select_lex *select_lex);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

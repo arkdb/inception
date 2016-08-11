@@ -918,6 +918,64 @@ int mysql_send_query_print_results(THD* thd)
     DBUG_RETURN(false);
 }
 
+int mysql_send_optimize_results(THD* thd)
+{
+    split_cache_node_t*  sql_cache_node;
+    Protocol *    protocol= thd->protocol;
+    List<Item>    field_list;
+    int      id = 1;
+
+    DBUG_ENTER("mysql_send_optimize_results");
+
+    field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("sql_statement", FN_REFLEN));
+    field_list.push_back(new Item_return_int("ddlflag", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_return_int("sql_count", 20, MYSQL_TYPE_LONG));
+
+    if (protocol->send_result_set_metadata(&field_list,
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    if (thd->errmsg) {
+        protocol->prepare_for_resend();
+
+        protocol->store(0);
+        protocol->store(str_get(thd->errmsg), thd->charset());
+        protocol->store(0);
+
+        protocol->write();
+        thd->clear_error();
+        my_eof(thd);
+        DBUG_RETURN(false);
+    }
+
+    if (thd->split_cache) {
+        sql_cache_node = LIST_GET_FIRST(thd->split_cache->field_lst);
+        while (sql_cache_node != NULL)
+        {
+            protocol->prepare_for_resend();
+
+            protocol->store(id++);
+
+            protocol->store(str_get(&sql_cache_node->sql_statements), thd->charset());
+            protocol->store(sql_cache_node->ddlflag);
+            protocol->store(sql_cache_node->sql_count);
+
+            if (protocol->write())
+                break;
+
+            sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
+        }
+
+        thd->clear_error();
+        my_eof(thd);
+    }
+
+    DBUG_RETURN(false);
+}
+
 int mysql_send_split_results(THD* thd)
 {
     split_cache_node_t*  sql_cache_node;
@@ -1014,6 +1072,11 @@ int mysql_send_all_results(THD* thd)
 
     if (mysql_not_need_data_source(thd))
         DBUG_RETURN(false);
+
+    if (inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE) {
+        mysql_send_optimize_results(thd);
+        DBUG_RETURN(false);
+    }
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         mysql_send_split_results(thd);
@@ -12403,7 +12466,7 @@ int mysql_optimize_command(THD *thd)
         break;
 
     case SQLCOM_SELECT:
-        err = mysql_print_select(thd);
+        err = mysql_optimize_select(thd);
         break;
 
     default:
@@ -16779,6 +16842,7 @@ int mysql_execute_commit(THD *thd)
     if (inception_read_only ||
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
         inception_get_type(thd) == INCEPTION_TYPE_SPLIT ||
+        inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE ||
         inception_get_type(thd) == INCEPTION_TYPE_PRINT)
     {
         mysql_send_all_results(thd);
@@ -17147,28 +17211,27 @@ int mysql_init_sql_cache(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
-    thd->thread_state = INCEPTION_STATE_INIT;
-    thd->have_begin = TRUE;
-    thd->have_error_before = FALSE;
-    thd->check_error_before = FALSE;
-    thd->parse_error = FALSE;
-    thd->errmsg = NULL;
-    thd->show_result = NULL;
-    thd->err_level = INCEPTION_NOERR;
-    str_init(&thd->ddl_rollback);
-    thd->affected_rows = 0;
-
+    //remote show 
     thd->show_result = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
     str_init(thd->show_result);
-    thd->query_print_cache = (query_print_cache_t*)my_malloc(
-        sizeof(query_print_cache_t), MY_ZEROFILL);
-    LIST_INIT(thd->query_print_cache->field_lst);
 
-    LIST_INIT(thd->tablecache.tablecache_lst);
-    LIST_INIT(thd->dbcache.dbcache_lst);
-    thd->rt_lst = NULL;
-
-    if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
+    //query print 
+    if (inception_get_type(thd) == INCEPTION_TYPE_PRINT) 
+    {
+        thd->query_print_cache = (query_print_cache_t*)my_malloc(
+            sizeof(query_print_cache_t), MY_ZEROFILL);
+        LIST_INIT(thd->query_print_cache->field_lst);
+    }
+    //optimize query
+    else if (inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE) 
+    {
+        thd->optimize_cache = (optimize_cache_t*)my_malloc(
+            sizeof(optimize_cache_t), MY_ZEROFILL);
+        LIST_INIT(thd->optimize_cache->field_lst);
+    }
+    //split querys 
+    else if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) 
+    {
         split_cache = (split_cache_t*)my_malloc(sizeof(split_cache_t), MY_ZEROFILL);
         thd->split_cache = split_cache;
         if (split_cache == NULL)
@@ -17183,18 +17246,7 @@ int mysql_init_sql_cache(THD* thd)
         thd->setnamesflag = 0;
         DBUG_RETURN(FALSE);
     }
-
-    DBUG_ASSERT(thd->sql_cache == NULL);
-    sql_cache = (sql_cache_t*)my_malloc(sizeof(sql_cache_t), MY_ZEROFILL);
-    thd->sql_cache = sql_cache;
-    if (sql_cache == NULL)
-    {
-        my_error(ER_OUTOFMEMORY, MYF(0));
-        DBUG_RETURN(ER_NO);
-    }
-
-    mysql_get_remote_variables(thd);
-    if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
+    else if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
     {
         if ((is_stmt = mysql_check_binlog_format(thd, (char*)"STATEMENT")) == ER_NO)
             DBUG_RETURN(ER_NO);
@@ -17214,20 +17266,35 @@ int mysql_init_sql_cache(THD* thd)
                     thd->thd_sinfo->host, thd->thd_sinfo->port);
             thd->thd_sinfo->backup = FALSE;
         }
+
+        if (thd->thd_sinfo->backup && !inception_read_only && 
+            inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+            (remote_backup_host == NULL || remote_backup_port == 0 || 
+            remote_system_user == NULL || remote_system_password == NULL || 
+            remote_system_user[0] == '\0' || remote_system_password[0] == '\0'))
+        {
+            my_error(ER_INVALID_BACKUP_HOST_INFO, MYF(0));
+            DBUG_RETURN(ER_NO);
+        }
+        if(mysql_cache_new_task(thd))
+            DBUG_RETURN(ER_NO);
     }
 
-    if (thd->thd_sinfo->backup && !inception_read_only && 
-        inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
-        (remote_backup_host == NULL || remote_backup_port == 0 || 
-        remote_system_user == NULL || remote_system_password == NULL || 
-        remote_system_user[0] == '\0' || remote_system_password[0] == '\0'))
+    if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE ||
+        inception_get_type(thd) == INCEPTION_TYPE_CHECK)
     {
-        my_error(ER_INVALID_BACKUP_HOST_INFO, MYF(0));
-        DBUG_RETURN(ER_NO);
-    }
+        // check, execute 
+        DBUG_ASSERT(thd->sql_cache == NULL);
+        sql_cache = (sql_cache_t*)my_malloc(sizeof(sql_cache_t), MY_ZEROFILL);
+        thd->sql_cache = sql_cache;
+        if (sql_cache == NULL)
+        {
+            my_error(ER_OUTOFMEMORY, MYF(0));
+            DBUG_RETURN(ER_NO);
+        }
 
-    if(mysql_cache_new_task(thd))
-        DBUG_RETURN(ER_NO);
+        mysql_get_remote_variables(thd);
+    }
 
     DBUG_RETURN(FALSE);
 }
@@ -17341,6 +17408,7 @@ int mysql_deinit_sql_cache(THD* thd)
     thd->sql_cache = NULL;
 
     str_deinit(thd->show_result);
+    my_free(thd->show_result);
     thd->show_result = NULL;
     query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
     while (query_print_cache_node != NULL)

@@ -1043,25 +1043,39 @@ THD::THD(bool enable_plugins)
   binlog_next_event_pos.file_name= NULL;
   binlog_next_event_pos.pos= 0;
 
-  have_begin = FALSE;
-  sql_cache = NULL;
-  thd_sinfo = (sinfo_space_t*)my_malloc(sizeof(sinfo_space_t), MYF(0));
-  thd_sinfo->optype = INCEPTION_TYPE_LOCAL; 
-  memset(thd_sinfo, 0, sizeof(sinfo_space_t));
-  have_error_before = FALSE;
-  parse_error = FALSE;
-  check_error_before = FALSE;
-  errmsg = NULL;
-  use_osc = 0;
-  LIST_INIT(tablecache.tablecache_lst);
-  memset(&sql_statistic, 0, sizeof(sql_statistic_t));
-  mysql_mutex_init(NULL, &sleep_lock, MY_MUTEX_INIT_FAST);
-  mysql_cond_init(NULL, &sleep_cond, NULL);
-  last_update_event_id = 0;
-  this->get_stmt_da()->set_overwrite_status(true);
-  variables.long_query_time =10000000;
+    thread_state = INCEPTION_STATE_INIT;
+    have_begin = TRUE;
+    have_error_before = FALSE;
+    check_error_before = FALSE;
+    parse_error = FALSE;
+    errmsg = NULL;
+    show_result = NULL;
+    err_level = INCEPTION_NOERR;
+    str_init(&ddl_rollback);
+    affected_rows = 0;
+
+    have_begin = FALSE;
+    sql_cache = NULL;
+    thd_sinfo = (sinfo_space_t*)my_malloc(sizeof(sinfo_space_t), MYF(0));
+    thd_sinfo->optype = INCEPTION_TYPE_LOCAL; 
+    LIST_INIT(tablecache.tablecache_lst);
+    LIST_INIT(dbcache.dbcache_lst);
+    rt_lst = NULL;
+    memset(thd_sinfo, 0, sizeof(sinfo_space_t));
+    have_error_before = FALSE;
+    parse_error = FALSE;
+    check_error_before = FALSE;
+    errmsg = NULL;
+    use_osc = 0;
+    LIST_INIT(tablecache.tablecache_lst);
+    memset(&sql_statistic, 0, sizeof(sql_statistic_t));
+    mysql_mutex_init(NULL, &sleep_lock, MY_MUTEX_INIT_FAST);
+    mysql_cond_init(NULL, &sleep_cond, NULL);
+    last_update_event_id = 0;
+    this->get_stmt_da()->set_overwrite_status(true);
+    variables.long_query_time =10000000;
 #ifndef DBUG_OFF
-  gis_debug= 0;
+    gis_debug= 0;
 #endif
 }
 
