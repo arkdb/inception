@@ -10255,6 +10255,27 @@ int mysql_field_check(THD* thd, Create_field* field, char* table_name)
     return false;
 }
 
+field_info_t*
+mysql_find_field_by_name(
+    table_info_t* table_info, 
+    char* field_name
+)
+{
+    field_info_t* field_info;
+    field_info = LIST_GET_FIRST(table_info->field_lst);
+    while (field_info)
+    {
+        if (strcasecmp(field_info->field_name, field_name) == 0)
+        {
+            break;
+        }
+
+        field_info = LIST_GET_NEXT(link, field_info);
+    }
+
+    return field_info;
+}
+
 int mysql_check_add_column(THD *thd)
 {
     table_info_t* table_info;
@@ -12139,7 +12160,20 @@ print_item(
         {
             st_select_lex *select_lex_new;
             subselect_single_select_engine* real_engine;
+            Item_in_subselect* insubselect;
+
             str_append(print_str, "{");
+            insubselect = dynamic_cast<Item_in_subselect*>(item);
+            if (insubselect && insubselect->left_expr)
+            {
+                str_append(print_str, "\"type\":\"FUNC_ITEM\",");
+                str_append(print_str, "\"func\":\"IN\",");
+                str_append(print_str, "\"args\":[");
+                print_item(thd, query_node, print_str, insubselect->left_expr, select_lex);
+                str_append(print_str, ",");
+                str_append(print_str, "{");
+            }
+
             str_append(print_str, "\"type\":\"SUBSELECT_ITEM\",");
             const subselect_engine *engine = ((Item_subselect*)item)->get_engine_for_explain();
             subselect_single_select_engine::enum_engine_type engine_type = engine->engine_type();
@@ -12152,6 +12186,9 @@ print_item(
                 if (mysql_print_subselect(thd, query_node, print_str, select_lex_new, false))
                     return true;
             }
+
+            if (insubselect && insubselect->left_expr)
+                str_append(print_str, "}]");
 
             str_append(print_str, "}");
         }
