@@ -5872,6 +5872,8 @@ int str_get_alloc_len(str_t* str);
 int mysql_load_tables( THD* thd, rt_lst_t* rt_lst, st_select_lex *select_lex);
 int mysql_optimize_not_support(THD* thd);
 int mysql_optimize_change_db(THD* thd);
+table_rt_t* mysql_find_field_from_all_tables( THD* thd, rt_lst_t* rt_lst, st_select_lex *select_lex_in, const char* dbname, const char* tablename, const char* field_name);
+field_info_t* mysql_find_field_by_name( table_info_t* table_info, char* field_name);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

@@ -13,129 +13,36 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#define MYSQL_LEX 1
-// #include "mysql_thread.h"
-#include "my_global.h"
-#include "sql_priv.h"
-#include "unireg.h"                    // REQUIRED: for other includes
-#include "sql_parse.h"        // sql_kill, *_precheck, *_prepare
-#include "lock.h"             // try_transactional_lock,
-// check_transactional_lock,
-// set_handler_table_locks,
-// lock_global_read_lock,
-// make_global_read_lock_block_commit
-#include "sql_base.h"         // find_temporary_table
-#include "sql_cache.h"        // QUERY_CACHE_FLAGS_SIZE, query_cache_*
-#include "sql_show.h"         // mysqld_list_*, mysqld_show_*,
-// calc_sum_of_all_status
+#include "sql_parse.h"
 #include "mysqld.h"
-#include "sql_locale.h"                         // my_locale_en_US
-#include "log.h"                                // flush_error_log
-#include "sql_view.h"         // mysql_create_view, mysql_drop_view
-#include "sql_delete.h"       // mysql_delete
-#include "sql_insert.h"       // mysql_insert
-#include "sql_update.h"       // mysql_update, mysql_multi_update
-#include "sql_partition.h"    // struct partition_info
-#include "sql_db.h"           // mysql_change_db, mysql_create_db,
-// mysql_rm_db, mysql_upgrade_db,
-// mysql_alter_db,
-// check_db_dir_existence,
-// my_dbopt_cleanup
-#include "sql_table.h"        // mysql_create_like_table,
-// mysql_create_table,
-// mysql_alter_table,
-// mysql_backup_table,
-// mysql_restore_table
-#include "sql_reload.h"       // reload_acl_and_cache
-#include "sql_admin.h"        // mysql_assign_to_keycache
-#include "sql_connect.h"      // check_user,
-// decrease_user_connections,
-// thd_init_client_charset, check_mqh,
-// reset_mqh
-#include "sql_rename.h"       // mysql_rename_table
 #include <string.h>
-#include "sql_tablespace.h"   // mysql_alter_tablespace
-#include "hostname.h"         // hostname_cache_refresh
-#include "sql_acl.h"          // *_ACL, check_grant, is_acl_user,
-// has_any_table_level_privileges,
-// mysql_drop_user, mysql_rename_user,
-// check_grant_routine,
-// mysql_routine_grant,
-// mysql_show_grants,
-// sp_grant_privileges, ...
-#include "sql_test.h"         // mysql_print_status
-#include "sql_select.h"       // handle_select, mysql_select,
-#include "sql_load.h"         // mysql_load
-#include "sql_servers.h"      // create_servers, alter_servers,
-// drop_servers, servers_reload
-#include "sql_handler.h"      // mysql_ha_open, mysql_ha_close,
-// mysql_ha_read
-#include "sql_binlog.h"       // mysql_client_binlog_statement
-#include "sql_do.h"           // mysql_do
-#include "sql_help.h"         // mysqld_help
-#include "rpl_constants.h"    // Incident, INCIDENT_LOST_EVENTS
-#include "log_event.h"
-#include "rpl_slave.h"
-#include "rpl_master.h"
-#include "rpl_filter.h"
-#include <m_ctype.h>
-#include <myisam.h>
-#include <my_dir.h>
-#include "sql_lex.h"
-#include "rpl_mi.h"
-#include "errmsg.h"
-#include "sp_head.h"
-#include "sp.h"
-#include "sp_cache.h"
-#include "events.h"
-#include "sql_trigger.h"
-#include "transaction.h"
-#include "sql_audit.h"
-#include "sql_prepare.h"
-#include "debug_sync.h"
-#include "probes_mysql.h"
-#include "set_var.h"
-#include "opt_trace.h"
-#include "mysql/psi/mysql_statement.h"
-#include "sql_bootstrap.h"
-#include "opt_explain.h"
-#include "sql_rewrite.h"
-#include "global_threads.h"
-#include "sql_analyse.h"
-//#include "table_cache.h" // table_cache_manager
+#include "sql_db.h"
 #include "sql_common.h"
 #include "derror.h"
 #include "mysys_err.h"
-#include <sql_class.h>
-#include "sql_show.h"
-#include "ptosc.h"
-#include <algorithm>
 #include "item_subselect.h"
-#include "sql_time.h"
-#include "thr_alarm.h"
+
+int optimize_item(THD* thd, optimize_cache_node_t* query_node, Item* item, st_select_lex *select_lex);
+
+int 
+mysql_optimize_where(
+    THD* thd, 
+    optimize_cache_node_t* optimize_node,
+    st_select_lex *select_lex
+)
+{
+    if (select_lex->where)
+    {
+        optimize_item(thd, optimize_node, select_lex->where, select_lex);
+    }
+
+    return false;
+}
 
 int mysql_optimize_tables(
     THD* thd, 
     st_select_lex *select_lex,
     TABLE_LIST* tables
-)
-{
-    return false;
-}
-
-int 
-mysql_optimize_where(
-    THD* thd, 
-    st_select_lex *select_lex
-)
-{
-    return false;
-}
-
-int optimize_item(
-    THD* thd, 
-    Item* item,
-    st_select_lex *select_lex
 )
 {
     return false;
@@ -157,7 +64,7 @@ int mysql_optimize_subselect(
     List_iterator<Item> it(select_lex->item_list);
     while ((item= it++))
     {
-        optimize_item(thd, item, select_lex);
+        optimize_item(thd, optimize_node, item, select_lex);
     }
 
     if (top && (thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
@@ -174,8 +81,287 @@ int mysql_optimize_subselect(
         mysql_optimize_tables(thd, select_lex, tables);
     }
 
-    mysql_optimize_where(thd, select_lex);
+    mysql_optimize_where(thd, optimize_node, select_lex);
     return 0;
+}
+
+int optimize_sum_item(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    return 0;
+}
+
+int optimize_func_item_field_compare(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* left_item,
+    Item* right_item
+)
+{
+    Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+    Item_field* right_item_field = dynamic_cast<Item_field*>(right_item);
+    field_info_t* field_info_r = (field_info_t*)right_item_field->field_info;
+    field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+    table_rt_t* table_info_r= (table_rt_t*)right_item_field->table_rt;
+    table_rt_t* table_info_l= (table_rt_t*)left_item_field->table_rt;
+    if (field_info_r && field_info_l)
+    {
+        if (field_info_r->real_type != field_info_l->real_type)
+        {
+            my_error(ER_DIFF_TYPE_COMPARE_FIELD, MYF(0), 
+                table_info_l->table_info->table_name, field_info_l->field_name, 
+                field_info_l->data_type, table_info_r->table_info->table_name,
+                field_info_r->field_name, field_info_r->data_type);
+            mysql_errmsg_append(thd);
+        }
+        if (field_info_r->charsetnr != field_info_l->charsetnr)
+        {
+            my_error(ER_DIFF_CHARSET_COMPARE_FIELD, MYF(0), 
+                table_info_l->table_info->table_name, field_info_l->field_name, 
+                get_charset_name(field_info_l->charsetnr), table_info_r->table_info->table_name,
+                field_info_r->field_name, get_charset_name(field_info_r->charsetnr));
+            mysql_errmsg_append(thd);
+        }
+    }
+
+    return false;
+}
+
+int optimize_func_item(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    if (!item)
+        return 0;
+    switch(((Item_func *)item)->functype())
+    {
+    case Item_func::EQ_FUNC:
+    case Item_func::NE_FUNC:
+    case Item_func::LT_FUNC:
+    case Item_func::LE_FUNC:
+    case Item_func::GE_FUNC:
+    case Item_func::GT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            optimize_item(thd, query_node, left_item, select_lex);
+            Item *right_item= ((Item_func*) item)->arguments()[1];
+            optimize_item(thd, query_node, right_item, select_lex);
+            if (left_item->type() == Item::FIELD_ITEM && 
+                right_item->type() == Item::FIELD_ITEM)
+            {
+                optimize_func_item_field_compare(thd, query_node, left_item, right_item);
+            }
+        }
+        break;
+
+    case Item_func::COND_OR_FUNC:
+    case Item_func::COND_AND_FUNC:
+        {
+            List<Item> *args= ((Item_cond*) item)->argument_list();
+            List_iterator<Item> li(*args);
+            Item *item_arg;
+            while ((item_arg= li++))
+            {
+                optimize_item(thd, query_node, item_arg, select_lex);
+            }
+        }
+        break;
+    case Item_func::ISNULL_FUNC:
+    case Item_func::ISNOTNULL_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            optimize_item(thd, query_node, left_item, select_lex);
+        }
+        break;
+    case Item_func::LIKE_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            Item *right_item= ((Item_func*) item)->arguments()[1];
+            optimize_item(thd, query_node, left_item, select_lex);
+            optimize_item(thd, query_node, right_item, select_lex);
+        }
+        break;
+    case Item_func::BETWEEN:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            Item *right_item1= ((Item_func*) item)->arguments()[1];
+            Item *right_item2= ((Item_func*) item)->arguments()[2];
+            optimize_item(thd, query_node, left_item, select_lex);
+            optimize_item(thd, query_node, right_item1, select_lex);
+            optimize_item(thd, query_node, right_item2, select_lex);
+        }
+        break;
+    case Item_func::IN_FUNC:
+    case Item_func::MULT_EQUAL_FUNC:
+        {
+            for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+            {
+                Item *right_item= ((Item_func*) item)->arguments()[i];
+                optimize_item(thd, query_node, right_item, select_lex);
+            }
+        }
+        break;
+    case Item_func::NEG_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            optimize_item(thd, query_node, left_item, select_lex);
+        }
+        break;
+    case Item_func::NOT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            optimize_item(thd, query_node, left_item, select_lex);
+        }
+        break;
+    case Item_func::NOW_FUNC:
+        {
+        }
+        break;
+    case Item_func::EXTRACT_FUNC:
+        {
+            Item *left_item= ((Item_func*) item)->arguments()[0];
+            optimize_item(thd, query_node, left_item, select_lex);
+        }
+        break;
+    case Item_func::FUNC_SP:
+    case Item_func::UNKNOWN_FUNC:
+        {
+            if (((Item_func*) item)->argument_count() > 0)
+            {
+                for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+                {
+                    Item *right_item= ((Item_func*) item)->arguments()[i];
+                    optimize_item(thd, query_node, right_item, select_lex);
+                }
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return false;
+}
+
+
+int optimize_item(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    if (!item)
+        return 0;
+    switch (item->type()) {
+    case Item::INT_ITEM:
+    case Item::REAL_ITEM:
+    case Item::NULL_ITEM:
+    case Item::STRING_ITEM:
+    case Item::DECIMAL_ITEM:
+        break;
+    case Item::REF_ITEM:
+    case Item::FIELD_ITEM:
+        {
+            table_rt_t* tablert;
+            if (!strcasecmp(((Item_field*)item)->field_name, "*"))
+                break;
+
+            dynamic_cast<Item_field*>(item)->table_rt = NULL;
+            dynamic_cast<Item_field*>(item)->field_info = NULL;
+            tablert = mysql_find_field_from_all_tables(
+                thd, &query_node->rt_lst, select_lex, ((Item_field*)item)->db_name, 
+                ((Item_field*)item)->table_name, ((Item_field*)item)->field_name); 
+            if (tablert)
+            {
+                dynamic_cast<Item_field*>(item)->table_rt = tablert;
+                if (strcasecmp(((Item_field*)item)->field_name, "*"))
+                {
+                    dynamic_cast<Item_field*>(item)->field_info = 
+                      mysql_find_field_by_name(tablert->table_info, 
+                          (char*)((Item_field*)item)->field_name);
+                }
+            }
+            else if (select_lex->order_group_having)
+            {
+                Item* item_item;
+                List_iterator<Item> it(select_lex->item_list);
+                while ((item_item = it++))
+                {
+                    if (item_item->item_name.is_set())
+                    {
+                        if (!strcasecmp(item_item->item_name.ptr(), 
+                              ((Item_field*)item)->field_name))
+                        {
+                            ((Item_field*)item)->field_info = mysql_find_field_by_name(
+                                tablert->table_info, (char*)((Item_field*)item)->field_name);
+                            break;
+                        }
+                    }
+                }
+
+                if (item_item == NULL)
+                {
+                    my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                    mysql_errmsg_append(thd);
+                }
+            }
+            else
+            {
+                my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
+                mysql_errmsg_append(thd);
+            }
+        }
+        break;
+    case Item::FUNC_ITEM:
+    case Item::COND_ITEM:
+        {
+            optimize_func_item(thd, query_node, item, select_lex);
+        }
+        break;
+    case Item::SUBSELECT_ITEM:
+        {
+            st_select_lex *select_lex_new;
+            subselect_single_select_engine* real_engine;
+            const subselect_engine *engine = ((Item_subselect*)item)->get_engine_for_explain();
+            subselect_single_select_engine::enum_engine_type engine_type = engine->engine_type();
+
+            if (engine_type == subselect_engine::SINGLE_SELECT_ENGINE)
+            {
+                real_engine = (subselect_single_select_engine*)engine;
+                select_lex_new = real_engine->get_st_select_lex();
+                if (mysql_optimize_subselect(thd, query_node, select_lex_new, false))
+                    return true;
+            }
+        }
+        break;
+    case Item::SUM_FUNC_ITEM:
+        {
+            optimize_sum_item(thd, query_node, item, select_lex);
+        }
+        break;
+    case Item::ROW_ITEM:
+        {
+            for (uint i=0; i < ((Item_row*)item)->cols();i++)
+            {
+                Item *right_item= ((Item_row*)item)->element_index(i);
+                optimize_item(thd, query_node, right_item, select_lex);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    return false;
 }
 
 int mysql_optimize_change_db(THD* thd)

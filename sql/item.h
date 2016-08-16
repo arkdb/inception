@@ -2133,6 +2133,9 @@ public:
     if any_privileges set to TRUE then here real effective privileges will
     be stored
   */
+  void* table_rt;
+  void* field_info;
+
   uint have_privileges;
   /* field need any privileges (for VIEW creation) */
   bool any_privileges;

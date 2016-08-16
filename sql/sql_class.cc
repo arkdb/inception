@@ -1058,6 +1058,7 @@ THD::THD(bool enable_plugins)
     sql_cache = NULL;
     thd_sinfo = (sinfo_space_t*)my_malloc(sizeof(sinfo_space_t), MYF(0));
     thd_sinfo->optype = INCEPTION_TYPE_LOCAL; 
+    current_optimize = NULL;
     LIST_INIT(tablecache.tablecache_lst);
     LIST_INIT(dbcache.dbcache_lst);
     rt_lst = NULL;
