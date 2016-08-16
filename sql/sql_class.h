@@ -1257,6 +1257,7 @@ typedef struct system_variables
   ulong inception_osc_critical_running;
   ulong inception_osc_critical_connected;
   ulong inception_osc_min_table_size;
+  bool inception_format_sql_full_path=0;
 
 } SV;
 
@@ -5896,6 +5897,14 @@ int mysql_optimize_not_support(THD* thd);
 int mysql_optimize_change_db(THD* thd);
 table_rt_t* mysql_find_field_from_all_tables( THD* thd, rt_lst_t* rt_lst, st_select_lex *select_lex_in, const char* dbname, const char* tablename, const char* field_name);
 field_info_t* mysql_find_field_by_name( table_info_t* table_info, char* field_name);
+
+int mysql_format_select(THD* thd);
+int mysql_format_delete(THD* thd);
+int mysql_format_update(THD* thd);
+int mysql_format_insert(THD* thd);
+int mysql_format_change_db(THD* thd);
+int mysql_format_not_support(THD* thd);
+
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

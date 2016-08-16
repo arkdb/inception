@@ -954,6 +954,12 @@ static Sys_var_mybool Sys_inception_osc_drop_new_table(
     SESSION_VAR(inception_osc_drop_new_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_format_sql_full_path(
+    "inception_format_sql_full_path",
+    "Format sql if with db and table name or not.",
+    SESSION_VAR(inception_format_sql_full_path),
+    CMD_LINE(OPT_ARG), DEFAULT(FALSE));
+
 static Sys_var_mybool Sys_inception_osc_print_sql(
     "inception_osc_print_sql",
     "Print SQL statements to STDOUT. Specifying this option allows you to see "
