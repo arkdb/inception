@@ -10341,7 +10341,7 @@ join_table:
             left-associative joins.
           */
           table_ref normal_join table_ref %prec TABLE_REF_PRIORITY
-          { MYSQL_YYABORT_UNLESS($1 && ($$=$3)); }
+          { MYSQL_YYABORT_UNLESS($1 && ($$=$3)); $3->natural_join_type=1;}
         | table_ref STRAIGHT_JOIN table_factor
           { MYSQL_YYABORT_UNLESS($1 && ($$=$3)); $3->straight=1; }
         | table_ref normal_join table_ref
@@ -10355,6 +10355,7 @@ join_table:
           }
           expr
           {
+            $3->natural_join_type=1;
             add_join_on($3,$6);
             Lex->pop_context();
             Select->parsing_place= NO_MATTER;
@@ -10381,9 +10382,10 @@ join_table:
             MYSQL_YYABORT_UNLESS($1 && $3);
           }
           '(' using_list ')'
-          { add_join_natural($1,$3,$7,Select); $$=$3; }
+          { add_join_natural($1,$3,$7,Select); $3->natural_join_type=1;$$=$3; }
         | table_ref NATURAL JOIN_SYM table_factor
           {
+            $4->natural_join_type=1;
             MYSQL_YYABORT_UNLESS($1 && ($$=$4));
             add_join_natural($1,$4,NULL,Select);
           }

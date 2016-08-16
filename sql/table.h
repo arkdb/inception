@@ -1772,6 +1772,7 @@ public:
   qc_engine_callback callback_func;
   thr_lock_type lock_type;
   uint		outer_join;		/* Which join type */
+  uint      natural_join_type;   /* Which natural join type*/
   uint		shared;			/* Used in multi-upd */
   size_t        db_length;
   size_t        table_name_length;

@@ -728,6 +728,27 @@ struct query_print_cache_struct
     LIST_BASE_NODE_T(query_print_cache_node_t)    field_lst;
 };
 
+typedef struct format_cache_node_struct format_cache_node_t;
+struct format_cache_node_struct
+{
+    str_t*                                  sql_statements;
+    str_t*                                  query_tree;
+    int                                     errlevel;
+    str_t*                                  errmsg;
+    int                                     has_not;
+    int                                     is_update;
+    
+    rt_lst_t                                rt_lst;
+    
+    LIST_NODE_T(format_cache_node_t)         link;
+};
+
+typedef struct format_cache_struct format_cache_t;
+struct format_cache_struct
+{
+    LIST_BASE_NODE_T(format_cache_node_t)    field_lst;
+};
+
 typedef struct optimize_cache_node_struct optimize_cache_node_t;
 struct optimize_cache_node_struct 
 {
@@ -3549,6 +3570,7 @@ public:
   sql_cache_t* sql_cache;
   split_cache_t* split_cache;
   query_print_cache_t* query_print_cache;
+  format_cache_t* format_cache;
   optimize_cache_t* optimize_cache;
   optimize_cache_node_t* current_optimize;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
