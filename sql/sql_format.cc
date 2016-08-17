@@ -136,7 +136,7 @@ format_func_item(
             int first=0;
             while ((item_arg= li++))
             {
-                if(first!=0)
+                if (first!=0)
                 {
                     if (((Item_func *)item)->functype() == Item_func::COND_AND_FUNC)
                         str_append(print_str, " AND ");
@@ -238,7 +238,9 @@ format_func_item(
     case Item_func::NOT_FUNC:
         {
             Item *left_item= ((Item_func*) item)->arguments()[0];
-            if (left_item->type() != Item::SUBSELECT_ITEM && left_item->type() != Item::FUNC_ITEM)
+            if ((left_item->type() != Item::SUBSELECT_ITEM && 
+                dynamic_cast<Item_in_subselect*>(left_item)) &&
+               (((Item_func*) item))->functype() != Item_func::LIKE_FUNC)
                 str_append(print_str, " NOT ");
             format_item(thd, format_node, print_str, left_item, select_lex);
         }
@@ -344,7 +346,7 @@ int mysql_format_tables(
     
     if (tables)
     {
-        if(format_node->is_update == 0)
+        if (format_node->is_update == 0)
             str_append(print_str, " FROM ");
         int first=0;
         for (table= tables; table; table= table->next_local)
@@ -357,7 +359,7 @@ int mysql_format_tables(
                 str_append(print_str, " STRAIGHT_JOIN ");
             else if (table->natural_join_type == 1)
                 str_append(print_str, " JOIN ");
-            else if(first==1)
+            else if (first==1)
                 str_append(print_str, ",");
             
             first=1;
@@ -379,10 +381,10 @@ int mysql_format_tables(
                 
             }
             
-            if(table->join_using_fields && table->join_using_fields->elements > 0)
+            if (table->join_using_fields && table->join_using_fields->elements > 0)
             {
                 str_append(print_str, " USING(");
-                while(table->join_using_fields->elements > 0)
+                while (table->join_using_fields->elements > 0)
                 {
                     String* field= table->join_using_fields->pop();
                     sprintf(using_cond, "%s", field->ptr());
@@ -393,7 +395,7 @@ int mysql_format_tables(
                 str_append(print_str, ")");
             }
             
-            if(table->join_cond())
+            if (table->join_cond())
             {
                 str_append(print_str, " ON ");
                 
@@ -522,7 +524,7 @@ format_item(
             
             if (!strcasecmp(((Item_field*)item)->field_name, "*"))
             {
-                if(((Item_field*)item)->table_name)
+                if (((Item_field*)item)->table_name)
                     sprintf(fieldname, "%s.", ((Item_field*)item)->field_name);
                 
                 sprintf(fieldname, "%s", ((Item_field*)item)->field_name);
@@ -535,8 +537,9 @@ format_item(
             if (((Item_field*)item)->table_name)
                 sprintf(tablename, "%s.", ((Item_field*)item)->table_name);
             
-            tablert = mysql_find_field_from_all_tables(thd, &format_node->rt_lst, select_lex, ((Item_field*)item)->db_name,
-                                                       ((Item_field*)item)->table_name, ((Item_field*)item)->field_name);
+            tablert = mysql_find_field_from_all_tables(thd, &format_node->rt_lst, 
+                          select_lex, ((Item_field*)item)->db_name,
+                          ((Item_field*)item)->table_name, ((Item_field*)item)->field_name);
             if (tablert)
             {
                 if (strcasecmp(((Item_field*)item)->field_name, "*"))
