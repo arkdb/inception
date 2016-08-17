@@ -1013,6 +1013,8 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_SET_OPTIONS_ERROR, "Set transfer options error: \'%s\'.");
     SERVER_SETMSG(ER_DIFF_TYPE_COMPARE_FIELD, "Different data type compare: \'%s\'.\'%s\':\'%s\', \'%s\'.\'%s\':\'%s\'.");
     SERVER_SETMSG(ER_DIFF_CHARSET_COMPARE_FIELD, "Different charset compare: \'%s\'.\'%s\':\'%s\', \'%s\'.\'%s\':\'%s\'.");
+    SERVER_SETMSG(ER_LIKE_COMP_PREFIX_PERCENT, "Prefix percent compare existed: \'%s\'.\'%s\':\'%s\'.");
+    SERVER_SETMSG(ER_FUNC_EXISTED_ON_FIELD, "function existed on index field: \'%s\'.\'%s\':\'%s\'.");
 
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

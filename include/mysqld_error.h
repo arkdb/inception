@@ -945,4 +945,6 @@
 #define  ER_SET_OPTIONS_ERROR                                                 1944
 #define  ER_DIFF_TYPE_COMPARE_FIELD                                           1945
 #define  ER_DIFF_CHARSET_COMPARE_FIELD                                        1946
-#define  ER_ERROR_LAST                                                        1947
+#define  ER_LIKE_COMP_PREFIX_PERCENT                                          1947
+#define  ER_FUNC_EXISTED_ON_FIELD                                             1948
+#define  ER_ERROR_LAST                                                        1949

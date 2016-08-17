@@ -131,6 +131,90 @@ int optimize_func_item_field_compare(
     return false;
 }
 
+int optimize_function_item_field_existed(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item
+)
+{
+    for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
+    {
+        Item *right_item= ((Item_func*) item)->arguments()[i];
+        if (right_item->type() == Item::FIELD_ITEM)
+        {
+            Item_field* left_item_field = dynamic_cast<Item_field*>(right_item);
+            field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+            table_rt_t* table_info_l= (table_rt_t*)left_item_field->table_rt;
+            my_error(ER_FUNC_EXISTED_ON_FIELD, MYF(0), 
+                table_info_l->table_info->table_name, field_info_l->field_name, 
+                ((Item_func*) item)->func_name());
+            mysql_errmsg_append(thd);
+        }
+    }
+
+    return false;
+}
+
+int optimize_like_item_field_compare(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* left_item,
+    Item* right_item
+)
+{
+    String tmp;
+    String* stringval;
+
+    Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+    field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+    table_rt_t* table_info_l= (table_rt_t*)left_item_field->table_rt;
+
+    stringval = ((Item_string*) right_item)->val_str(&tmp);
+    if (right_item->type() == Item::STRING_ITEM && 
+        left_item->type() == Item::FIELD_ITEM)
+    {
+        if (!strncasecmp(stringval->ptr(), "%", 1)) 
+        {
+            my_error(ER_LIKE_COMP_PREFIX_PERCENT, MYF(0), 
+                table_info_l->table_info->table_name, field_info_l->field_name, stringval->ptr());
+            mysql_errmsg_append(thd);
+        }
+    }
+
+    return false;
+}
+
+int optimize_func_cond_item(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    if (!item)
+        return 0;
+    switch(((Item_func *)item)->functype())
+    {
+    case Item_func::COND_OR_FUNC:
+        break;
+    case Item_func::COND_AND_FUNC:
+        {
+            List<Item> *args= ((Item_cond*) item)->argument_list();
+            List_iterator<Item> li(*args);
+            Item *item_arg;
+            while ((item_arg= li++))
+            {
+                optimize_item(thd, query_node, item_arg, select_lex);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    return false;
+}
+
 int optimize_func_item(
     THD* thd, 
     optimize_cache_node_t* query_node,
@@ -161,18 +245,6 @@ int optimize_func_item(
         }
         break;
 
-    case Item_func::COND_OR_FUNC:
-    case Item_func::COND_AND_FUNC:
-        {
-            List<Item> *args= ((Item_cond*) item)->argument_list();
-            List_iterator<Item> li(*args);
-            Item *item_arg;
-            while ((item_arg= li++))
-            {
-                optimize_item(thd, query_node, item_arg, select_lex);
-            }
-        }
-        break;
     case Item_func::ISNULL_FUNC:
     case Item_func::ISNOTNULL_FUNC:
         {
@@ -186,6 +258,7 @@ int optimize_func_item(
             Item *right_item= ((Item_func*) item)->arguments()[1];
             optimize_item(thd, query_node, left_item, select_lex);
             optimize_item(thd, query_node, right_item, select_lex);
+            optimize_like_item_field_compare(thd, query_node, left_item, right_item);
         }
         break;
     case Item_func::BETWEEN:
@@ -233,18 +306,17 @@ int optimize_func_item(
     case Item_func::FUNC_SP:
     case Item_func::UNKNOWN_FUNC:
         {
-            if (((Item_func*) item)->argument_count() > 0)
+            for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
             {
-                for (uint i=0; i < ((Item_func*) item)->argument_count();i++)
-                {
-                    Item *right_item= ((Item_func*) item)->arguments()[i];
-                    optimize_item(thd, query_node, right_item, select_lex);
-                }
+                Item *right_item= ((Item_func*) item)->arguments()[i];
+                optimize_item(thd, query_node, right_item, select_lex);
             }
+            optimize_function_item_field_existed(thd, query_node, item);
         }
         break;
 
     default:
+        optimize_function_item_field_existed(thd, query_node, item);
         break;
     }
 
@@ -321,8 +393,12 @@ int optimize_item(
             }
         }
         break;
-    case Item::FUNC_ITEM:
     case Item::COND_ITEM:
+        {
+            optimize_func_cond_item(thd, query_node, item, select_lex);
+        }
+        break;
+    case Item::FUNC_ITEM:
         {
             optimize_func_item(thd, query_node, item, select_lex);
         }

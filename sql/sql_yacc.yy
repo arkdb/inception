@@ -604,8 +604,12 @@ Item* handle_sql2003_note184_exception(THD *thd, Item* left, bool equal,
       subselect= expr3->invalidate_and_restore_select_lex();
       result= new (thd->mem_root) Item_in_subselect(left, subselect);
 
+      dynamic_cast<Item_in_subselect*>(result)->not_in_subselect = false;
       if (! equal)
+      {
+        dynamic_cast<Item_in_subselect*>(result)->not_in_subselect = true;
         result = negate_expression(thd, result);
+      }
 
       DBUG_RETURN(result);
     }
@@ -8759,14 +8763,18 @@ bool_pri:
 predicate:
           bit_expr IN_SYM '(' subselect ')'
           {
-            $$= new (YYTHD->mem_root) Item_in_subselect($1, $4);
-            if ($$ == NULL)
+            Item *item;
+            item = new (YYTHD->mem_root) Item_in_subselect($1, $4);
+            dynamic_cast<Item_in_subselect*>(item)->not_in_subselect = false;
+            if (item == NULL)
               MYSQL_YYABORT;
+            $$ = item;
           }
         | bit_expr not IN_SYM '(' subselect ')'
           {
             THD *thd= YYTHD;
             Item *item= new (thd->mem_root) Item_in_subselect($1, $5);
+            dynamic_cast<Item_in_subselect*>(item)->not_in_subselect = true;
             if (item == NULL)
               MYSQL_YYABORT;
             $$= negate_expression(thd, item);

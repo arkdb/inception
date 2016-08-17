@@ -11910,10 +11910,16 @@ int print_func_item(
         break;
     case Item_func::BETWEEN:
         {
+            Item_func_between* initem;
+            initem = dynamic_cast<Item_func_between*>(item);
+            if (initem && initem->negated)
+                str_append(print_str, "\"func\":\"NOT BETWEEN\",");
+            else
+                str_append(print_str, "\"func\":\"BETWEEN\",");
+
             Item *left_item= ((Item_func*) item)->arguments()[0];
             Item *right_item1= ((Item_func*) item)->arguments()[1];
             Item *right_item2= ((Item_func*) item)->arguments()[2];
-            str_append(print_str, "\"func\":\"BETWEEN\",");
             str_append(print_str, "\"args\":[");
             print_item(thd, query_node, print_str, left_item, select_lex);
             str_append(print_str, ",");
@@ -11927,7 +11933,14 @@ int print_func_item(
     case Item_func::MULT_EQUAL_FUNC:
         {
             if (((Item_func *)item)->functype() == Item_func::IN_FUNC)
-                str_append(print_str, "\"func\":\"IN\",");
+            {
+                Item_func_opt_neg* initem;
+                initem = dynamic_cast<Item_func_opt_neg*>(item);
+                if (initem && initem->negated)
+                    str_append(print_str, "\"func\":\"NOT IN\",");
+                else
+                    str_append(print_str, "\"func\":\"IN\",");
+            }
             else if (((Item_func *)item)->functype() == Item_func::MULT_EQUAL_FUNC)
                 str_append(print_str, "\"func\":\"MULT_EQUAL\",");
 

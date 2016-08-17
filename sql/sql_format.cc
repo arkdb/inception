@@ -228,6 +228,8 @@ format_func_item(
     {
         format_node->has_not= 1;
         Item *left_item= ((Item_func*) item)->arguments()[0];
+        if (left_item->type() != Item::SUBSELECT_ITEM)
+            str_append(print_str, " not ");
         format_item(thd, format_node, print_str, left_item, select_lex);
     }
         break;
@@ -624,13 +626,10 @@ format_item(
         if (insubselect && insubselect->left_expr)
         {
             format_item(thd, format_node, print_str, insubselect->left_expr, select_lex);
-            if(format_node->has_not == 1)
-            {
+            if (insubselect->not_in_subselect)
                 str_append(print_str, " NOT IN ");
-            }else
-            {
+            else
                 str_append(print_str, " IN ");
-            }
         }
         
         const subselect_engine *engine = ((Item_subselect*)item)->get_engine_for_explain();

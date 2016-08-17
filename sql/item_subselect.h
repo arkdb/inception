@@ -361,6 +361,7 @@ class Item_in_subselect :public Item_exists_subselect
 {
 public:
   Item *left_expr;
+  bool not_in_subselect;
 protected:
   /*
     Cache of the left operand of the subquery predicate. Allocated in the
