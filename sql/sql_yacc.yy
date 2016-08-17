@@ -8838,9 +8838,14 @@ predicate:
           }
         | bit_expr LIKE simple_expr opt_escape
           {
-            $$= new (YYTHD->mem_root) Item_func_like($1,$3,$4,Lex->escape_used);
-            if ($$ == NULL)
+            Item_func_like* item;
+            item= new (YYTHD->mem_root) Item_func_like($1,$3,$4,Lex->escape_used);
+            
+            if (item == NULL)
               MYSQL_YYABORT;
+              
+            item->not_like= false;
+            $$= item;
           }
         | bit_expr not LIKE simple_expr opt_escape
           {
@@ -8848,6 +8853,7 @@ predicate:
                                                              Lex->escape_used);
             if (item == NULL)
               MYSQL_YYABORT;
+            dynamic_cast<Item_func_like*>(item)->not_like= true;
             $$= new (YYTHD->mem_root) Item_func_not(item);
             if ($$ == NULL)
               MYSQL_YYABORT;

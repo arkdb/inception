@@ -735,7 +735,6 @@ struct format_cache_node_struct
     str_t*                                  query_tree;
     int                                     errlevel;
     str_t*                                  errmsg;
-    int                                     has_not;
     int                                     is_update;
     
     rt_lst_t                                rt_lst;
