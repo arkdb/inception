@@ -978,13 +978,13 @@ int mysql_send_format_results(THD* thd)
     DBUG_ENTER("mysql_format_results");
     
     field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("statement", FN_REFLEN));
-    field_list.push_back(new Item_return_int("errlevel", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("query_tree", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("errmsg", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Statement", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Error_Level", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Format_SQL", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Error_Message", FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
-                                           Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     {
         DBUG_RETURN(true);
     }
@@ -1007,7 +1007,7 @@ int mysql_send_format_results(THD* thd)
             else
             {
                 protocol->store(sql_cache_node->errlevel);
-                protocol->store(str_get(sql_cache_node->query_tree), thd->charset());
+                protocol->store(str_get(sql_cache_node->format_sql), thd->charset());
                 protocol->store("None", thd->charset());
             }
             
@@ -12114,6 +12114,7 @@ print_item(
             str_append(print_str, "\"value\":");
             str_append(print_str, fieldname);
             str_append(print_str, "}");
+            my_free(fieldname);
         }
         break;
     case Item::REF_ITEM:
@@ -12324,6 +12325,7 @@ print_item(
             str_append(print_str, "\"value\":");
             str_append(print_str, fieldname);
             str_append(print_str, "}");
+            my_free(fieldname);
         }
         break;
     default:
@@ -17019,6 +17021,7 @@ int mysql_execute_commit(THD *thd)
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
         inception_get_type(thd) == INCEPTION_TYPE_SPLIT ||
         inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE ||
+        inception_get_type(thd) == INCEPTION_TYPE_FORMAT   ||
         inception_get_type(thd) == INCEPTION_TYPE_PRINT)
     {
         mysql_send_all_results(thd);
@@ -17497,6 +17500,8 @@ int mysql_deinit_sql_cache(THD* thd)
     check_rt_t*   query_rt_next;
     query_print_cache_node_t * query_print_cache_node;
     query_print_cache_node_t * query_print_cache_node_next;
+    format_cache_node_t * format_cache_node;
+    format_cache_node_t * format_cache_node_next;
     table_rt_t*                 table_rt;
     table_rt_t*                 table_rt_next;
 
@@ -17597,7 +17602,8 @@ int mysql_deinit_sql_cache(THD* thd)
     my_free(thd->show_result);
     thd->show_result = NULL;
 
-    if (thd->query_print_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_PRINT) {
+    if (thd->query_print_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_PRINT)
+    {
         query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
         while (query_print_cache_node != NULL)
         {
@@ -17632,6 +17638,44 @@ int mysql_deinit_sql_cache(THD* thd)
         }
         my_free(thd->query_print_cache);
         thd->query_print_cache= NULL;
+    }
+    
+    if (thd->format_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_FORMAT)
+    {
+        format_cache_node = LIST_GET_FIRST(thd->format_cache->field_lst);
+        while (format_cache_node != NULL)
+        {
+            format_cache_node_next = LIST_GET_NEXT(link, format_cache_node);
+            str_deinit(format_cache_node->sql_statements);
+            str_deinit(format_cache_node->format_sql);
+            str_deinit(format_cache_node->errmsg);
+            
+            query_rt = LIST_GET_FIRST(format_cache_node->rt_lst);
+            while (query_rt)
+            {
+                query_rt_next = LIST_GET_NEXT(link, query_rt);
+                LIST_REMOVE(link, format_cache_node->rt_lst, query_rt);
+                
+                table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
+                while(table_rt)
+                {
+                    table_rt_next = LIST_GET_NEXT(link, table_rt);
+                    LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                    if (table_rt->derived)
+                        mysql_table_info_free(table_rt->table_info);
+                    my_free(table_rt);
+                    table_rt = table_rt_next;
+                }
+                
+                my_free(query_rt);
+                query_rt = query_rt_next;
+            }
+            
+            my_free(format_cache_node);
+            format_cache_node = format_cache_node_next;
+        }
+        my_free(thd->format_cache);
+        thd->format_cache= NULL;
     }
 
     mysql_free_db_object(thd);

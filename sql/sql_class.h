@@ -734,10 +734,9 @@ typedef struct format_cache_node_struct format_cache_node_t;
 struct format_cache_node_struct
 {
     str_t*                                  sql_statements;
-    str_t*                                  query_tree;
+    str_t*                                  format_sql;
     int                                     errlevel;
     str_t*                                  errmsg;
-    int                                     is_update;
     
     rt_lst_t                                rt_lst;
     

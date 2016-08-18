@@ -346,7 +346,8 @@ int mysql_format_tables(
     
     if (tables)
     {
-        if (format_node->is_update == 0)
+        if (thd->lex->sql_command != SQLCOM_UPDATE
+            && thd->lex->sql_command != SQLCOM_UPDATE_MULTI)
             str_append(print_str, " FROM ");
         int first=0;
         for (table= tables; table; table= table->next_local)
@@ -421,20 +422,18 @@ int mysql_format_select(THD* thd)
     
     format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
     format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    format_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(format_node->query_tree);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
-    format_node->is_update= 0;
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
     
-    if (mysql_format_subselect(thd, format_node, format_node->query_tree, select_lex, true))
+    if (mysql_format_subselect(thd, format_node, format_node->format_sql, select_lex, true))
         return true;
     
     if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
         format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg= thd->errmsg;
-        thd->errmsg= NULL;
+        format_node->errmsg= thd->errmsg= NULL;
     }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -514,6 +513,7 @@ format_item(
                 fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
                 sprintf(fieldname, "%s", stringval->ptr());
                 str_append(print_str, fieldname);
+                my_free(fieldname);
             }
         }
         break;
@@ -545,29 +545,28 @@ format_item(
             tablert = mysql_find_field_from_all_tables(thd, &format_node->rt_lst, 
                           select_lex, ((Item_field*)item)->db_name,
                           ((Item_field*)item)->table_name, ((Item_field*)item)->field_name);
-            if (tablert)
+
+            if (strcasecmp(((Item_field*)item)->field_name, "*"))
             {
-                if (strcasecmp(((Item_field*)item)->field_name, "*"))
+                if (tablert && thd->variables.inception_format_sql_full_path)
                 {
-                    if (tablert && thd->variables.inception_format_sql_full_path)
-                    {
-                        tableinfo = tablert->table_info;
-                        sprintf(tablename, "%s.", tableinfo->table_name);
+                    tableinfo = tablert->table_info;
+                    sprintf(tablename, "%s.", tableinfo->table_name);
                         
-                        if (dbname[0] == '\0' && tableinfo->db_name[0] != '\0')
-                            sprintf(dbname, "%s.", tableinfo->db_name);
-                        if (tablename[0] == '\0')
-                            sprintf(tablename, "%s.", tableinfo->table_name);
-                    }
-                    
-                    str_append(print_str, dbname);
-                    str_append(print_str, tablename);
+                    if (dbname[0] == '\0' && tableinfo->db_name[0] != '\0')
+                        sprintf(dbname, "%s.", tableinfo->db_name);
+                    if (tablename[0] == '\0')
+                        sprintf(tablename, "%s.", tableinfo->table_name);
                 }
-                
-                sprintf(fieldname, "%s", ((Item_field*)item)->field_name);
-                str_append(print_str, fieldname);
+                    
+                str_append(print_str, dbname);
+                str_append(print_str, tablename);
             }
-            else if (select_lex->order_group_having)
+                
+            sprintf(fieldname, "%s", ((Item_field*)item)->field_name);
+            str_append(print_str, fieldname);
+
+            if (select_lex->order_group_having)
             {
                 Item* item_item;
                 List_iterator<Item> it(select_lex->item_list);
@@ -585,16 +584,6 @@ format_item(
                     }
                 }
                 
-                if (item_item == NULL)
-                {
-                    my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
-                    mysql_errmsg_append(thd);
-                }
-            }
-            else
-            {
-                my_error(ER_COLUMN_NOT_EXISTED, MYF(0), ((Item_field*)item)->field_name);
-                mysql_errmsg_append(thd);
             }
         }
         break;
@@ -694,6 +683,7 @@ format_item(
                 fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
                 sprintf(fieldname, "%s", stringval->ptr());
                 str_append(print_str, fieldname);
+                my_free(fieldname);
             }
         }
         break;
@@ -713,10 +703,9 @@ int mysql_format_not_support(THD* thd)
     
     format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
     format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    format_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(format_node->query_tree);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
-    format_node->is_update= 0;
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
     
     my_error(ER_NOT_SUPPORTED_YET, MYF(0));
@@ -745,66 +734,64 @@ int mysql_format_insert(THD* thd)
     
     format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
     format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    format_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(format_node->query_tree);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
-    format_node->is_update= 0;
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
-    str_append(format_node->query_tree, "INSERT INTO ");
+    str_append(format_node->format_sql, "INSERT INTO ");
     
     sprintf(tablename, "%s.", thd->lex->query_tables->db);
-    str_append(format_node->query_tree, tablename);
+    str_append(format_node->format_sql, tablename);
     
     sprintf(tablename, "%s", thd->lex->query_tables->table_name);
-    str_append(format_node->query_tree, tablename);
+    str_append(format_node->format_sql, tablename);
     
     if (thd->lex->field_list.elements > 0)
     {
-        str_append(format_node->query_tree, "(");
+        str_append(format_node->format_sql, "(");
         List_iterator<Item> it(thd->lex->field_list);
         while ((item= it++))
         {
-            format_item(thd, format_node, format_node->query_tree, item, &thd->lex->select_lex);
-            str_append(format_node->query_tree, ",");
+            format_item(thd, format_node, format_node->format_sql, item, &thd->lex->select_lex);
+            str_append(format_node->format_sql, ",");
         }
         
-        str_truncate(format_node->query_tree, 1);
-        str_append(format_node->query_tree, ")");
+        str_truncate(format_node->format_sql, 1);
+        str_append(format_node->format_sql, ")");
     }
     
     if (thd->lex->sql_command != SQLCOM_INSERT_SELECT)
     {
         List<List_item> &values_list = thd->lex->many_values;
         List_iterator_fast<List_item> its(values_list);
-        str_append(format_node->query_tree, " VALUES");
+        str_append(format_node->format_sql, " VALUES");
         while ((values = its++))
         {
-            str_append(format_node->query_tree, "(");
+            str_append(format_node->format_sql, "(");
             List_iterator<Item> it(*values);
             while ((item= it++))
             {
-                format_item(thd, format_node, format_node->query_tree, item, &thd->lex->select_lex);
-                str_append(format_node->query_tree, ",");
+                format_item(thd, format_node, format_node->format_sql, item, &thd->lex->select_lex);
+                str_append(format_node->format_sql, ",");
             }
-            str_truncate(format_node->query_tree, 1);
-            str_append(format_node->query_tree, "),");
+            str_truncate(format_node->format_sql, 1);
+            str_append(format_node->format_sql, "),");
         }
-        str_truncate(format_node->query_tree, 1);
+        str_truncate(format_node->format_sql, 1);
     }
     else
     {
-        str_append(format_node->query_tree, " ");
-        if (mysql_format_subselect(thd, format_node, format_node->query_tree, select_lex, true))
+        str_append(format_node->format_sql, " ");
+        if (mysql_format_subselect(thd, format_node, format_node->format_sql, select_lex, true))
             return true;
     }
     
     if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
         format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg;
-        thd->errmsg = NULL;
+        format_node->errmsg = thd->errmsg = NULL;
     }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -821,33 +808,31 @@ int mysql_format_delete(THD* thd)
     
     format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
     format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    format_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(format_node->query_tree);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
-    format_node->is_update= 0;
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
-    str_append(format_node->query_tree, "DELETE");
+    str_append(format_node->format_sql, "DELETE");
     if (thd->lex->auxiliary_table_list.first)
     {
-        mysql_format_tables(thd, format_node, select_lex, format_node->query_tree,
+        mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
                             thd->lex->auxiliary_table_list.first);
-        str_append(format_node->query_tree, ",");
-        mysql_format_tables(thd, format_node, select_lex, format_node->query_tree,
+        str_append(format_node->format_sql, ",");
+        mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
                             thd->lex->query_tables);
     }
     else
-        mysql_format_tables(thd, format_node, select_lex, format_node->query_tree,
+        mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
                             thd->lex->query_tables);
     
-    mysql_format_select_condition(thd, format_node, format_node->query_tree, select_lex);
+    mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
     if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
         format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg;
-        thd->errmsg = NULL;
+        format_node->errmsg = thd->errmsg = NULL;
     }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -866,40 +851,38 @@ int mysql_format_update(THD* thd)
     
     format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
     format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    format_node->query_tree= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(format_node->query_tree);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
-    format_node->is_update= 1;
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
-    str_append(format_node->query_tree, "UPDATE ");
+    str_append(format_node->format_sql, "UPDATE ");
     
-    mysql_format_tables(thd, format_node, select_lex, format_node->query_tree,
+    mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
                         thd->lex->query_tables);
     
-    str_append(format_node->query_tree, " SET ");
+    str_append(format_node->format_sql, " SET ");
     
     List_iterator<Item> it(thd->lex->select_lex.item_list);
     List_iterator<Item> vit(thd->lex->value_list);
     
     while ((item_it= it++) && (item_vit= vit++))
     {
-        format_item(thd, format_node, format_node->query_tree, item_it, &thd->lex->select_lex);
-        str_append(format_node->query_tree, "=");
-        format_item(thd, format_node, format_node->query_tree, item_vit, &thd->lex->select_lex);
-        str_append(format_node->query_tree, ",");
+        format_item(thd, format_node, format_node->format_sql, item_it, &thd->lex->select_lex);
+        str_append(format_node->format_sql, "=");
+        format_item(thd, format_node, format_node->format_sql, item_vit, &thd->lex->select_lex);
+        str_append(format_node->format_sql, ",");
     }
     
-    str_truncate(format_node->query_tree, 1);
+    str_truncate(format_node->format_sql, 1);
     
-    mysql_format_select_condition(thd, format_node, format_node->query_tree, select_lex);
+    mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
     if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
     {
         format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg;
-        thd->errmsg = NULL;
+        format_node->errmsg = thd->errmsg = NULL;
     }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
