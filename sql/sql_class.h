@@ -367,6 +367,7 @@ struct source_info_struct
     uint        split;
     uint        query_print;
     uint        format;
+    uint        parameterize;
     uint        optimize;
     ulonglong   sleep_nms;
     char*       task_sequence;
@@ -385,6 +386,7 @@ struct source_info_space_struct
     uint        backup;//force to execute though exist error before
     uint        ignore_warnings;
     uint        split;
+    uint        parameterize;
     ulonglong   sleep_nms;
     char        task_sequence[512];
     enum enum_inception_optype optype;

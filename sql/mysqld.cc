@@ -5240,6 +5240,10 @@ struct my_option my_isql_options[]=
   {"format", 0, "format the query automatic.",
     &global_source.format, &global_source.format, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+    
+  {"parameterize", 0, "parameterize when format the query automatic.",
+    &global_source.parameterize, &global_source.parameterize, 0,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
 
   {0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
 };

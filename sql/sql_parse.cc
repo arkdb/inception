@@ -2839,7 +2839,11 @@ int thd_parse_options(
     if (global_source.optimize== 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_OPTIMIZE;
     else if (global_source.format == 1)
+    {
         thd->thd_sinfo->optype = INCEPTION_TYPE_FORMAT;
+        if (global_source.parameterize == 1)
+            thd->thd_sinfo->parameterize= 1;
+    }
     else if (global_source.query_print == 1)
         thd->thd_sinfo->optype = INCEPTION_TYPE_PRINT;
     else if (global_source.split == 1)

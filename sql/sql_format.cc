@@ -503,13 +503,18 @@ format_item(
     switch (item->type()) {
     case Item::STRING_ITEM:
         {
-            String* stringval;
-            String tmp;
-            char* fieldname;
-            stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
-            sprintf(fieldname, "%s", stringval->ptr());
-            str_append(print_str, fieldname);
+            if (thd->thd_sinfo->parameterize == 1)
+                str_append(print_str, "?");
+            else
+            {
+                String* stringval;
+                String tmp;
+                char* fieldname;
+                stringval = ((Item_string*) item)->val_str(&tmp);
+                fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
+                sprintf(fieldname, "%s", stringval->ptr());
+                str_append(print_str, fieldname);
+            }
         }
         break;
     case Item::REF_ITEM:
@@ -600,16 +605,26 @@ format_item(
         break;
     case Item::INT_ITEM:
         {
-            char fieldname[FN_LEN];
-            sprintf(fieldname, "%lld", ((Item_int*) item)->val_int());
-            str_append(print_str, fieldname);
+            if (thd->thd_sinfo->parameterize == 1)
+                str_append(print_str, "?");
+            else
+            {
+                char fieldname[FN_LEN];
+                sprintf(fieldname, "%lld", ((Item_int*) item)->val_int());
+                str_append(print_str, fieldname);
+            }
         }
         break;
     case Item::REAL_ITEM:
         {
-            char fieldname[FN_LEN];
-            sprintf(fieldname, "%f", ((Item_int*) item)->val_real());
-            str_append(print_str, fieldname);
+            if (thd->thd_sinfo->parameterize == 1)
+                str_append(print_str, "?");
+            else
+            {
+                char fieldname[FN_LEN];
+                sprintf(fieldname, "%f", ((Item_int*) item)->val_real());
+                str_append(print_str, fieldname);
+            }
         }
         break;
     case Item::NULL_ITEM:
@@ -668,13 +683,18 @@ format_item(
         break;
     case Item::DECIMAL_ITEM:
         {
-            String* stringval;
-            String tmp;
-            char* fieldname;
-            stringval = ((Item_string*) item)->val_str(&tmp);
-            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
-            sprintf(fieldname, "%s", stringval->ptr());
-            str_append(print_str, fieldname);
+            if (thd->thd_sinfo->parameterize == 1)
+                str_append(print_str, "?");
+            else
+            {
+                String* stringval;
+                String tmp;
+                char* fieldname;
+                stringval = ((Item_string*) item)->val_str(&tmp);
+                fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+                sprintf(fieldname, "%s", stringval->ptr());
+                str_append(print_str, fieldname);
+            }
         }
         break;
     default:
