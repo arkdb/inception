@@ -3572,6 +3572,7 @@ public:
   split_cache_t* split_cache;
   query_print_cache_t* query_print_cache;
   format_cache_t* format_cache;
+  format_cache_node_t* current_format;
   optimize_cache_t* optimize_cache;
   optimize_cache_node_t* current_optimize;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
@@ -5903,6 +5904,7 @@ int mysql_format_delete(THD* thd);
 int mysql_format_update(THD* thd);
 int mysql_format_insert(THD* thd);
 int mysql_format_change_db(THD* thd);
+int mysql_format_set(THD* thd);
 int mysql_format_not_support(THD* thd);
 
 #endif /* MYSQL_SERVER */

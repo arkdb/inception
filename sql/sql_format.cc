@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "derror.h"
 #include "mysys_err.h"
 #include "item_subselect.h"
+#include "set_var.h"
 
 int mysql_format_subselect(THD* thd, format_cache_node_t*   format_node, str_t* print_str, st_select_lex *select_lex, bool top);
 int format_item(THD* thd, format_cache_node_t*   format_node, str_t* print_str, Item* item, st_select_lex *select_lex);
@@ -368,7 +369,7 @@ int mysql_format_tables(
             if (table->is_view_or_derived())
             {
                 mysql_format_subselect(thd, format_node, print_str,
-                                       table->derived->first_select(), false);
+                    table->derived->first_select(), false);
                 sprintf(tablename, " %s", table->alias);
                 str_append(print_str, tablename);
             }
@@ -426,15 +427,10 @@ int mysql_format_select(THD* thd)
     str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    thd->current_format= format_node;
     
     if (mysql_format_subselect(thd, format_node, format_node->format_sql, select_lex, true))
         return true;
-    
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg= thd->errmsg= NULL;
-    }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     return false;
@@ -454,6 +450,9 @@ int mysql_format_subselect(
     
     if (mysql_load_tables(thd, &format_node->rt_lst, select_lex))
         return true;
+    //即便table不存在，也应该可以format sql.
+    thd->errmsg= NULL;
+    
     if (!top)
     {
         str_append(print_str, "(");
@@ -707,15 +706,10 @@ int mysql_format_not_support(THD* thd)
     str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    thd->current_format= format_node;
     
     my_error(ER_NOT_SUPPORTED_YET, MYF(0));
     mysql_errmsg_append(thd);
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg;
-        thd->errmsg = NULL;
-    }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     return false;
@@ -738,6 +732,8 @@ int mysql_format_insert(THD* thd)
     str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    thd->current_format= format_node;
+    
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
     str_append(format_node->format_sql, "INSERT INTO ");
@@ -788,12 +784,6 @@ int mysql_format_insert(THD* thd)
             return true;
     }
     
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg = NULL;
-    }
-    
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     return false;
 }
@@ -812,6 +802,8 @@ int mysql_format_delete(THD* thd)
     str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    thd->current_format= format_node;
+    
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
     str_append(format_node->format_sql, "DELETE");
@@ -828,12 +820,6 @@ int mysql_format_delete(THD* thd)
                             thd->lex->query_tables);
     
     mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
-    
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg = NULL;
-    }
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     return false;
@@ -855,6 +841,8 @@ int mysql_format_update(THD* thd)
     str_init(format_node->format_sql);
     str_init(format_node->sql_statements);
     str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    thd->current_format= format_node;
+    
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
     
     str_append(format_node->format_sql, "UPDATE ");
@@ -879,21 +867,89 @@ int mysql_format_update(THD* thd)
     
     mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
-    if (thd->errmsg != NULL && str_get_len(thd->errmsg) > 0)
-    {
-        format_node->errlevel= INCEPTION_PARSE;
-        format_node->errmsg = thd->errmsg = NULL;
-    }
-    
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     return false;
 }
 
 int mysql_format_change_db(THD* thd)
 {
+    format_cache_node_t*    format_node;
+    format_cache_t*        format_cache;
+    format_cache=     thd->format_cache;
+    
+    format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
+    format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
+    str_init(format_node->sql_statements);
+    str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    
     LEX_STRING db_str= { (char *) thd->lex->select_lex.db, strlen(thd->lex->select_lex.db) };
     mysql_change_db(thd, &db_str, FALSE);
+    
+    str_append(format_node->format_sql, "USE ");
+    str_append(format_node->format_sql, db_str.str);
+    
+    thd->current_format= format_node;
+    
+    LIST_ADD_LAST(link, format_cache->field_lst, format_node);
     
     return false;
 }
 
+int mysql_format_set(THD* thd)
+{
+    int error;
+    String set_names_str;
+    format_cache_node_t*    format_node;
+    format_cache_t*        format_cache;
+    format_cache=     thd->format_cache;
+    
+    DBUG_ENTER("mysql_format_set");
+    
+    format_node = (format_cache_node_t*)my_malloc(sizeof(format_cache_node_t), MY_ZEROFILL);
+    format_node->sql_statements = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    format_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(format_node->format_sql);
+    str_init(format_node->sql_statements);
+    str_append_with_length(format_node->sql_statements, thd->query(), thd->query_length());
+    
+    List_iterator_fast<set_var_base> it(thd->lex->var_list);
+    
+    set_var_base *var;
+    while ((var=it++))
+    {
+        //DBA执行的语句，需要设置的，只支持set names ...语句
+        if (dynamic_cast <set_var_collation_client*> (var))
+        {
+            if ((error= var->check(thd)))
+            {
+                my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
+                mysql_errmsg_append(thd);
+            }
+            
+            if ((error = var->update(thd)))        // Returns 0, -1 or 1
+            {
+                my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
+                mysql_errmsg_append(thd);
+            }
+            
+            dynamic_cast <set_var_collation_client*> (var)->print(thd, &set_names_str);
+            
+            str_append(format_node->format_sql, "SET ");
+            str_append(format_node->format_sql, set_names_str.c_ptr());
+            set_names_str.free();
+        }
+        else
+        {
+            my_error(ER_WRONG_ARGUMENTS,MYF(0),"SET");
+            mysql_errmsg_append(thd);
+        }
+    }
+    
+    thd->current_format= format_node;
+    
+    LIST_ADD_LAST(link, format_cache->field_lst, format_node);
+    
+    DBUG_RETURN(FALSE);
+}

@@ -797,6 +797,61 @@ int mysql_cache_optimize_sql(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_cache_format_sql(THD* thd)
+{
+    int                         errmsg_len;
+    format_cache_node_t* format_cache_node;
+    format_cache_t*           format_cache;
+    
+    DBUG_ENTER("mysql_cache_optimize_sql");
+    
+    if (!thd->have_begin)
+    {
+        my_error(ER_START_AS_BEGIN, MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+    
+    format_cache = thd->format_cache;
+    if (!thd->current_format)
+    {
+        format_cache_node = (format_cache_node_t*)my_malloc(
+            sizeof(format_cache_node_t), MY_ZEROFILL);
+        format_cache_node->sql_statements = (str_t*)my_malloc(
+            sizeof(str_t), MY_ZEROFILL);
+        format_cache_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+        str_init(format_cache_node->format_sql);
+        str_init(format_cache_node->sql_statements);
+        LIST_ADD_LAST(link, format_cache->field_lst, format_cache_node);
+    }
+    else
+    {
+        format_cache_node = thd->current_format;
+    }
+    
+    thd->current_format = NULL;
+    String sql_with_charset(thd->query(), thd->query_length(), thd->query_charset());
+    thd->convert_string(&sql_with_charset, sql_with_charset.charset(), system_charset_info);
+    errmsg_len = sql_with_charset.length();
+    //hide internal tag 'inception_magic_commit'
+    if (thd->parse_error)
+        errmsg_len = truncate_inception_commit(sql_with_charset.ptr(), errmsg_len);
+    
+    str_truncate(format_cache_node->sql_statements,
+        str_get_len(format_cache_node->sql_statements));
+    str_append_with_length(format_cache_node->sql_statements,
+        sql_with_charset.ptr(), errmsg_len);
+    
+    if (thd->errmsg != NULL)
+    {
+        format_cache_node->errmsg = thd->errmsg;
+        format_cache_node->errlevel = thd->err_level > 0;
+        thd->errmsg = NULL;
+    }
+    
+    sql_with_charset.free();
+    DBUG_RETURN(FALSE);
+}
+
 int mysql_cache_one_sql(THD* thd)
 {
     int               errmsg_len;
@@ -978,10 +1033,10 @@ int mysql_send_format_results(THD* thd)
     DBUG_ENTER("mysql_format_results");
     
     field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("Statement", FN_REFLEN));
-    field_list.push_back(new Item_return_int("Error_Level", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("Format_SQL", FN_REFLEN));
+    field_list.push_back(new Item_return_int("Error_Flag", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_empty_string("Error_Message", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Origin_SQL", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Format_SQL", FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -997,18 +1052,19 @@ int mysql_send_format_results(THD* thd)
             
             protocol->store(id++);
             
-            protocol->store(str_get(sql_cache_node->sql_statements), thd->charset());
             if (sql_cache_node->errmsg)
             {
                 protocol->store(sql_cache_node->errlevel);
-                protocol->store("None", thd->charset());
                 protocol->store(str_get(sql_cache_node->errmsg), thd->charset());
+                protocol->store(str_get(sql_cache_node->sql_statements), thd->charset());
+                protocol->store("None", thd->charset());
             }
             else
             {
                 protocol->store(sql_cache_node->errlevel);
-                protocol->store(str_get(sql_cache_node->format_sql), thd->charset());
                 protocol->store("None", thd->charset());
+                protocol->store(str_get(sql_cache_node->sql_statements), thd->charset());
+                protocol->store(str_get(sql_cache_node->format_sql), thd->charset());
             }
             
             if (protocol->write())
@@ -1023,11 +1079,10 @@ int mysql_send_format_results(THD* thd)
         protocol->prepare_for_resend();
         
         protocol->store(id++);
-        protocol->store("None", thd->charset());
         protocol->store(errlevel);
         protocol->store(str_get(thd->errmsg), system_charset_info);
         protocol->store("Global environment", system_charset_info);
-        
+        protocol->store("None", thd->charset());
         protocol->write();
     }
     
@@ -12604,6 +12659,9 @@ int mysql_format_command(THD *thd)
     case SQLCOM_CHANGE_DB:
         err = mysql_format_change_db(thd);
         break;
+    case SQLCOM_SET_OPTION:
+        err = mysql_format_set(thd);
+        break;
     case SQLCOM_INSERT:
     case SQLCOM_INSERT_SELECT:
         err = mysql_format_insert(thd);
@@ -17858,6 +17916,8 @@ void mysql_parse(THD *thd, uint length, Parser_state *parser_state)
 
         if (inception_get_type(thd) == INCEPTION_TYPE_OPTIMIZE)
             mysql_cache_optimize_sql(thd);
+        else if (inception_get_type(thd) == INCEPTION_TYPE_FORMAT)
+            mysql_cache_format_sql(thd);
     }
 
     thd->end_statement();
