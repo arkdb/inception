@@ -604,13 +604,20 @@ static bool
 can_convert_field_to(Field *field,
                      enum_field_types source_type, uint16 metadata,
                      Relay_log_info *rli, uint16 mflags,
-                     int *order_var)
+                     int *order_var,
+                     int update_after)
 {
   DBUG_ENTER("can_convert_field_to");
   /*
     If the real type is the same, we need to check the metadata to
     decide if conversions are allowed.
    */
+  if (update_after)
+  {
+    *order_var= -1;
+    DBUG_RETURN(true);
+  }
+
   if (field->real_type() == source_type)
   {
     if (metadata == 0) // Metadata can only be zero if no metadata was provided
@@ -686,7 +693,7 @@ can_convert_field_to(Field *field,
 bool
 table_def::compatible_with(THD *thd, Relay_log_info *rli,
     table_info_t *table, TABLE **conv_table_var,
-    MEM_ROOT *mem_root /*default = NULL*/) const
+    MEM_ROOT *mem_root /*default = NULL*/, int update_after) const
 {
   if (mem_root == NULL)
     mem_root= thd->mem_root;
@@ -704,7 +711,7 @@ table_def::compatible_with(THD *thd, Relay_log_info *rli,
     Field *const field= field_info->field;
     int order=0;
     if (field == NULL || can_convert_field_to(field, type(col), 
-        field_metadata(col), rli, m_flags, &order))
+        field_metadata(col), rli, m_flags, &order, update_after))
     {
       DBUG_ASSERT(order >= -1 && order <= 1);
 

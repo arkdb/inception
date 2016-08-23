@@ -375,7 +375,7 @@ public:
   */
 #ifndef MYSQL_CLIENT
   bool compatible_with(THD *thd, Relay_log_info *rli, table_info_t *table,
-                      TABLE **conv_table_var, MEM_ROOT *mem_root) const;
+                      TABLE **conv_table_var, MEM_ROOT *mem_root, int update_after) const;
 
   /**
    Create a virtual in-memory temporary table structure.
@@ -426,6 +426,7 @@ struct RPL_TABLE_LIST
   bool m_tabledef_valid;
   table_def m_tabledef;
   TABLE *m_conv_table;
+  TABLE *m_conv_table_after;
 };
 
 

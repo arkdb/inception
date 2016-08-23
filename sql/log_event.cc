@@ -10872,7 +10872,7 @@ int Rows_log_event::do_apply_event(Relay_log_info const *rli)
         DBUG_ASSERT(ptr->m_tabledef_valid);
         TABLE *conv_table;
         if (!ptr->m_tabledef.compatible_with(thd, const_cast<Relay_log_info*>(rli),
-                                             NULL, &conv_table, NULL))
+                                             NULL, &conv_table, NULL, false))
         {
           DBUG_PRINT("debug", ("Table: %s.%s is not compatible with master",
                                ptr->table->s->db.str,
@@ -11824,6 +11824,7 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli)
                 m_null_bits, m_flags);
     table_list->m_tabledef_valid= TRUE;
     table_list->m_conv_table= NULL;
+    table_list->m_conv_table_after= NULL;
     table_list->open_type= OT_BASE_ONLY;
 
     /*

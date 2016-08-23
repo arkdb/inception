@@ -170,6 +170,8 @@ void free_tables_to_lock(Master_info*	mi)
         */
         if (tables_to_lock->m_conv_table)
             free_blobs(tables_to_lock->m_conv_table);
+        if (tables_to_lock->m_conv_table_after)
+            free_blobs(tables_to_lock->m_conv_table_after);
 
         tables_to_lock= static_cast<RPL_TABLE_LIST*>(tables_to_lock->next_global);
         mi->tables_to_lock_count--;

@@ -43,6 +43,7 @@
 #include <mysql_com_server.h>
 #include "sql_data_change.h"
 #include "crypt_genhash_impl.h"
+#include "password.h"
 
 #include "mysql.h"
 #include <functional>
@@ -286,7 +287,7 @@ typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
     char    field_name[NAME_CHAR_LEN + 1];
-    uint    primary_key;//±Ì æ’‚∏ˆ¡– «≤ª «pk¡–
+    uint    primary_key;
     uint    nullable;
     uint    auto_increment;
     char    data_type[FN_LEN + 1];
@@ -297,6 +298,7 @@ struct field_info_struct
     uint    charsetnr;
     Field*    field;
     Field*    conv_field;
+    Field*    conv_field_after;
     uint    unireg_check;
     uint    length;
     uint    decimals;      /* Number of decimals in field */
@@ -505,6 +507,20 @@ struct transfer_option_struct
     char                 comment[128];
 };
 
+typedef struct gate_ddl_struct ddl_status_t;
+struct gate_ddl_struct
+{
+    table_info_t* table_info;
+    mts_thread_queue_t* thread_queue;
+    LIST_NODE_T(ddl_status_t) link;
+};
+
+typedef struct gate_ddl_cache_struct ddl_cache_t;
+struct gate_ddl_cache_struct
+{
+    LIST_BASE_NODE_T(ddl_status_t) ddl_lst;
+};
+
 typedef struct transfer_cache_struct transfer_cache_t;
 struct transfer_cache_struct
 {
@@ -584,6 +600,9 @@ struct transfer_cache_struct
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
     
+    //for row event primary key columns
+    str_t*          pk_string;
+    ddl_cache_t* ddl_cache;
     //dc options
     transfer_option_t option_list[GATE_OPTION_LAST];
 };
