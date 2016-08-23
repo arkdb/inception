@@ -267,6 +267,8 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_DO_IGNORE                2
 
 
+#define INCEPTION_DISPATCH_RANDOM           1
+#define INCEPTION_DISPATCH_ROW              2
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct
@@ -493,6 +495,7 @@ enum transfer_option_enum{
     MASTER_SYNC_POSITION,
     PARALLEL_WORKERS,
     WORKER_QUEUE_LENGTH,
+    CONCURRENT_DISPATCH_METHOD, 
     GATE_OPTION_LAST
 };
 
@@ -601,7 +604,6 @@ struct transfer_cache_struct
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
     
     //for row event primary key columns
-    str_t*          pk_string;
     ddl_cache_t* ddl_cache;
     //dc options
     transfer_option_t option_list[GATE_OPTION_LAST];
@@ -5851,6 +5853,7 @@ int mysql_check_table_existed(THD* thd);
 int mysql_check_charset(const char* charsetname);
 int truncate_inception_commit(const char* msg, int length);
 int mysql_check_identified(THD* thd, char* name, int len);
+double my_rnd(struct rand_struct *rand_st);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

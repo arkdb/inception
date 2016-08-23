@@ -4814,8 +4814,10 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
         protocol->store(mts_thread->dequeue_index);
 
         if (mts_thread->enqueue_index != mts_thread->dequeue_index)
-            protocol->store((int)((mts_thread->enqueue_index+ OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]) -
-                    mts_thread->dequeue_index) % OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]))+1);
+            protocol->store((int)((mts_thread->enqueue_index+ 
+                    OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]) -
+                    mts_thread->dequeue_index) % 
+                  OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]))+1);
         else
             protocol->store(0);
 
@@ -6106,8 +6108,11 @@ int inception_transfer_make_one_row_primary_key(
     field_info_t* field_node;
     int    err = 0;
     int    field_index=0;
-    int    pkcount=0;
-    char*   dictkey = NULL;
+
+    /* 如果是随机分发的话，就不需要生成主键列表了 */
+    if (OPTION_GET_VALUE(&mi->datacenter->option_list[CONCURRENT_DISPATCH_METHOD]) ==
+        INCEPTION_DISPATCH_RANDOM)
+        return false;
 
     field_node = LIST_GET_FIRST(mi->table_info->field_lst);
     while (field_node != NULL)
@@ -6358,34 +6363,43 @@ inception_mts_get_hash_value(
     char sha1_buf[SCRAMBLED_PASSWORD_CHAR_LENGTH];
     str_t str_tmp;
 
-    str_init(&str_tmp);
-    if (table_info)
+    if (OPTION_GET_VALUE(&datacenter->option_list[CONCURRENT_DISPATCH_METHOD]) ==
+        INCEPTION_DISPATCH_RANDOM)
     {
-        if (!pk_string)
-            pk_string = &str_tmp;
-
-        str_append(pk_string, table_info->db_name);
-        str_append(pk_string, table_info->table_name);
-        my_make_scrambled_password_sha1(sha1_buf, str_get(pk_string), str_get_len(pk_string));
-        if (commit_flag)
-            sprintf(key, "%sXID", sha1_buf);
-        else
-            sprintf(key, "%s", sha1_buf);
-        if (pk_string == &str_tmp)
-            str_deinit(&str_tmp);
+        hash_value = (int)((double)my_rnd(&sql_rand) * 10000000);
     }
     else
     {
-        sprintf(key, "%dXID", (int)datacenter->last_event_timestamp);
+        str_init(&str_tmp);
+        if (table_info)
+        {
+            if (!pk_string)
+                pk_string = &str_tmp;
+
+            str_append(pk_string, table_info->db_name);
+            str_append(pk_string, table_info->table_name);
+            my_make_scrambled_password_sha1(sha1_buf, str_get(pk_string), str_get_len(pk_string));
+            if (commit_flag)
+                sprintf(key, "%sXID", sha1_buf);
+            else
+                sprintf(key, "%s", sha1_buf);
+            if (pk_string == &str_tmp)
+                str_deinit(&str_tmp);
+        }
+        else
+        {
+            sprintf(key, "%dXID", (int)datacenter->last_event_timestamp);
+        }
+
+        p = key;
+        key_length = strlen(key);
+        while (*p)
+        {
+            hash_value = hash_value + (int)*p;
+            p++;
+        }
     }
 
-    p = key;
-    key_length = strlen(key);
-    while (*p)
-    {
-        hash_value = hash_value + (int)*p;
-        p++;
-    }
     //hash_value= my_calc_hash(&datacenter->table_cache, (uchar*) key, key_length);
     return int(hash_value % OPTION_GET_VALUE(&datacenter->option_list[PARALLEL_WORKERS]));
 }
@@ -6467,6 +6481,11 @@ int inception_transfer_check_and_wait_ddl(
     ddl_status_t* ddl_status_next;
 
     if (OPTION_GET_VALUE(&datacenter->option_list[PARALLEL_WORKERS]) == 0)
+        return false;
+
+    /* 如果是随机分发的话，等待就没有用了，这里直接返回不等待 */
+    if (OPTION_GET_VALUE(&datacenter->option_list[CONCURRENT_DISPATCH_METHOD]) ==
+        INCEPTION_DISPATCH_RANDOM)
         return false;
 
 retry:
@@ -6921,6 +6940,11 @@ int inception_transfer_cache_ddl(
     ddl_status_t* ddl_status;
 
     if (OPTION_GET_VALUE(&datacenter->option_list[PARALLEL_WORKERS]) == 0)
+        return false;
+
+    /* 如果是随机分发的话，等待就没有用了，这里直接返回不等待 */
+    if (OPTION_GET_VALUE(&datacenter->option_list[CONCURRENT_DISPATCH_METHOD]) ==
+        INCEPTION_DISPATCH_RANDOM)
         return false;
 
     /* DDL执行时，也要先检查当前是不是已经有当前表的执行，如果有的话
@@ -7965,7 +7989,8 @@ pthread_handler_t inception_mts_thread(void* arg)
         mts_thread->last_tid = element->tid;
         mysql_mutex_unlock(&element->element_lock);
 
-        mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]);
+        mts_thread->dequeue_index = (mts_thread->dequeue_index+1) % 
+          OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]);
     }
 
     mts_thread->thread_stage = transfer_mts_stopped;
@@ -8234,7 +8259,8 @@ int inception_create_mts(
         {
             mts_thread = &mts->mts_thread[i];
             mts_thread->thread_queue = (mts_thread_queue_t*)my_malloc(
-                sizeof(mts_thread_queue_t)*OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]), MY_ZEROFILL);
+                sizeof(mts_thread_queue_t)*OPTION_GET_VALUE(
+                  &datacenter->option_list[WORKER_QUEUE_LENGTH]), MY_ZEROFILL);
             mts_thread->dequeue_index = 0;
             mts_thread->enqueue_index = 0;
             mts_thread->last_tid = 0;
@@ -8582,7 +8608,9 @@ retry0:
     for (i = 0; i < OPTION_GET_VALUE(&datacenter->option_list[PARALLEL_WORKERS]); i++)
     {
         mts_thread = &mts->mts_thread[i];
-        for (j = 0; j < OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]) && mts_thread->thread_queue; j++)
+        for (j = 0; j < OPTION_GET_VALUE(&
+              datacenter->option_list[WORKER_QUEUE_LENGTH]) && 
+            mts_thread->thread_queue; j++)
         {
             element = &mts_thread->thread_queue[j]; 
             mysql_mutex_destroy(&element->element_lock);
