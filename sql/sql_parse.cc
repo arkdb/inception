@@ -844,11 +844,10 @@ int mysql_cache_format_sql(THD* thd)
     if (thd->errmsg != NULL)
     {
         format_cache_node->errmsg = thd->errmsg;
-        format_cache_node->errlevel = thd->err_level > 0;
+        format_cache_node->errflag = thd->err_level > 0;
         thd->errmsg = NULL;
     }
     
-    sql_with_charset.free();
     DBUG_RETURN(FALSE);
 }
 
@@ -1054,14 +1053,14 @@ int mysql_send_format_results(THD* thd)
             
             if (sql_cache_node->errmsg)
             {
-                protocol->store(sql_cache_node->errlevel);
+                protocol->store(sql_cache_node->errflag);
                 protocol->store(str_get(sql_cache_node->errmsg), thd->charset());
                 protocol->store(str_get(sql_cache_node->sql_statements), thd->charset());
                 protocol->store("None", thd->charset());
             }
             else
             {
-                protocol->store(sql_cache_node->errlevel);
+                protocol->store(sql_cache_node->errflag);
                 protocol->store("None", thd->charset());
                 protocol->store(str_get(sql_cache_node->sql_statements), thd->charset());
                 protocol->store(str_get(sql_cache_node->format_sql), thd->charset());

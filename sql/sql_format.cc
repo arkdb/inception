@@ -810,14 +810,14 @@ int mysql_format_delete(THD* thd)
     if (thd->lex->auxiliary_table_list.first)
     {
         mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
-                            thd->lex->auxiliary_table_list.first);
+            thd->lex->auxiliary_table_list.first);
         str_append(format_node->format_sql, ",");
         mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
-                            thd->lex->query_tables);
+            thd->lex->query_tables);
     }
     else
         mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
-                            thd->lex->query_tables);
+            thd->lex->query_tables);
     
     mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
@@ -848,7 +848,7 @@ int mysql_format_update(THD* thd)
     str_append(format_node->format_sql, "UPDATE ");
     
     mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
-                        thd->lex->query_tables);
+        thd->lex->query_tables);
     
     str_append(format_node->format_sql, " SET ");
     
@@ -938,7 +938,6 @@ int mysql_format_set(THD* thd)
             
             str_append(format_node->format_sql, "SET ");
             str_append(format_node->format_sql, set_names_str.c_ptr());
-            set_names_str.free();
         }
         else
         {

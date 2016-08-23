@@ -735,7 +735,7 @@ struct format_cache_node_struct
 {
     str_t*                                  sql_statements;
     str_t*                                  format_sql;
-    int                                     errlevel;
+    int                                     errflag;
     str_t*                                  errmsg;
     
     rt_lst_t                                rt_lst;
