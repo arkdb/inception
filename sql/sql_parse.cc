@@ -6036,8 +6036,8 @@ inception_transfer_get_table_object(
         }
 
         // mysql_add_table_object(thd, tableinfo);
-        mysql_alloc_record(tableinfo, mysql);
         tableinfo->doignore = doignore;
+        mysql_alloc_record(tableinfo, mysql);
     }
     else if (mysql_errno(mysql) == 1051/*ER_BAD_TABLE_ERROR*/ || 
             mysql_errno(mysql) == 1146/*ER_NO_SUCH_TABLE*/)
@@ -15811,7 +15811,12 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
         DBUG_RETURN(true);
     }
 
-    DBUG_ASSERT(LIST_GET_LEN(table_info->field_lst) == source_res->field_count);
+    if (LIST_GET_LEN(table_info->field_lst) != source_res->field_count)
+    {
+        table_info->doignore = INCEPTION_DO_IGNORE;
+        DBUG_RETURN(true);
+    }
+
     field_info = LIST_GET_FIRST(table_info->field_lst);
     for (i=0; i < source_res->field_count; i++)
     {
