@@ -5629,13 +5629,11 @@ int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* m
             return true;
         }
     }
-    else
+    
+    if(inception_transfer_options_init(thd,datacenter,mysql,create_sql))
     {
-        if(inception_transfer_options_init(thd,datacenter,mysql,create_sql))
-        {
-            str_deinit(create_sql);
-            return true;
-        }
+        str_deinit(create_sql);
+        return true;
     }
     
     str_deinit(create_sql);
