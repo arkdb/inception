@@ -137,7 +137,7 @@ Old_rows_log_event::do_apply_event(Old_rows_log_event *ev, const Relay_log_info 
         DBUG_ASSERT(ptr->m_tabledef_valid);
         TABLE *conv_table;
         if (!ptr->m_tabledef.compatible_with(thd, const_cast<Relay_log_info*>(rli),
-                                             NULL, &conv_table, NULL))
+                                             NULL, &conv_table, NULL, false))
         {
           ev_thd->is_slave_error= 1;
           const_cast<Relay_log_info*>(rli)->slave_close_thread_tables(ev_thd);
@@ -1547,7 +1547,7 @@ int Old_rows_log_event::do_apply_event(Relay_log_info const *rli)
       {
         TABLE *conv_table;
         if (ptr->m_tabledef.compatible_with(thd, const_cast<Relay_log_info*>(rli),
-                                            NULL, &conv_table, NULL))
+                                            NULL, &conv_table, NULL, false))
         {
           thd->is_slave_error= 1;
           const_cast<Relay_log_info*>(rli)->slave_close_thread_tables(thd);
