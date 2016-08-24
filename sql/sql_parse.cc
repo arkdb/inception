@@ -5582,7 +5582,7 @@ int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t
 {
     char tmp[1024];
     str_truncate(insert_sql, str_get_len(insert_sql));
-    insert_sql= str_append(insert_sql, "INSERT INTO ");
+    insert_sql= str_append(insert_sql, "INSERT IGNORE INTO ");
     sprintf (tmp, "`%s`.`%s` values", datacenter, "transfer_option");
     insert_sql= str_append(insert_sql, tmp);
     
