@@ -8796,7 +8796,7 @@ int inception_transfer_start_replicate(
         sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
             where datacenter_epoch=(select datacenter_epoch from \
               `%s`.master_positions where id=(select max(id) from \
-               `%s`.master_positions) and id>0 limit 1) and id > 0 order by id limit 1;",
+               `%s`.master_positions) and id>0 limit 1) and id > 0 order by id desc limit 1;",
             datacenter_name, datacenter_name, datacenter_name);
         if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
             (source_res1 = mysql_store_result(mysql)) == NULL)
