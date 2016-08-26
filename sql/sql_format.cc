@@ -260,7 +260,21 @@ format_func_item(
         }
         break;
     case Item_func::FUNC_SP:
+        break;
     case Item_func::UNKNOWN_FUNC:
+        {
+            str_append(print_str, ((Item_func*) item)->func_name());
+            str_append(print_str, "(");
+            for (uint i= 0; i < ((Item_func*) item)->arg_count; ++i)
+            {
+                Item *right_item= ((Item_func*) item)->arguments()[i];
+                format_item(thd, format_node, print_str, right_item, select_lex);
+                str_append(print_str, ",");
+            }
+            str_truncate(print_str, 1);
+            str_append(print_str, ")");
+
+        }
         break;
     default:
         break;
@@ -510,7 +524,8 @@ format_item(
 {
     if (!item)
         return 0;
-    switch (item->type()) {
+    switch (item->type())
+    {
     case Item::STRING_ITEM:
         {
             if (thd->thd_sinfo->parameterize == 1)
@@ -522,7 +537,7 @@ format_item(
                 char* fieldname;
                 stringval = ((Item_string*) item)->val_str(&tmp);
                 fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
-                sprintf(fieldname, "%s", stringval->ptr());
+                sprintf(fieldname, "\"%s\"", stringval->ptr());
                 str_append(print_str, fieldname);
                 my_free(fieldname);
             }
@@ -732,6 +747,8 @@ int mysql_format_insert(THD* thd)
     thd->current_format= format_node;
     
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
+    //即便table不存在，也应该可以format sql.
+    thd->errmsg= NULL;
     
     str_append(format_node->format_sql, "INSERT INTO ");
     
@@ -802,6 +819,8 @@ int mysql_format_delete(THD* thd)
     thd->current_format= format_node;
     
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
+    //即便table不存在，也应该可以format sql.
+    thd->errmsg= NULL;
     
     str_append(format_node->format_sql, "DELETE");
     if (thd->lex->auxiliary_table_list.first)
@@ -841,6 +860,8 @@ int mysql_format_update(THD* thd)
     thd->current_format= format_node;
     
     mysql_load_tables(thd, &format_node->rt_lst, select_lex);
+    //即便table不存在，也应该可以format sql.
+    thd->errmsg= NULL;
     
     str_append(format_node->format_sql, "UPDATE ");
     
