@@ -22,9 +22,12 @@ inception_magic_commit;
 ````
 返回结果如下：  
 ````
-qunar show variables like "read%": 		
-read_buffer_size | 33554432 		
-read_only | OFF 		
+qunar show variables like "read%":
+		
+read_buffer_size | 33554432
+		
+read_only | OFF
+		
 read_rnd_buffer_size | 262144
 ````
 **注意**：因为查看远程变量，是需要连到远程数据库服务器的，所以执行时还是必须要加上前面的数据源信息的，不然在MySQL客户只支持这个语句会报错。
@@ -85,6 +88,7 @@ inception get processlist;
 7. state:表示在当前命令下，执行的状态是什么，状态包括INIT（初始阶段），CHECKING（正在审核），EXECUTING（正在执行），DEINIT（退出），BACKUP（正在备份）。
 8. time:表示当前语句执行所用时间。
 9. info:显示当前正在执行的语句。
+10. progress:显示当前执行语句块进度，已执行sql数/sql总数。
 
 
 

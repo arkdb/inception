@@ -43,6 +43,7 @@
 #include <mysql_com_server.h>
 #include "sql_data_change.h"
 #include "crypt_genhash_impl.h"
+#include "password.h"
 
 #include "mysql.h"
 #include <functional>
@@ -266,6 +267,8 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_DO_IGNORE                2
 
 
+#define INCEPTION_DISPATCH_RANDOM           1
+#define INCEPTION_DISPATCH_ROW              2
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct
@@ -286,7 +289,7 @@ typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
     char    field_name[NAME_CHAR_LEN + 1];
-    uint    primary_key;//±Ì æ’‚∏ˆ¡– «≤ª «pk¡–
+    uint    primary_key;
     uint    nullable;
     uint    auto_increment;
     char    data_type[FN_LEN + 1];
@@ -297,6 +300,7 @@ struct field_info_struct
     uint    charsetnr;
     Field*    field;
     Field*    conv_field;
+    Field*    conv_field_after;
     uint    unireg_check;
     uint    length;
     uint    decimals;      /* Number of decimals in field */
@@ -497,6 +501,7 @@ enum transfer_option_enum{
     MASTER_SYNC_POSITION,
     PARALLEL_WORKERS,
     WORKER_QUEUE_LENGTH,
+    CONCURRENT_DISPATCH_METHOD,
     GATE_OPTION_LAST
 };
 
@@ -509,6 +514,20 @@ struct transfer_option_struct
     int                  min_value;
     int                  is_online;
     char                 comment[128];
+};
+
+typedef struct gate_ddl_struct ddl_status_t;
+struct gate_ddl_struct
+{
+    table_info_t* table_info;
+    mts_thread_queue_t* thread_queue;
+    LIST_NODE_T(ddl_status_t) link;
+};
+
+typedef struct gate_ddl_cache_struct ddl_cache_t;
+struct gate_ddl_cache_struct
+{
+    LIST_BASE_NODE_T(ddl_status_t) ddl_lst;
 };
 
 typedef struct transfer_cache_struct transfer_cache_t;
@@ -590,6 +609,8 @@ struct transfer_cache_struct
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
     
+    //for row event primary key columns
+    ddl_cache_t* ddl_cache;
     //dc options
     transfer_option_t option_list[GATE_OPTION_LAST];
 };
@@ -853,6 +874,7 @@ class thread_info
     char* dest_user;
     int dest_port;
     int state;
+    char progress[64];
     CSET_STRING query_string;
     CSET_STRING query_string_e;
 };
@@ -5906,6 +5928,7 @@ int mysql_format_insert(THD* thd);
 int mysql_format_change_db(THD* thd);
 int mysql_format_set(THD* thd);
 int mysql_format_not_support(THD* thd);
+double my_rnd(struct rand_struct *rand_st);
 
 #endif /* MYSQL_SERVER */
 
