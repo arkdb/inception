@@ -15107,7 +15107,7 @@ mysql_dup_char(
         if (*src == '\\')
             ret=1;
         //对于存在转义的情况，则不做替换
-        if (*src == chr && (p == src || *(src-1) != '\\'))
+        if (*src == chr && (p == src || (*(src-1) != '\\' || chr == '\\')))
         {
             *dest=chr;
             *(++dest) = chr;
