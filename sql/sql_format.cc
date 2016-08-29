@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 int mysql_format_subselect(THD* thd, format_cache_node_t*   format_node, str_t* print_str, st_select_lex *select_lex, bool top);
 int format_item(THD* thd, format_cache_node_t*   format_node, str_t* print_str, Item* item, st_select_lex *select_lex);
+void mysql_dup_char( char* src, char* dest, char chr);
 
 int
 format_sum_item(
@@ -436,6 +437,7 @@ int mysql_format_tables(
 
 int mysql_format_select(THD* thd)
 {
+    char*                   dupcharsql;
     format_cache_node_t*   format_node;
     format_cache_t*        format_cache;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
@@ -453,7 +455,16 @@ int mysql_format_select(THD* thd)
     if (mysql_format_subselect(thd, format_node, format_node->format_sql, select_lex, true))
         return true;
     
+    dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
+    memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
+    mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
+    str_deinit(format_node->format_sql);
+    str_init(format_node->format_sql);
+    str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
+    
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
+    
+    my_free(dupcharsql);
     return false;
 }
 
@@ -729,6 +740,7 @@ int mysql_format_not_support(THD* thd)
 
 int mysql_format_insert(THD* thd)
 {
+    char*                   dupcharsql;
     format_cache_node_t*   format_node;
     format_cache_t*        format_cache;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
@@ -798,12 +810,23 @@ int mysql_format_insert(THD* thd)
             return true;
     }
     
+    
+    dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
+    memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
+    mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
+    str_deinit(format_node->format_sql);
+    str_init(format_node->format_sql);
+    str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
+    
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
+    
+    my_free(dupcharsql);
     return false;
 }
 
 int mysql_format_delete(THD* thd)
 {
+    char*                   dupcharsql;
     format_cache_node_t*   format_node;
     format_cache_t*        format_cache;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
@@ -837,13 +860,23 @@ int mysql_format_delete(THD* thd)
     
     mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
+    dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
+    memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
+    mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
+    str_deinit(format_node->format_sql);
+    str_init(format_node->format_sql);
+    str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
+
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
+    
+    my_free(dupcharsql);
     return false;
 }
 
 int mysql_format_update(THD* thd)
 {
-    format_cache_node_t*        format_node;
+    char*                         dupcharsql;
+    format_cache_node_t*         format_node;
     format_cache_t*             format_cache;
     SELECT_LEX* select_lex = &thd->lex->select_lex;
     Item* item_it;
@@ -885,7 +918,16 @@ int mysql_format_update(THD* thd)
     
     mysql_format_select_condition(thd, format_node, format_node->format_sql, select_lex);
     
+    dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
+    memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
+    mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
+    str_deinit(format_node->format_sql);
+    str_init(format_node->format_sql);
+    str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
+
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
+    
+    my_free(dupcharsql);
     return false;
 }
 
