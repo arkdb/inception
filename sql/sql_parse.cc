@@ -15574,6 +15574,35 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
 }
 
 int
+mysql_binlog_position_compare(
+    char* binlog_file_1,
+    int   binlog_pos_1,
+    char* binlog_file_2,
+    int   binlog_pos_2
+)
+{
+    if (strcasecmp(binlog_file_1, binlog_file_2) > 0)
+    {
+        return 1;
+    }
+    else if (strcasecmp(binlog_file_1, binlog_file_2) < 0)
+    {
+        return -1;
+    }
+    else
+    {
+        if (binlog_pos_1 > binlog_pos_2)
+            return 1;
+        else if (binlog_pos_1 < binlog_pos_2)
+            return -1;
+        else
+            return 0;
+    }
+
+    return 0;
+}
+
+int
 mysql_parse_query_log_event(
     Master_info* mi,
     Log_event* ev,
@@ -15590,9 +15619,10 @@ mysql_parse_query_log_event(
 
     if (strcasecmp(query_log->query, "BEGIN") == 0)
     {
-        if (ev->log_pos >= (my_off_t)sql_cache_node->end_binlog_pos ||
-            ev->log_pos < (my_off_t)sql_cache_node->start_binlog_pos ||
-            strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) != 0)
+        if (mysql_binlog_position_compare((char*)mi->get_master_log_name(), ev->log_pos,
+            sql_cache_node->start_binlog_file, sql_cache_node->start_binlog_pos) < 0 ||
+            mysql_binlog_position_compare((char*)mi->get_master_log_name(), ev->log_pos,
+            sql_cache_node->end_binlog_file, sql_cache_node->end_binlog_pos) > 0)
         {
             *skip_trx = TRUE;
             DBUG_RETURN(true);
