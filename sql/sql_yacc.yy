@@ -1970,7 +1970,7 @@ query:
             if (!thd->bootstrap &&
               (!(thd->lex->select_lex.options & OPTION_FOUND_COMMENT)))
             {
-              my_message(ER_EMPTY_QUERY, ER(ER_EMPTY_QUERY), MYF(0));
+              my_message(ER_INCEPTION_EMPTY_QUERY, ER(ER_INCEPTION_EMPTY_QUERY), MYF(0));
               MYSQL_YYABORT;
             }
             thd->lex->sql_command= SQLCOM_EMPTY_QUERY;
