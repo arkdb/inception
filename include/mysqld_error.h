@@ -947,4 +947,7 @@
 #define  ER_DIFF_CHARSET_COMPARE_FIELD                                        1946
 #define  ER_LIKE_COMP_PREFIX_PERCENT                                          1947
 #define  ER_FUNC_EXISTED_ON_FIELD                                             1948
-#define  ER_ERROR_LAST                                                        1949
+#define  ER_ADD_INDEX                                                         1949
+#define  ER_CONVERT_DATA_TYPE                                                 1950
+#define  ER_INDEX_USED_TRUNCATE                                               1951
+#define  ER_ERROR_LAST                                                        1952

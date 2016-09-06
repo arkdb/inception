@@ -656,6 +656,31 @@ public:
 typedef class st_select_lex_unit SELECT_LEX_UNIT;
 typedef Bounds_checked_array<Item*> Ref_ptr_array;
 
+typedef struct cond_field_struct cond_field_t;
+typedef struct cond_info_struct cond_info_t;
+typedef LIST_BASE_NODE_T(cond_info_t) cond_lst_t;
+
+struct cond_field_struct
+{
+    longlong cardinality;
+    char    field_name[NAME_CHAR_LEN + 1];
+    Item*   right_item;
+    field_info_t* field_info;
+    LIST_NODE_T(cond_field_t) link;
+};
+
+struct cond_info_struct
+{
+    table_rt_t*           table_rt;
+    Item*                 cond_item;
+    int                   match_count;
+    /* the index need to add, make the name by Inception */
+    char    index_name[NAME_CHAR_LEN + 1]; 
+    char    index_fields[NAME_CHAR_LEN * 20 + 1]; 
+    LIST_NODE_T(cond_info_t) link;
+    LIST_BASE_NODE_T(cond_field_t) field_lst;
+};
+
 /*
   SELECT_LEX - store information of parsed SELECT statment
 */
@@ -839,6 +864,8 @@ public:
   */
   int cur_pos_in_all_fields;
 
+  cond_lst_t cond_lst;
+
   List<udf_func>     udf_list;                  /* udf function calls stack */
 
   /* 
@@ -935,7 +962,9 @@ public:
   st_select_lex() : group_list_ptrs(NULL), order_list_ptrs(NULL),
     n_sum_items(0), n_child_sum_items(0),order_group_having(0),
     cur_pos_in_all_fields(ALL_FIELDS_UNDEF_POS)
-  {}
+  {
+      LIST_INIT(cond_lst);
+  }
   void make_empty_select()
   {
     init_query();
