@@ -89,6 +89,34 @@ static Sys_var_struct Sys_character_set_system(
        READ_ONLY GLOBAL_VAR(system_charset_info), NO_CMD_LINE,
        offsetof(CHARSET_INFO, csname), DEFAULT(0));
 
+static Sys_var_struct Sys_character_set_client(
+       "character_set_client", "The character set for statements "
+       "that arrive from the client",
+       READ_ONLY SESSION_VAR(character_set_client), NO_CMD_LINE,
+       offsetof(CHARSET_INFO, csname), DEFAULT(&default_charset_info),
+       NO_MUTEX_GUARD);
+
+static Sys_var_struct Sys_character_set_connection(
+       "character_set_connection", "The character set used for "
+       "literals that do not have a character set introducer and for "
+       "number-to-string conversion",
+       READ_ONLY SESSION_VAR(collation_connection), NO_CMD_LINE,
+       offsetof(CHARSET_INFO, csname), DEFAULT(&default_charset_info),
+       NO_MUTEX_GUARD);
+
+static Sys_var_struct Sys_character_set_server(
+       "character_set_server", "The default character set",
+       READ_ONLY SESSION_VAR(collation_server), NO_CMD_LINE,
+       offsetof(CHARSET_INFO, csname), DEFAULT(&default_charset_info),
+       NO_MUTEX_GUARD);
+
+static Sys_var_struct Sys_character_set_database(
+       "character_set_database",
+       " The character set used by the default database",
+       READ_ONLY SESSION_VAR(collation_database), NO_CMD_LINE,
+       offsetof(CHARSET_INFO, csname), DEFAULT(&default_charset_info),
+       NO_MUTEX_GUARD);
+
 static Sys_var_ulong Sys_connect_timeout(
        "connect_timeout",
        "The number of seconds the mysqld server is waiting for a connect "

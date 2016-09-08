@@ -1095,6 +1095,38 @@ int mysql_send_format_results(THD* thd)
     DBUG_RETURN(false);
 }
 
+int mysql_send_character_results(THD* thd)
+{
+    Protocol *    protocol= thd->protocol;
+    List<Item>    field_list;
+
+    DBUG_ENTER("mysql_send_character_results");
+
+    field_list.push_back(new Item_empty_string("character_set_client", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("character_set_connection", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("character_set_server", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("character_set_database", FN_REFLEN));
+
+    if (protocol->send_result_set_metadata(&field_list,
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    protocol->prepare_for_resend();
+
+    protocol->store("utf8", thd->charset());
+    protocol->store("utf8", thd->charset());
+    protocol->store("utf8", thd->charset());
+    protocol->store("utf8", thd->charset());
+    protocol->write();
+
+    thd->clear_error();
+    my_eof(thd);
+
+    DBUG_RETURN(false);
+}
+
 int mysql_send_optimize_results(THD* thd)
 {
     optimize_cache_node_t*  sql_cache_node;
@@ -17949,6 +17981,27 @@ int mysql_deinit_sql_cache(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_character_select_vild(THD* thd)
+{
+    if (thd->lex->select_lex.item_list.elements == 4)
+    {
+        List<Item> list = thd->lex->select_lex.item_list;
+        Item* it1 = list.pop();
+        Item* it2 = list.pop();
+        Item* it3 = list.pop();
+        Item* it4 = list.pop();
+        if (strcasecmp(it1->full_name(), "@@character_set_client") == 0
+            && strcasecmp(it2->full_name(), "@@character_set_connection") == 0
+            && strcasecmp(it3->full_name(), "@@character_set_server") == 0
+            && strcasecmp(it4->full_name(), "@@character_set_database") == 0)
+        {
+            return 1;
+        }
+
+    }
+
+    return 0;
+}
 
 int mysql_show_print_and_execute_simple(THD *thd)
 {
@@ -17973,6 +18026,15 @@ int mysql_show_print_and_execute_simple(THD *thd)
         //中做检查了
         if (!thd->have_begin)
             res = FALSE;
+        else
+            res = ER_WARNING;
+        break;
+
+    case SQLCOM_SELECT:
+        //处理\s的时候，客户端调用elect @@character_set_client, @@character_set_connection,
+        //@@character_set_server, @@character_set_database limit 1。语句返回错误信息的bug
+        if (!thd->have_begin && mysql_character_select_vild(thd))
+            res = mysql_send_character_results(thd);
         else
             res = ER_WARNING;
         break;

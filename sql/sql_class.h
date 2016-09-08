@@ -1279,7 +1279,7 @@ typedef struct system_variables
   ulong inception_osc_critical_running;
   ulong inception_osc_critical_connected;
   ulong inception_osc_min_table_size;
-  bool inception_format_sql_full_path=0;
+  bool inception_format_sql_full_path;
 
 } SV;
 
