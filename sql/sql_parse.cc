@@ -1099,6 +1099,11 @@ int mysql_send_character_results(THD* thd)
 {
     Protocol *    protocol= thd->protocol;
     List<Item>    field_list;
+    char          val_client[16];
+    char          val_connection[16];
+    char          val_server[16];
+    char          val_database[16];
+    LEX_STRING    null_lex_str;
 
     DBUG_ENTER("mysql_send_character_results");
 
@@ -1115,10 +1120,43 @@ int mysql_send_character_results(THD* thd)
 
     protocol->prepare_for_resend();
 
-    protocol->store("utf8", thd->charset());
-    protocol->store("utf8", thd->charset());
-    protocol->store("utf8", thd->charset());
-    protocol->store("utf8", thd->charset());
+    SHOW_VAR* var = enumerate_sys_vars(thd, true, OPT_SESSION);
+    for (; var->name; var++)
+    {
+        char *value = var->value;
+        null_lex_str.str = 0;
+        null_lex_str.length = 0;
+
+        if (strcasecmp(var->name, "character_set_client") == 0)
+        {
+            sys_var *value_ptr = ((sys_var *) value);
+            value = (char*) value_ptr->value_ptr(thd, OPT_SESSION, &null_lex_str);
+            strcpy(val_client, value);
+        }
+        else if (strcasecmp(var->name, "character_set_connection") == 0)
+        {
+            sys_var *value_ptr = ((sys_var *) value);
+            value = (char*) value_ptr->value_ptr(thd, OPT_SESSION, &null_lex_str);
+            strcpy(val_connection, value);
+        }
+        else if (strcasecmp(var->name, "character_set_server") == 0)
+        {
+            sys_var *value_ptr = ((sys_var *) value);
+            value = (char*) value_ptr->value_ptr(thd, OPT_SESSION, &null_lex_str);
+            strcpy(val_server, value);
+        }
+        else if (strcasecmp(var->name, "character_set_database") == 0)
+        {
+            sys_var *value_ptr = ((sys_var *) value);
+            value = (char*) value_ptr->value_ptr(thd, OPT_SESSION, &null_lex_str);
+            strcpy(val_database, value);
+        }
+    }
+
+    protocol->store(val_client, thd->charset());
+    protocol->store(val_connection, thd->charset());
+    protocol->store(val_server, thd->charset());
+    protocol->store(val_database, thd->charset());
     protocol->write();
 
     thd->clear_error();

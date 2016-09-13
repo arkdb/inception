@@ -2483,7 +2483,7 @@ Create_func_compress Create_func_compress::s_singleton;
 Item*
 Create_func_compress::create(THD *thd, Item *arg1)
 {
-  return NULL;/*new (thd->mem_root) Item_func_compress(arg1)*/;
+  return new (thd->mem_root) Item_func_compress(arg1);
 }
 
 
