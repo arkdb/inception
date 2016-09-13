@@ -252,7 +252,7 @@ int optimize_make_index_name_from_cond(
     str_append(&index_name, timestamp);
 
     my_make_scrambled_password_sha1(timestamp, str_get(&index_name), str_get_len(&index_name));
-    sprintf(cond_info->index_name, "auto_index_%s", timestamp + 33);
+    sprintf(cond_info->index_name, "IAI_%s", timestamp + 33);
 
     str_deinit(&index_name);
 
@@ -264,19 +264,29 @@ int optimize_data_type_match(
     int item_type
 )
 {
-    if (item_type == Item::INT_ITEM)
+    if (item_type == Item::INT_ITEM ||
+        item_type == Item::REAL_ITEM ||
+        item_type == Item::NULL_ITEM ||
+        item_type == Item::STRING_ITEM ||
+        item_type == Item::DECIMAL_ITEM)
     {
-        if (real_type == MYSQL_TYPE_INT24 || real_type == MYSQL_TYPE_LONG)
-            return true;
+        if (item_type == Item::INT_ITEM)
+        {
+            if (real_type == MYSQL_TYPE_INT24 || real_type == MYSQL_TYPE_LONG)
+                return true;
+        }
+
+        if (item_type == Item::STRING_ITEM)
+        {
+            if (real_type == MYSQL_TYPE_VARCHAR || real_type == MYSQL_TYPE_VARCHAR ||
+                real_type == MYSQL_TYPE_VAR_STRING || real_type == MYSQL_TYPE_STRING)
+                return true;
+        }
+
+        return false;
     }
 
-    if (item_type == Item::STRING_ITEM)
-    {
-        if (real_type == MYSQL_TYPE_VARCHAR || real_type == MYSQL_TYPE_VARCHAR)
-            return true;
-    }
-
-    return false;
+    return -1;
 }
 
 int
@@ -392,7 +402,7 @@ int optimize_decide_index_working(
     while (cond_field && count < match_count)
     {
         right_item = cond_field->right_item;
-        if (!optimize_data_type_match(cond_field->field_info->real_type, right_item->type()))
+        if (optimize_data_type_match(cond_field->field_info->real_type, right_item->type()) == 0)
         {
             str_t  item_string;
             str_init(&item_string);
@@ -495,6 +505,72 @@ int optimize_func_cond_select_index(
     return false;
 }
 
+int optimize_func_cond_and_item_one(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item_arg,
+    st_select_lex *select_lex
+)
+{
+    cond_field_t* cond_field;
+    cond_field_t* cond_field_tmp;
+    cond_info_t* cond_info;
+
+    Item *left_item= ((Item_func*) item_arg)->arguments()[0];
+    Item *right_item = ((Item_func*) item_arg)->arguments()[1];
+    Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+    field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+    table_rt_t* table_info_l = (table_rt_t*)left_item_field->table_rt;
+
+    /* 找到当前表在当前表达式中的对列的查询表达式，不在同一个AND
+     * 条件表达式中的，需要分成不同组合 */
+    cond_info = LIST_GET_FIRST(select_lex->cond_lst);
+    while (cond_info)
+    {
+        if (cond_info->table_rt == table_info_l && cond_info->cond_item == item_arg)
+            break;
+        cond_info = LIST_GET_NEXT(link, cond_info);
+    }
+
+    if (!cond_info)
+    {
+        cond_info = (cond_info_t*)my_malloc(sizeof(cond_info_t), MY_ZEROFILL);
+        cond_info->cond_item = item_arg;
+        cond_info->table_rt = table_info_l;
+        LIST_ADD_LAST(link, select_lex->cond_lst, cond_info);
+    }
+
+    if (!field_info_l->cardinality)
+        field_info_l->cardinality = optimize_get_field_cardinality(thd, 
+            table_info_l->table_info, field_info_l->field_name, select_lex);
+
+    /* 如果cardinality为1，则说明这个列所有数据都是一样的，建索引没有意义
+     * TODO: 可以参数化这个1，用来控制索引选择性的要求,
+     * 对于没有索引的列，则不会被漏掉，有可能需要在这列上建索引 */
+    if (field_info_l->cardinality <= 1 && field_info_l->cardinality > 0)
+        return false;
+
+    /* 对cardinality做排序，从前到后，找到第一个比新插入的列小的列 */
+    cond_field_tmp = LIST_GET_FIRST(cond_info->field_lst);
+    while (cond_field_tmp)
+    {
+        if (cond_field_tmp->cardinality < field_info_l->cardinality)
+            break;
+        cond_field_tmp = LIST_GET_NEXT(link, cond_field_tmp);
+    }
+
+    cond_field = (cond_field_t*)my_malloc(sizeof(cond_field_t), MY_ZEROFILL);
+    cond_field->cardinality = field_info_l->cardinality;
+    cond_field->right_item = right_item;
+    strcpy(cond_field->field_name, field_info_l->field_name);
+    cond_field->field_info = field_info_l;
+    if (cond_field_tmp)
+        LIST_INSERT_BEFORE(link, cond_info->field_lst, cond_field_tmp, cond_field);
+    else
+        LIST_ADD_LAST(link, cond_info->field_lst, cond_field);
+
+    return false;
+}
 
 int optimize_func_cond_and_item(
     THD* thd, 
@@ -517,58 +593,7 @@ int optimize_func_cond_and_item(
             ((Item_func *)item_arg)->functype() != Item_func::EQ_FUNC)
             continue;
             
-        Item *left_item= ((Item_func*) item_arg)->arguments()[0];
-        Item *right_item = ((Item_func*) item_arg)->arguments()[1];
-        Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
-        field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
-        table_rt_t* table_info_l = (table_rt_t*)left_item_field->table_rt;
-
-        /* 找到当前表在当前表达式中的对列的查询表达式，不在同一个AND
-         * 条件表达式中的，需要分成不同组合 */
-        cond_info = LIST_GET_FIRST(select_lex->cond_lst);
-        while (cond_info)
-        {
-            if (cond_info->table_rt == table_info_l && cond_info->cond_item == item)
-                break;
-            cond_info = LIST_GET_NEXT(link, cond_info);
-        }
-
-        if (!cond_info)
-        {
-            cond_info = (cond_info_t*)my_malloc(sizeof(cond_info_t), MY_ZEROFILL);
-            cond_info->cond_item = item;
-            cond_info->table_rt = table_info_l;
-            LIST_ADD_LAST(link, select_lex->cond_lst, cond_info);
-        }
-
-        if (!field_info_l->cardinality)
-            field_info_l->cardinality = optimize_get_field_cardinality(thd, 
-                table_info_l->table_info, field_info_l->field_name, select_lex);
-
-        /* 如果cardinality为1，则说明这个列所有数据都是一样的，建索引没有意义
-         * TODO: 可以参数化这个1，用来控制索引选择性的要求,
-         * 对于没有索引的列，则不会被漏掉，有可能需要在这列上建索引 */
-        if (field_info_l->cardinality <= 1 && field_info_l->cardinality > 0)
-            continue;
-
-        /* 对cardinality做排序，从前到后，找到第一个比新插入的列小的列 */
-        cond_field_tmp = LIST_GET_FIRST(cond_info->field_lst);
-        while (cond_field_tmp)
-        {
-            if (cond_field_tmp->cardinality < field_info_l->cardinality)
-                break;
-            cond_field_tmp = LIST_GET_NEXT(link, cond_field_tmp);
-        }
-
-        cond_field = (cond_field_t*)my_malloc(sizeof(cond_field_t), MY_ZEROFILL);
-        cond_field->cardinality = field_info_l->cardinality;
-        cond_field->right_item = right_item;
-        strcpy(cond_field->field_name, field_info_l->field_name);
-        cond_field->field_info = field_info_l;
-        if (cond_field_tmp)
-            LIST_INSERT_BEFORE(link, cond_info->field_lst, cond_field_tmp, cond_field);
-        else
-            LIST_ADD_LAST(link, cond_info->field_lst, cond_field);
+        optimize_func_cond_and_item_one(thd, query_node, item_arg, select_lex);
     }
 
     return false;
@@ -608,6 +633,64 @@ int optimize_func_cond_item(
     return false;
 }
 
+int optimize_item_func_compare(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    Item *left_item= ((Item_func*) item)->arguments()[0];
+    optimize_item(thd, query_node, left_item, select_lex);
+    Item *right_item= ((Item_func*) item)->arguments()[1];
+    optimize_item(thd, query_node, right_item, select_lex);
+
+    /* 为了方便后面处理，对于这种比较表达式，都将FIELD放在左边 */
+    if (left_item->type() != Item::FIELD_ITEM && 
+        right_item->type() == Item::FIELD_ITEM)
+    {
+        ((Item_func*) item)->arguments()[1] = left_item;
+        ((Item_func*) item)->arguments()[0] = right_item;
+        left_item = ((Item_func*) item)->arguments()[0];
+        right_item = ((Item_func*) item)->arguments()[1];
+    }
+
+    if (left_item->type() == Item::FIELD_ITEM)
+    {
+        Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+        field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+        table_rt_t* table_rt = (table_rt_t*)left_item_field->table_rt;
+
+        if (left_item->type() == Item::FIELD_ITEM && 
+            right_item->type() != Item::FIELD_ITEM)
+        {
+            if (optimize_data_type_match(field_info_l->real_type, right_item->type()) == 0)
+            {
+                char buf[64];
+                optimize_convert_item_to_type(thd, buf, right_item);
+                my_error(ER_DIFF_TYPE_COMPARE_FIELD, MYF(0), 
+                    table_rt->table_info->table_name, field_info_l->field_name, 
+                    field_info_l->data_type, "CONST", "CONST", buf);
+                mysql_errmsg_append(thd);
+            }
+        }
+
+        if (left_item->type() == Item::FIELD_ITEM && 
+            right_item->type() == Item::FIELD_ITEM)
+            optimize_func_item_field_compare(thd, query_node, left_item, right_item);
+    }
+
+    /* 处理where条件只有一个表达式条件的情况 */
+    if (select_lex->where && select_lex->where->type() == Item::FUNC_ITEM &&
+        (((Item_func *)select_lex->where)->functype() == Item_func::EQ_FUNC))
+    {
+        optimize_func_cond_and_item_one(thd, query_node, select_lex->where, select_lex);
+        optimize_func_cond_select_index(thd, query_node, select_lex->where, select_lex);
+    }
+
+    return false;
+}
+
 int optimize_func_item(
     THD* thd, 
     optimize_cache_node_t* query_node,
@@ -626,23 +709,7 @@ int optimize_func_item(
     case Item_func::GE_FUNC:
     case Item_func::GT_FUNC:
         {
-            Item *left_item= ((Item_func*) item)->arguments()[0];
-            optimize_item(thd, query_node, left_item, select_lex);
-            Item *right_item= ((Item_func*) item)->arguments()[1];
-            optimize_item(thd, query_node, right_item, select_lex);
-            /* 为了方便后面处理，对于这种比较表达式，都将FIELD放在左边 */
-            if (left_item->type() != Item::FIELD_ITEM && 
-                right_item->type() == Item::FIELD_ITEM)
-            {
-                ((Item_func*) item)->arguments()[1] = left_item;
-                ((Item_func*) item)->arguments()[0] = right_item;
-            }
-
-            if (left_item->type() == Item::FIELD_ITEM && 
-                right_item->type() == Item::FIELD_ITEM)
-            {
-                optimize_func_item_field_compare(thd, query_node, left_item, right_item);
-            }
+            optimize_item_func_compare(thd, query_node, item, select_lex);
         }
         break;
 
