@@ -400,6 +400,7 @@ struct sql_cache_node_struct
     char        end_binlog_file[FN_REFLEN];
     int         end_binlog_pos;
     char        dbname[NAME_CHAR_LEN];
+    char        env_dbname[NAME_CHAR_LEN];
     char        backup_dbname[NAME_CHAR_LEN];
     char        tablename[NAME_CHAR_LEN];
     ulong       thread_id;
@@ -5855,6 +5856,7 @@ int mysql_check_charset(const char* charsetname);
 int truncate_inception_commit(const char* msg, int length);
 int mysql_check_identified(THD* thd, char* name, int len);
 double my_rnd(struct rand_struct *rand_st);
+int handle_fatal_signal_low(THD* thd);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

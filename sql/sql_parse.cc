@@ -113,6 +113,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "item_subselect.h"
 #include "sql_time.h"
 #include "thr_alarm.h"
+#include "my_stacktrace.h"
 
 using std::max;
 using std::min;
@@ -813,6 +814,8 @@ int mysql_cache_one_sql(THD* thd)
     else
         sprintf(sql_cache_node->backup_dbname, "None");
 
+    /* 记录下当前语句所在的数据库环境 */
+    strcpy(sql_cache_node->env_dbname, thd->thd_sinfo->db);
     sql_cache_node->errlevel = thd->err_level > INCEPTION_PARSE ? INCEPTION_PARSE : thd->err_level;
     if (sql_cache_node->errlevel == INCEPTION_PARSE)
         thd->thd_sinfo->ignore_warnings = 0;
@@ -13676,6 +13679,9 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
 
     DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
 
+    if (!sql_cache_node->table_info)
+        DBUG_RETURN(FALSE);
+
     if (sql_cache_node->table_info->remote_existed)
         DBUG_RETURN(FALSE);
 
@@ -16698,18 +16704,20 @@ mysql_execute_progress_update(
         errmsg = (char*)my_malloc(strlen(msg)*2+1, MY_ZEROFILL);
         mysql_dup_char((char*)msg, (char*)errmsg, '\'');
         sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
-            "sequence, status, errcode, message) values('%s', %d, '%s', %d, '%s')"
+            "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, '%s', '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
-            "errcode = values(errcode), message=values(message)", inception_get_task_sequence(thd),
-            seqno, stage, errrno, errmsg);
+            "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
+            inception_get_task_sequence(thd), seqno, stage, errrno, errmsg, 
+            sql_cache_node->env_dbname);
     }
     else
     {
         sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
-            "sequence, status, errcode, message) values('%s', %d, '%s', %d, NULL)"
+            "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, NULL, '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
-            "errcode = values(errcode), message=values(message)", inception_get_task_sequence(thd),
-            seqno, stage, 0);
+            "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
+            inception_get_task_sequence(thd), seqno, stage, 0, 
+            sql_cache_node->env_dbname);
     }
 
     mysql_execute_remote_backup_sql(thd, sql);
@@ -16733,6 +16741,8 @@ int mysql_remote_execute_command(
     sql_cache_node->stage = 2;//execute
     sql_cache_node->affected_rows = 0;
 
+    /* clear error before execute */
+    thd->clear_error();
     mysql_execute_progress_update(thd, (char*)"PREPARE", sql_cache_node);
     if (!thd->thd_sinfo->force && thd->have_error_before)
     {
@@ -17396,6 +17406,31 @@ int mysql_init_sql_cache(THD* thd)
         DBUG_RETURN(ER_NO);
 
     DBUG_RETURN(FALSE);
+}
+
+int handle_fatal_signal_low(THD* thd)
+{
+    sql_cache_node_t* sql_cache_node;
+
+    my_safe_printf_stderr("Query (%p): ", thd->query());
+    my_safe_print_str(thd->query(), MY_MIN(1024U, thd->query_length()));
+    my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
+
+    if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
+    {
+        sql_cache_node = thd->current_execute;
+        if (sql_cache_node)
+        {
+            my_safe_printf_stderr("Inception Type: Execute\n");
+            my_safe_printf_stderr("Current Execute Query (%p): ", sql_cache_node->sql_statement);
+            my_safe_print_str(sql_cache_node->sql_statement, 1024U);
+        }
+    }
+
+    if (thd->errmsg != NULL)
+        my_safe_printf_stderr("Running Error Message: %s\n", str_get(thd->errmsg));
+
+    return false;
 }
 
 int mysql_deinit_sql_cache(THD* thd)
