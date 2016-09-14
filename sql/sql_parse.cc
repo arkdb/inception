@@ -13250,7 +13250,8 @@ int mysql_get_progress_table_sql(
     create_sql->append("update_time timestamp default current_timestamp "
         "on update current_timestamp, ");
     create_sql->append("errcode int default null, ");
-    create_sql->append("message varchar(1024) default null");
+    create_sql->append("message varchar(1024) default null, ");
+    create_sql->append("dbname varchar(128)");
     create_sql->append(") ENGINE INNODB DEFAULT CHARSET UTF8;");
 
     return 0;
