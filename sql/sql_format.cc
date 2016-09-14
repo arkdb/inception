@@ -264,16 +264,32 @@ format_func_item(
         break;
     case Item_func::UNKNOWN_FUNC:
         {
-            str_append(print_str, ((Item_func*) item)->func_name());
-            str_append(print_str, "(");
-            for (uint i= 0; i < ((Item_func*) item)->arg_count; ++i)
+            Item_num_op* num_op = dynamic_cast<Item_num_op*>(item);
+            if (!num_op)
             {
-                Item *right_item= ((Item_func*) item)->arguments()[i];
-                format_item(thd, format_node, print_str, right_item, select_lex);
-                str_append(print_str, ",");
+                str_append(print_str, ((Item_func*) item)->func_name());
+                str_append(print_str, "(");
+                for (uint i= 0; i < ((Item_func*) item)->arg_count; ++i)
+                {
+                    Item *right_item= ((Item_func*) item)->arguments()[i];
+                    format_item(thd, format_node, print_str, right_item, select_lex);
+                    str_append(print_str, ",");
+                }
+                str_truncate(print_str, 1);
+                str_append(print_str, ")");
             }
-            str_truncate(print_str, 1);
-            str_append(print_str, ")");
+            else
+            {
+                str_append(print_str, "(");
+                for (uint i= 0; i < ((Item_func*) item)->arg_count; ++i)
+                {
+                    Item *right_item= ((Item_func*) item)->arguments()[i];
+                    format_item(thd, format_node, print_str, right_item, select_lex);
+                    str_append(print_str, ((Item_func*) item)->func_name());
+                }
+                str_truncate(print_str, 1);
+                str_append(print_str, ")");
+            }
 
         }
         break;
@@ -364,7 +380,8 @@ int mysql_format_tables(
     if (tables)
     {
         if (thd->lex->sql_command != SQLCOM_UPDATE
-            && thd->lex->sql_command != SQLCOM_UPDATE_MULTI)
+            && thd->lex->sql_command != SQLCOM_UPDATE_MULTI
+            && thd->lex->sql_command != SQLCOM_DELETE_MULTI)
             str_append(print_str, " FROM ");
         int first=0;
         for (table= tables; table; table= table->next_local)
@@ -848,9 +865,10 @@ int mysql_format_delete(THD* thd)
     str_append(format_node->format_sql, "DELETE");
     if (thd->lex->auxiliary_table_list.first)
     {
+        str_append(format_node->format_sql, " ");
         mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
             thd->lex->auxiliary_table_list.first);
-        str_append(format_node->format_sql, ",");
+        str_append(format_node->format_sql, " FROM ");
         mysql_format_tables(thd, format_node, select_lex, format_node->format_sql,
             thd->lex->query_tables);
     }

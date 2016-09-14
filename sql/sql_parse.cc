@@ -18448,7 +18448,7 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
         DBUG_RETURN(0);    /* purecov: inspected */
     if (table->db.str)
     {
-        ptr->is_fqtn= TRUE;
+        ptr->is_fqtn= FALSE;
         ptr->db= table->db.str;
         ptr->db_length= table->db.length;
     }
