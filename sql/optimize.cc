@@ -184,6 +184,421 @@ int optimize_like_item_field_compare(
     return false;
 }
 
+longlong optimize_get_field_cardinality(
+    THD* thd, 
+    table_info_t* table_info,
+    char* fieldname,
+    st_select_lex *select_lex
+)
+{
+    /* 获取表中某个列的cardinality值：
+     * 从两方面获取，首先从数据采集库中查，这是准确的，但如果还没有采集
+     * 则从索引的show index from t结果中找到这个列来获取，不过不太准确
+     * */
+    index_info_t*   index_info;
+    index_field_t*   index_field;
+    /* TODO: 这里应该是第一部分，但目前还没有采集，只能依赖第二种方式了 */
+
+    /* The second part of get field cardinality value*/
+    index_info = LIST_GET_FIRST(table_info->index_lst);
+    while (index_info)
+    {
+        index_field = LIST_GET_FIRST(index_info->field_lst);
+        while (index_field)
+        {
+            if (!strcasecmp(fieldname, index_field->field_name))
+                break;
+            index_field = LIST_GET_NEXT(link, index_field);
+        }
+
+        if (index_field)
+            return index_field->cardinality;
+        index_info = LIST_GET_NEXT(link, index_info);
+    }
+
+    if (index_field)
+        return index_field->cardinality;
+    
+    return -1;
+}
+
+int optimize_make_index_name_from_cond(
+    cond_info_t* cond_info
+)
+{
+    str_t index_name;
+    str_init(&index_name);
+    char timestamp[32];
+    cond_field_t* cond_field;
+    int first_field = true;
+
+    time_t now= my_time(0);
+
+    cond_field = LIST_GET_FIRST(cond_info->field_lst);
+    while (cond_field)
+    {
+        if (!first_field)
+            str_append(&index_name, ",");
+
+        str_append(&index_name, cond_field->field_name);
+        first_field = false;
+        cond_field = LIST_GET_NEXT(link, cond_field);
+    }
+
+    strcpy(cond_info->index_fields, str_get(&index_name));
+
+
+    sprintf(timestamp, "%d", (int)now);
+    str_append(&index_name, timestamp);
+
+    my_make_scrambled_password_sha1(timestamp, str_get(&index_name), str_get_len(&index_name));
+    sprintf(cond_info->index_name, "IAI_%s", timestamp + 33);
+
+    str_deinit(&index_name);
+
+    return false;
+}
+
+int optimize_data_type_match(
+    enum enum_field_types real_type,
+    int item_type
+)
+{
+    if (item_type == Item::INT_ITEM ||
+        item_type == Item::REAL_ITEM ||
+        item_type == Item::NULL_ITEM ||
+        item_type == Item::STRING_ITEM ||
+        item_type == Item::DECIMAL_ITEM)
+    {
+        if (item_type == Item::INT_ITEM)
+        {
+            if (real_type == MYSQL_TYPE_INT24 || real_type == MYSQL_TYPE_LONG)
+                return true;
+        }
+
+        if (item_type == Item::STRING_ITEM)
+        {
+            if (real_type == MYSQL_TYPE_VARCHAR || real_type == MYSQL_TYPE_VARCHAR ||
+                real_type == MYSQL_TYPE_VAR_STRING || real_type == MYSQL_TYPE_STRING)
+                return true;
+        }
+
+        return false;
+    }
+
+    return -1;
+}
+
+int
+optimize_convert_item_to_type(
+    THD* thd,
+    char* type_buf,
+    Item* item
+)
+{
+    if (!item)
+        return 0;
+    switch (item->type())
+    {
+    case Item::STRING_ITEM:
+        strcpy(type_buf, "VARCHAR");
+        break;
+    case Item::INT_ITEM:
+        strcpy(type_buf, "INT");
+        break;
+    case Item::REAL_ITEM:
+        strcpy(type_buf, "DOUBLE");
+        break;
+    case Item::NULL_ITEM:
+        strcpy(type_buf, "NULL");
+        break;
+    case Item::DECIMAL_ITEM:
+        strcpy(type_buf, "DECIMAL");
+        break;
+    default:
+        strcpy(type_buf, "UNKNOWN");
+        break;
+    }
+    return 0;
+}
+
+
+int
+optimize_convert_item_to_string(
+    THD* thd,
+    str_t* print_str,
+    Item* item
+)
+{
+    if (!item)
+        return 0;
+    switch (item->type())
+    {
+    case Item::STRING_ITEM:
+        {
+            String* stringval;
+            String tmp;
+            char* fieldname;
+            stringval = ((Item_string*) item)->val_str(&tmp);
+            fieldname= (char*)my_malloc(stringval->length() + 10, MY_ZEROFILL);
+            sprintf(fieldname, "\"%s\"", stringval->ptr());
+            str_append(print_str, fieldname);
+            my_free(fieldname);
+        }
+        break;
+    case Item::INT_ITEM:
+        {
+            char fieldname[FN_LEN];
+            sprintf(fieldname, "%lld", ((Item_int*) item)->val_int());
+            str_append(print_str, fieldname);
+        }
+        break;
+    case Item::REAL_ITEM:
+        {
+            char fieldname[FN_LEN];
+            sprintf(fieldname, "%f", ((Item_int*) item)->val_real());
+            str_append(print_str, fieldname);
+        }
+        break;
+    case Item::NULL_ITEM:
+        {
+            str_append(print_str, "NULL");
+        }
+        break;
+    case Item::DECIMAL_ITEM:
+        {
+            String* stringval;
+            String tmp;
+            char* fieldname;
+            stringval = ((Item_string*) item)->val_str(&tmp);
+            fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
+            sprintf(fieldname, "%s", stringval->ptr());
+            str_append(print_str, fieldname);
+            my_free(fieldname);
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+int optimize_decide_index_working(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    cond_info_t*    cond_info,
+    index_info_t*   index_info,
+    int             match_count
+)
+{
+    cond_field_t*     cond_field;
+    Item*             right_item;
+    int               count = 0;
+
+    cond_info->match_count = match_count;
+
+    //比较表达式右值与左值数据类型不同时，不能使用索引
+    cond_field = LIST_GET_FIRST(cond_info->field_lst);
+    while (cond_field && count < match_count)
+    {
+        right_item = cond_field->right_item;
+        if (optimize_data_type_match(cond_field->field_info->real_type, right_item->type()) == 0)
+        {
+            str_t  item_string;
+            str_init(&item_string);
+            char    type_buf[32];
+
+            optimize_convert_item_to_string(thd, &item_string, right_item);
+            optimize_convert_item_to_type(thd, type_buf, right_item);
+            my_error(ER_CONVERT_DATA_TYPE, MYF(0), cond_info->table_rt->table_info->table_name, 
+                cond_field->field_name, str_get(&item_string), 
+                type_buf, cond_field->field_info->data_type);
+            mysql_errmsg_append(thd);
+            cond_info->match_count = count;
+            my_error(ER_INDEX_USED_TRUNCATE, MYF(0), count, 
+                cond_info->table_rt->table_info->table_name, 
+                index_info->index_name);
+            mysql_errmsg_append(thd);
+            break;
+        }
+
+        count ++;
+        cond_field = LIST_GET_NEXT(link, cond_field);
+    }
+
+    return false;
+}
+
+int optimize_func_cond_select_index(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    cond_field_t* cond_field;
+    cond_info_t* cond_info;
+    index_info_t*   index_info;
+    index_field_t*  index_field;
+    table_info_t*   table_info;
+    int             max_match_count=0;
+    int             match_count;
+    index_info_t*   match_index;
+    str_t index_name;
+
+    str_init(&index_name);
+    cond_info = LIST_GET_FIRST(select_lex->cond_lst);
+    while (cond_info)
+    {
+        max_match_count = 0;
+        table_info = cond_info->table_rt->table_info;
+        index_info = LIST_GET_FIRST(table_info->index_lst);
+        while (index_info)
+        {
+            match_count = 0;
+            cond_field = LIST_GET_FIRST(cond_info->field_lst);
+            index_field = LIST_GET_FIRST(index_info->field_lst);
+            while (cond_field && index_field)
+            {
+                if (strcasecmp(index_field->field_name, cond_field->field_name))
+                    break;
+
+                match_count ++;
+
+                cond_field = LIST_GET_NEXT(link, cond_field);
+                index_field = LIST_GET_NEXT(link, index_field);
+            }
+
+            /* 判断索引等值比较类型是不是匹配，如果不匹配用不了索引 */
+            // match_count = cond_info->match_count;
+            if (match_count > 0 && (match_count > max_match_count || 
+                  (match_count == max_match_count && 
+                   LIST_GET_LEN(match_index->field_lst) < LIST_GET_LEN(index_info->field_lst))))
+            {
+                max_match_count = match_count; 
+                match_index = index_info;
+            }
+
+            index_info = LIST_GET_NEXT(link, index_info);
+        }
+
+        if (max_match_count > 0)
+        {
+            /* 找到一个匹配度最大的索引，如果找到的这个比较好，则
+             * 这个查询表达式已经是最优的了，而如果不够好，需要新建或者调整,
+             * 除此之外，这里需要找到一些不能使用索引的情况，即使索引列是对
+             * 应的，但实际上由于种种原因不能使用索引*/
+            optimize_decide_index_working(thd, query_node, cond_info, match_index, max_match_count);
+        }
+        else
+        {
+            /* 加一个新的索引 */
+            optimize_make_index_name_from_cond(cond_info);
+            my_error(ER_ADD_INDEX, MYF(0), table_info->db_name, 
+                table_info->table_name, cond_info->index_name, cond_info->index_fields);
+            mysql_errmsg_append(thd);
+        }
+
+        cond_info = LIST_GET_NEXT(link, cond_info);
+    }
+
+    return false;
+}
+
+int optimize_func_cond_and_item_one(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item_arg,
+    st_select_lex *select_lex
+)
+{
+    cond_field_t* cond_field;
+    cond_field_t* cond_field_tmp;
+    cond_info_t* cond_info;
+
+    Item *left_item= ((Item_func*) item_arg)->arguments()[0];
+    Item *right_item = ((Item_func*) item_arg)->arguments()[1];
+    Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+    field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+    table_rt_t* table_info_l = (table_rt_t*)left_item_field->table_rt;
+
+    /* 找到当前表在当前表达式中的对列的查询表达式，不在同一个AND
+     * 条件表达式中的，需要分成不同组合 */
+    cond_info = LIST_GET_FIRST(select_lex->cond_lst);
+    while (cond_info)
+    {
+        if (cond_info->table_rt == table_info_l && cond_info->cond_item == item_arg)
+            break;
+        cond_info = LIST_GET_NEXT(link, cond_info);
+    }
+
+    if (!cond_info)
+    {
+        cond_info = (cond_info_t*)my_malloc(sizeof(cond_info_t), MY_ZEROFILL);
+        cond_info->cond_item = item_arg;
+        cond_info->table_rt = table_info_l;
+        LIST_ADD_LAST(link, select_lex->cond_lst, cond_info);
+    }
+
+    if (!field_info_l->cardinality)
+        field_info_l->cardinality = optimize_get_field_cardinality(thd, 
+            table_info_l->table_info, field_info_l->field_name, select_lex);
+
+    /* 如果cardinality为1，则说明这个列所有数据都是一样的，建索引没有意义
+     * TODO: 可以参数化这个1，用来控制索引选择性的要求,
+     * 对于没有索引的列，则不会被漏掉，有可能需要在这列上建索引 */
+    if (field_info_l->cardinality <= 1 && field_info_l->cardinality > 0)
+        return false;
+
+    /* 对cardinality做排序，从前到后，找到第一个比新插入的列小的列 */
+    cond_field_tmp = LIST_GET_FIRST(cond_info->field_lst);
+    while (cond_field_tmp)
+    {
+        if (cond_field_tmp->cardinality < field_info_l->cardinality)
+            break;
+        cond_field_tmp = LIST_GET_NEXT(link, cond_field_tmp);
+    }
+
+    cond_field = (cond_field_t*)my_malloc(sizeof(cond_field_t), MY_ZEROFILL);
+    cond_field->cardinality = field_info_l->cardinality;
+    cond_field->right_item = right_item;
+    strcpy(cond_field->field_name, field_info_l->field_name);
+    cond_field->field_info = field_info_l;
+    if (cond_field_tmp)
+        LIST_INSERT_BEFORE(link, cond_info->field_lst, cond_field_tmp, cond_field);
+    else
+        LIST_ADD_LAST(link, cond_info->field_lst, cond_field);
+
+    return false;
+}
+
+int optimize_func_cond_and_item(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    List<Item> *args= ((Item_cond*) item)->argument_list();
+    List_iterator<Item> li(*args);
+    Item *item_arg;
+    cond_field_t* cond_field;
+    cond_field_t* cond_field_tmp;
+    cond_info_t* cond_info;
+
+    /* 这里加入的时候，需要先对每个列的cardinality做排序 */
+    while ((item_arg= li++))
+    {
+        if (item_arg->type() != Item::FUNC_ITEM || 
+            ((Item_func *)item_arg)->functype() != Item_func::EQ_FUNC)
+            continue;
+            
+        optimize_func_cond_and_item_one(thd, query_node, item_arg, select_lex);
+    }
+
+    return false;
+}
+
 int optimize_func_cond_item(
     THD* thd, 
     optimize_cache_node_t* query_node,
@@ -206,10 +621,71 @@ int optimize_func_cond_item(
             {
                 optimize_item(thd, query_node, item_arg, select_lex);
             }
+
+            optimize_func_cond_and_item(thd, query_node, item, select_lex);
+            optimize_func_cond_select_index(thd, query_node, item, select_lex);
         }
         break;
     default:
         break;
+    }
+
+    return false;
+}
+
+int optimize_item_func_compare(
+    THD* thd, 
+    optimize_cache_node_t* query_node,
+    Item* item,
+    st_select_lex *select_lex
+)
+{
+    Item *left_item= ((Item_func*) item)->arguments()[0];
+    optimize_item(thd, query_node, left_item, select_lex);
+    Item *right_item= ((Item_func*) item)->arguments()[1];
+    optimize_item(thd, query_node, right_item, select_lex);
+
+    /* 为了方便后面处理，对于这种比较表达式，都将FIELD放在左边 */
+    if (left_item->type() != Item::FIELD_ITEM && 
+        right_item->type() == Item::FIELD_ITEM)
+    {
+        ((Item_func*) item)->arguments()[1] = left_item;
+        ((Item_func*) item)->arguments()[0] = right_item;
+        left_item = ((Item_func*) item)->arguments()[0];
+        right_item = ((Item_func*) item)->arguments()[1];
+    }
+
+    if (left_item->type() == Item::FIELD_ITEM)
+    {
+        Item_field* left_item_field = dynamic_cast<Item_field*>(left_item);
+        field_info_t* field_info_l = (field_info_t*)left_item_field->field_info;
+        table_rt_t* table_rt = (table_rt_t*)left_item_field->table_rt;
+
+        if (left_item->type() == Item::FIELD_ITEM && 
+            right_item->type() != Item::FIELD_ITEM)
+        {
+            if (optimize_data_type_match(field_info_l->real_type, right_item->type()) == 0)
+            {
+                char buf[64];
+                optimize_convert_item_to_type(thd, buf, right_item);
+                my_error(ER_DIFF_TYPE_COMPARE_FIELD, MYF(0), 
+                    table_rt->table_info->table_name, field_info_l->field_name, 
+                    field_info_l->data_type, "CONST", "CONST", buf);
+                mysql_errmsg_append(thd);
+            }
+        }
+
+        if (left_item->type() == Item::FIELD_ITEM && 
+            right_item->type() == Item::FIELD_ITEM)
+            optimize_func_item_field_compare(thd, query_node, left_item, right_item);
+    }
+
+    /* 处理where条件只有一个表达式条件的情况 */
+    if (select_lex->where && select_lex->where->type() == Item::FUNC_ITEM &&
+        (((Item_func *)select_lex->where)->functype() == Item_func::EQ_FUNC))
+    {
+        optimize_func_cond_and_item_one(thd, query_node, select_lex->where, select_lex);
+        optimize_func_cond_select_index(thd, query_node, select_lex->where, select_lex);
     }
 
     return false;
@@ -233,15 +709,7 @@ int optimize_func_item(
     case Item_func::GE_FUNC:
     case Item_func::GT_FUNC:
         {
-            Item *left_item= ((Item_func*) item)->arguments()[0];
-            optimize_item(thd, query_node, left_item, select_lex);
-            Item *right_item= ((Item_func*) item)->arguments()[1];
-            optimize_item(thd, query_node, right_item, select_lex);
-            if (left_item->type() == Item::FIELD_ITEM && 
-                right_item->type() == Item::FIELD_ITEM)
-            {
-                optimize_func_item_field_compare(thd, query_node, left_item, right_item);
-            }
+            optimize_item_func_compare(thd, query_node, item, select_lex);
         }
         break;
 

@@ -285,6 +285,27 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
+typedef struct index_field_struct index_field_t;
+struct index_field_struct
+{
+    char    field_name[NAME_CHAR_LEN + 1];
+    uint    contain_nulls;
+    uint    seqno;
+    longlong cardinality;
+
+    LIST_NODE_T(index_field_t) link;
+};
+
+typedef struct index_info_struct index_info_t;
+struct index_info_struct
+{
+    char    index_name[NAME_CHAR_LEN + 1];
+    uint    uniq;
+    uint    collation;
+    LIST_NODE_T(index_info_t) link;
+    LIST_BASE_NODE_T(index_field_t) field_lst;
+};
+
 typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
@@ -309,8 +330,10 @@ struct field_info_struct
     CHARSET_INFO *charset;
 
     int     cache_new;
-    //œ¬√Ê «ƒ⁄¥Ê÷–µƒ÷µ
-    uint    fixed;        //±Ì æ «∑Ò“—æ≠¥¶¿Ìπ˝¡À
+    uint    fixed;        
+
+    // for optimize
+    longlong cardinality;
 
     LIST_NODE_T(field_info_t) link;
 };
@@ -344,6 +367,7 @@ struct table_info_struct
     ulong binlog_table_id;
     LIST_NODE_T(table_info_t) link;
     LIST_BASE_NODE_T(field_info_t) field_lst;
+    LIST_BASE_NODE_T(index_info_t) index_lst;
 };
 
 enum enum_inception_optype { 

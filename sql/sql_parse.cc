@@ -3195,6 +3195,59 @@ mysql_copy_table_info(
 }
 
 table_info_t*
+mysql_add_index_to_table_info(
+    THD* thd,
+    MYSQL_RES* source_res,
+    char*  dbname,
+    char*  tablename,
+    table_info_t*  table_info
+)
+{
+    MYSQL_ROW   source_row;
+    index_field_t* index_field;
+    index_info_t*   index_info;
+    int             error;
+
+    DBUG_ENTER("mysql_add_index_to_table_info");
+
+    source_row = mysql_fetch_row(source_res);
+    while (source_row)
+    {
+        index_info = LIST_GET_FIRST(table_info->index_lst);
+        while (index_info)
+        {
+            if (!strcasecmp(index_info->index_name, source_row[2]))
+                break;
+
+            index_info = LIST_GET_NEXT(link, index_info);
+        }
+        
+        if (!index_info)
+        {
+            index_info = (index_info_t*)my_malloc(sizeof(index_info_t), MY_ZEROFILL);
+            LIST_INIT(index_info->field_lst);
+            strcpy(index_info->index_name, source_row[2]);
+            index_info->uniq = 1 - my_strtoll10(source_row[1], NULL, &error);
+            index_info->collation = source_row[5][0] == 'A' ? 1 : 2;
+            LIST_ADD_LAST(link, table_info->index_lst, index_info);
+        }
+
+        index_field = (index_field_t*)my_malloc(sizeof(index_field_t), MY_ZEROFILL);
+        strcpy(index_field->field_name, source_row[4]);
+        index_field->seqno = my_strtoll10(source_row[3], NULL, &error);
+        index_field->contain_nulls = strcmp(source_row[9], "YES") ? 0 : 1;
+        index_field->cardinality = my_strtoll10(source_row[6], NULL, &error);
+        LIST_ADD_LAST(link, index_info->field_lst, index_field);
+
+        source_row = mysql_fetch_row(source_res);
+    }
+
+    mysql_free_result(source_res);
+
+    DBUG_RETURN(table_info);
+}
+
+table_info_t*
 mysql_convert_desc_to_table_info(
     THD* thd,
     MYSQL_RES* source_res,
@@ -3265,6 +3318,52 @@ mysql_convert_desc_to_table_info(
 }
 
 table_info_t*
+mysql_get_index_info_from_source(
+    THD*  thd,
+    MYSQL*  mysql,
+    char*  dbname,
+    char*  tablename,
+    table_info_t* table_info,
+    int   not_exist_report
+)
+{
+    char  sql[100];
+    MYSQL_RES* source_res= 0;
+
+    DBUG_ENTER("mysql_get_index_info_from_source");
+
+    if (mysql == NULL)
+    {
+        mysql_errmsg_append(thd);
+        DBUG_RETURN(NULL);
+    }
+
+    sprintf(sql, "SHOW INDEX FROM `%s`.`%s`", dbname, tablename);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        if (!(!not_exist_report && mysql_errno(mysql) == 1146)/*ER_NO_SUCH_TABLE*/)
+        { 
+            //主要是为了处理创建表时对表是不是存在进行检查，创建表时表不存在不应该报错
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+        }
+
+        DBUG_RETURN(NULL);
+    }
+
+    if ((source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(thd);
+        DBUG_RETURN(NULL);
+    }
+
+    table_info = mysql_add_index_to_table_info(thd, source_res, dbname, tablename, table_info);
+
+    DBUG_RETURN(table_info);
+}
+
+table_info_t*
 mysql_query_table_from_source(
     THD*  thd,
     MYSQL*  mysql,
@@ -3305,6 +3404,8 @@ mysql_query_table_from_source(
     }
 
     table_info = mysql_convert_desc_to_table_info(thd, source_res, dbname, tablename);
+    table_info = mysql_get_index_info_from_source(thd, 
+        mysql, dbname, tablename, table_info, not_exist_report);
 
     DBUG_RETURN(table_info);
 }
