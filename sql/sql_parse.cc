@@ -17484,7 +17484,7 @@ int handle_fatal_signal_low(THD* thd)
 
     sql_cache_node = thd->current_execute;
     my_safe_printf_stderr("Query (%p): ", thd->query());
-    my_safe_puts_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
+    my_safe_printf_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
 
     if (sql_cache_node)
         my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
@@ -17503,8 +17503,9 @@ int handle_fatal_signal_low(THD* thd)
         {
             my_safe_printf_stderr("Inception Type: Execute\n");
             my_safe_printf_stderr("Current Execute Query (%p): ", sql_cache_node->sql_statement);
-            my_safe_puts_stderr(sql_cache_node->sql_statement, 
+            my_safe_printf_stderr(sql_cache_node->sql_statement, 
                 MY_MIN(2048U, strlen(sql_cache_node->sql_statement)));
+            my_safe_printf_stderr("\n");
         }
     }
 
