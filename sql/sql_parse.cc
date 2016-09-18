@@ -13681,7 +13681,13 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
     DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
 
     if (!sql_cache_node->table_info)
+    {
+        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
+            thd->thd_sinfo->port, __FILE__, __LINE__);
         DBUG_RETURN(FALSE);
+    }
 
     if (sql_cache_node->table_info->remote_existed)
         DBUG_RETURN(FALSE);
@@ -15168,10 +15174,27 @@ int mysql_execute_backup_info_insert_sql(
 
     sprintf(tmp_buf, "\'%s\',", mi->thd->thd_sinfo->host);
     backup_sql->append(tmp_buf);
-    sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->db_name);
-    backup_sql->append(tmp_buf);
-    sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->table_name);
-    backup_sql->append(tmp_buf);
+    if (!sql_cache_node->table_info)
+    {
+        // FOR TEST start
+        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+            sql_cache_node->sql_statement, mi->thd->thd_sinfo->host, 
+            mi->thd->thd_sinfo->port, __FILE__, __LINE__);
+        // FOR TEST end
+        sprintf(tmp_buf, "\'%s\',", "UNKNOWN");
+        backup_sql->append(tmp_buf);
+        sprintf(tmp_buf, "\'%s\',", "UNKNOWN");
+        backup_sql->append(tmp_buf);
+    }
+    else
+    {
+        sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->db_name);
+        backup_sql->append(tmp_buf);
+        sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->table_name);
+        backup_sql->append(tmp_buf);
+    }
+
     sprintf(tmp_buf, "%d,", mi->thd->thd_sinfo->port);
     backup_sql->append(tmp_buf);
     backup_sql->append("NOW(),");
@@ -15834,7 +15857,12 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
     if (table_info->record != NULL)
         DBUG_RETURN(false);
 
-    sprintf(set_format, "select * from `%s`.`%s` limit 1;",
+    /* 
+     * 这里的目的是要取结果集的列的类型的，如果用limit 1，在极端情况下
+     * 会造成慢查询，而limit 0也可以达到目的，但不会造成慢查询，所以
+     * 这里会出现limit 0
+     * */
+    sprintf(set_format, "select * from `%s`.`%s` limit 0;",
         table_info->db_name, table_info->table_name);
     if (mysql_real_query(mysql, set_format, strlen(set_format)))
     {
@@ -15996,6 +16024,16 @@ int mysql_backup_single_ddl_statement(
     mi->thread_id = sql_cache_node->thread_id;
     mi->exec_time = sql_cache_node->exec_time;
     mi->table_info = sql_cache_node->table_info;
+    if (!sql_cache_node->table_info)
+    {
+        // FOR TEST start
+        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
+            thd->thd_sinfo->port, __FILE__, __LINE__);
+        // FOR TEST end
+    }
+
     mi->seqno  = sql_cache_node->seqno;
 
     if (mysql_execute_backup_info_insert_sql(mi, sql_cache_node))
@@ -16029,6 +16067,15 @@ int mysql_backup_single_statement(
     mi->thread_id = sql_cache_node->thread_id;
     mi->exec_time = sql_cache_node->exec_time;
     mi->table_info = sql_cache_node->table_info;
+    if (!sql_cache_node->table_info)
+    {
+        // FOR TEST start
+        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
+            thd->thd_sinfo->port, __FILE__, __LINE__);
+        // FOR TEST end
+    }
     mi->seqno  = sql_cache_node->seqno;
 
     if (mysql_execute_backup_info_insert_sql(mi, sql_cache_node))
@@ -16620,6 +16667,15 @@ int mysql_execute_statement(
     {
         sql_cache_node->table_info = mysql_get_table_object_from_cache(thd, 
           sql_cache_node->dbname, sql_cache_node->tablename);
+        if (!sql_cache_node->table_info)
+        {
+            // FOR TEST start
+            sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+                "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+                sql_cache_node->sql_statement, thd->thd_sinfo->host, 
+                thd->thd_sinfo->port, __FILE__, __LINE__);
+            // FOR TEST end
+        }
     }
 
     DBUG_RETURN(false);
@@ -16909,6 +16965,14 @@ int mysql_alloc_cache_table_record(THD* thd, sql_cache_t* sql_cache)
         {
             if (mysql_create_backup_tables(thd, sql_cache_node))
                 return TRUE;
+
+            if (!sql_cache_node->table_info)
+            {
+                sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
+                    "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
+                    sql_cache_node->sql_statement, thd->thd_sinfo->host, 
+                    thd->thd_sinfo->port, __FILE__, __LINE__);
+            }
 
             if (mysql_sql_cache_is_valid(sql_cache_node))
                 if(mysql_alloc_record(sql_cache_node->table_info, thd->get_audit_connection()))
