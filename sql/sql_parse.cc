@@ -17477,9 +17477,19 @@ int handle_fatal_signal_low(THD* thd)
 {
     sql_cache_node_t* sql_cache_node;
 
+    sql_cache_node = thd->current_execute;
     my_safe_printf_stderr("Query (%p): ", thd->query());
-    my_safe_print_str(thd->query(), MY_MIN(1024U, thd->query_length()));
-    my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
+    my_safe_print_str(thd->query(), MY_MIN(2048U, thd->query_length()));
+
+    if (sql_cache_node)
+        my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
+
+    if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE || 
+        inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
+        inception_get_type(thd) == INCEPTION_TYPE_SPLIT ||
+        inception_get_type(thd) == INCEPTION_TYPE_PRINT)
+        my_safe_printf_stderr("Current DB Address: (%s:%d)\n", 
+            thd->thd_sinfo->host, thd->thd_sinfo->port); 
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
     {
