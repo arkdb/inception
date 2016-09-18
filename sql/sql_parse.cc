@@ -811,7 +811,7 @@ int mysql_cache_format_sql(THD* thd)
         my_error(ER_START_AS_BEGIN, MYF(0));
         DBUG_RETURN(ER_NO);
     }
-    
+
     format_cache = thd->format_cache;
     if (!thd->current_format)
     {
@@ -822,6 +822,17 @@ int mysql_cache_format_sql(THD* thd)
         format_cache_node->format_sql= (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
         str_init(format_cache_node->format_sql);
         str_init(format_cache_node->sql_statements);
+
+        String sql_with_charset(thd->query(), thd->query_length(), thd->query_charset());
+        thd->convert_string(&sql_with_charset, sql_with_charset.charset(), system_charset_info);
+        errmsg_len = sql_with_charset.length();
+
+        if (thd->parse_error)
+            errmsg_len = truncate_inception_commit(sql_with_charset.ptr(), errmsg_len);
+
+        str_append_with_length(format_cache_node->sql_statements,
+                               sql_with_charset.ptr(), errmsg_len);
+
         LIST_ADD_LAST(link, format_cache->field_lst, format_cache_node);
     }
     else
@@ -830,18 +841,7 @@ int mysql_cache_format_sql(THD* thd)
     }
     
     thd->current_format = NULL;
-    String sql_with_charset(thd->query(), thd->query_length(), thd->query_charset());
-    thd->convert_string(&sql_with_charset, sql_with_charset.charset(), system_charset_info);
-    errmsg_len = sql_with_charset.length();
-    //hide internal tag 'inception_magic_commit'
-    if (thd->parse_error)
-        errmsg_len = truncate_inception_commit(sql_with_charset.ptr(), errmsg_len);
-    
-    str_truncate(format_cache_node->sql_statements,
-        str_get_len(format_cache_node->sql_statements));
-    str_append_with_length(format_cache_node->sql_statements,
-        sql_with_charset.ptr(), errmsg_len);
-    
+
     if (thd->errmsg != NULL)
     {
         format_cache_node->errmsg = thd->errmsg;

@@ -261,7 +261,6 @@ format_func_item(
         }
         break;
     case Item_func::FUNC_SP:
-        break;
     case Item_func::UNKNOWN_FUNC:
         {
             Item_num_op* num_op = dynamic_cast<Item_num_op*>(item);
@@ -475,8 +474,7 @@ int mysql_format_select(THD* thd)
     dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
     memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
     mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
-    str_deinit(format_node->format_sql);
-    str_init(format_node->format_sql);
+    str_truncate_0(format_node->format_sql);
     str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -831,8 +829,7 @@ int mysql_format_insert(THD* thd)
     dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
     memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
     mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
-    str_deinit(format_node->format_sql);
-    str_init(format_node->format_sql);
+    str_truncate_0(format_node->format_sql);
     str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
     
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -881,8 +878,7 @@ int mysql_format_delete(THD* thd)
     dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
     memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
     mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
-    str_deinit(format_node->format_sql);
-    str_init(format_node->format_sql);
+    str_truncate_0(format_node->format_sql);
     str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
 
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
@@ -939,8 +935,7 @@ int mysql_format_update(THD* thd)
     dupcharsql = (char*)my_malloc(format_node->format_sql->str_len * 2 + 1, MYF(0));
     memset(dupcharsql, 0, format_node->format_sql->str_len * 2 + 1);
     mysql_dup_char(format_node->format_sql->str, dupcharsql, '\\');
-    str_deinit(format_node->format_sql);
-    str_init(format_node->format_sql);
+    str_truncate_0(format_node->format_sql);
     str_append_with_length(format_node->format_sql, dupcharsql, strlen(dupcharsql));
 
     LIST_ADD_LAST(link, format_cache->field_lst, format_node);
