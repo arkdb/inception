@@ -16745,14 +16745,21 @@ mysql_execute_progress_update(
     const char* errmsg=NULL;
     const char* msg=NULL;
     int seqno;
+    char        env_dbname[NAME_CHAR_LEN];
 
     if (!inception_get_task_sequence(thd))
         return false;
 
+    env_dbname[0] = '\0';
     if (sql_cache_node == NULL)
+    {
         seqno = 0;
+    }
     else
+    {
         seqno = sql_cache_node->seqno;
+        strcpy(env_dbname, sql_cache_node->env_dbname);
+    }
 
     if (thd->is_error())
     {
@@ -16764,8 +16771,7 @@ mysql_execute_progress_update(
             "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, '%s', '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
-            inception_get_task_sequence(thd), seqno, stage, errrno, errmsg, 
-            sql_cache_node->env_dbname);
+            inception_get_task_sequence(thd), seqno, stage, errrno, errmsg, env_dbname);
     }
     else
     {
@@ -16773,8 +16779,7 @@ mysql_execute_progress_update(
             "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, NULL, '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
-            inception_get_task_sequence(thd), seqno, stage, 0, 
-            sql_cache_node->env_dbname);
+            inception_get_task_sequence(thd), seqno, stage, 0, env_dbname);
     }
 
     mysql_execute_remote_backup_sql(thd, sql);
@@ -17479,7 +17484,7 @@ int handle_fatal_signal_low(THD* thd)
 
     sql_cache_node = thd->current_execute;
     my_safe_printf_stderr("Query (%p): ", thd->query());
-    my_safe_print_str(thd->query(), MY_MIN(2048U, thd->query_length()));
+    my_safe_puts_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
 
     if (sql_cache_node)
         my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
@@ -17498,7 +17503,8 @@ int handle_fatal_signal_low(THD* thd)
         {
             my_safe_printf_stderr("Inception Type: Execute\n");
             my_safe_printf_stderr("Current Execute Query (%p): ", sql_cache_node->sql_statement);
-            my_safe_print_str(sql_cache_node->sql_statement, 1024U);
+            my_safe_puts_stderr(sql_cache_node->sql_statement, 
+                MY_MIN(2048U, strlen(sql_cache_node->sql_statement)));
         }
     }
 
