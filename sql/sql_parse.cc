@@ -16632,6 +16632,12 @@ int mysql_execute_statement(
         {
             sprintf(sql_cache_node->execute_time, "%.3f",
                 (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+            sql_print_warning("mysql_execute_statement return error, SQL: (%s)"
+                "FILE: (%s), LINE: (%d), ERROR: (%s)", 
+                sql_cache_node->sql_statement, __FILE__, __LINE__, 
+                str_get(sql_cache_node->errmsg));
+            sql_print_warning("mysql_execute_statement tablename: (%s)"
+                "dbname: (%s)", sql_cache_node->tablename, sql_cache_node->dbname);
             DBUG_RETURN(true);
         }
     }
@@ -16654,10 +16660,20 @@ int mysql_execute_statement(
 
     //print the warnings only when execute SQL directly
     if (!sql_cache_node->use_osc)
+    {
         print_warnings(thd, mysql, sql_cache_node);
+    }
 
     if (mysql_fetch_thread_id(mysql, &sql_cache_node->thread_id))
+    {
+        sql_print_warning("mysql_execute_statement2 return error, SQL: (%s)"
+            "FILE: (%s), LINE: (%d), ERROR: (%s)", 
+            sql_cache_node->sql_statement, __FILE__, __LINE__, 
+            mysql_error(mysql));
+        sql_print_warning("mysql_execute_statement2 tablename: (%s)"
+            "dbname: (%s)", sql_cache_node->tablename, sql_cache_node->dbname);
         DBUG_RETURN(true);
+    }
 
     time(&sql_cache_node->exec_time);
 
