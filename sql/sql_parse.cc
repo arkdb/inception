@@ -16827,7 +16827,7 @@ mysql_execute_progress_update(
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
             REMOTE_INCPEITON_DB, inception_get_task_sequence(thd), 
-            seqno, stage, errrno, errmsg, env_dbname);
+            seqno, stage, errrno, env_dbname);
     }
 
     mysql_execute_remote_backup_sql(thd, sql);
@@ -17574,14 +17574,8 @@ int handle_fatal_signal_low(THD* thd)
     return false;
 }
 
-int mysql_deinit_sql_cache(THD* thd)
+int mysql_deinit_query_print_cache(THD* thd)
 {
-    sql_cache_node_t*  sql_cache_node;
-    sql_cache_node_t*  sql_cache_node_next;
-    split_cache_node_t* split_cache_node;
-    split_cache_node_t* split_cache_node_next;
-    split_table_t*      split_table;
-    split_table_t*      split_table_next;
     check_rt_t*   query_rt;
     check_rt_t*   query_rt_next;
     query_print_cache_node_t * query_print_cache_node;
@@ -17589,7 +17583,57 @@ int mysql_deinit_sql_cache(THD* thd)
     table_rt_t*                 table_rt;
     table_rt_t*                 table_rt_next;
 
-    DBUG_ENTER("mysql_deinit_sql_cache");
+    if (inception_get_type(thd) != INCEPTION_TYPE_PRINT ||
+        thd->query_print_cache == NULL)
+        return false;
+
+    query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
+    while (query_print_cache_node != NULL)
+    {
+        query_print_cache_node_next = LIST_GET_NEXT(link, query_print_cache_node);
+        str_deinit(query_print_cache_node->sql_statements);
+        str_deinit(query_print_cache_node->query_tree);
+        str_deinit(query_print_cache_node->errmsg);
+
+        query_rt = LIST_GET_FIRST(query_print_cache_node->rt_lst);
+        while(query_rt)
+        {
+            query_rt_next = LIST_GET_NEXT(link, query_rt);
+            LIST_REMOVE(link, query_print_cache_node->rt_lst, query_rt);
+
+            table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
+            while(table_rt)
+            {
+                table_rt_next = LIST_GET_NEXT(link, table_rt);
+                LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                if (table_rt->derived)
+                    mysql_table_info_free(table_rt->table_info);
+                my_free(table_rt);
+                table_rt = table_rt_next;
+            }
+
+            my_free(query_rt);
+            query_rt = query_rt_next;
+        }
+
+        my_free(query_print_cache_node);
+        query_print_cache_node = query_print_cache_node_next;
+    }
+
+    my_free(thd->query_print_cache);
+    thd->query_print_cache= NULL;
+
+    return false;
+}
+
+int mysql_deinit_split_cache(THD* thd)
+{
+    split_cache_node_t* split_cache_node;
+    split_cache_node_t* split_cache_node_next;
+    split_table_t*      split_table;
+    split_table_t*      split_table_next;
+
+    DBUG_ENTER("mysql_deinit_split_cache");
 
     if (thd->split_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache_node = LIST_GET_FIRST(thd->split_cache->field_lst);
@@ -17621,15 +17665,26 @@ int mysql_deinit_sql_cache(THD* thd)
         str_deinit(&thd->setnames);
     }
 
-    mysql_cache_deinit_task(thd);
-    thd->current_execute = NULL;
-    str_deinit(thd->errmsg);
-    my_free(thd->errmsg);
-    thd->errmsg = NULL;
-    if (thd->sql_cache == NULL)
-    {
-        DBUG_RETURN(FALSE);
-    }
+    DBUG_RETURN(FALSE);
+}
+
+
+int mysql_deinit_sql_cache_low(THD* thd)
+{
+    sql_cache_node_t*  sql_cache_node;
+    sql_cache_node_t*  sql_cache_node_next;
+    check_rt_t*   query_rt;
+    check_rt_t*   query_rt_next;
+    table_rt_t*                 table_rt;
+    table_rt_t*                 table_rt_next;
+    sql_table_t*                tables;
+
+    DBUG_ENTER("mysql_deinit_sql_cache_low");
+
+    if ((inception_get_type(thd) != INCEPTION_TYPE_CHECK && 
+        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE) ||
+        thd->sql_cache == NULL)
+        return false;
 
     sql_cache_node = LIST_GET_FIRST(thd->sql_cache->field_lst);
     while (sql_cache_node != NULL)
@@ -17674,6 +17729,28 @@ int mysql_deinit_sql_cache(THD* thd)
             query_rt = query_rt_next;
         }
 
+        tables = &sql_cache_node->tables;
+        str_deinit(&tables->db_names);
+        str_deinit(&tables->full_table_names);
+        str_deinit(&tables->backup_dbnames);
+        str_deinit(&tables->table_names);
+
+        table_rt = LIST_GET_FIRST(tables->table_lst);
+        while (table_rt)
+        {
+            table_rt_next = LIST_GET_NEXT(link, table_rt);
+            LIST_REMOVE(link, tables->table_lst, table_rt);
+            if (table_rt->drop_table_rollback)
+            {
+                str_deinit(table_rt->drop_table_rollback);
+                my_free(table_rt->drop_table_rollback);
+                table_rt->drop_table_rollback = NULL;
+            }
+
+            my_free(table_rt);
+            table_rt = table_rt_next;
+        }
+
         my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
         sql_cache_node = sql_cache_node_next;
@@ -17681,49 +17758,29 @@ int mysql_deinit_sql_cache(THD* thd)
 
     my_free(thd->sql_cache);
     thd->sql_cache = NULL;
+    DBUG_RETURN(false);
+}
+
+int mysql_deinit_sql_cache(THD* thd)
+{
+    DBUG_ENTER("mysql_deinit_sql_cache");
+
+    mysql_deinit_split_cache(thd);
+    mysql_deinit_query_print_cache(thd);
+    mysql_deinit_sql_cache_low(thd);
+    mysql_cache_deinit_task(thd);
+
+    thd->current_execute = NULL;
+    str_deinit(thd->errmsg);
+    my_free(thd->errmsg);
+    thd->errmsg = NULL;
 
     str_deinit(thd->show_result);
     thd->show_result = NULL;
-    query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
-    while (query_print_cache_node != NULL)
-    {
-        query_print_cache_node_next = LIST_GET_NEXT(link, query_print_cache_node);
-        str_deinit(query_print_cache_node->sql_statements);
-        str_deinit(query_print_cache_node->query_tree);
-        str_deinit(query_print_cache_node->errmsg);
-
-        query_rt = LIST_GET_FIRST(query_print_cache_node->rt_lst);
-        while(query_rt)
-        {
-            query_rt_next = LIST_GET_NEXT(link, query_rt);
-            LIST_REMOVE(link, query_print_cache_node->rt_lst, query_rt);
-
-            table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
-            while(table_rt)
-            {
-                table_rt_next = LIST_GET_NEXT(link, table_rt);
-                LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
-                if (table_rt->derived)
-                    mysql_table_info_free(table_rt->table_info);
-                my_free(table_rt);
-                table_rt = table_rt_next;
-            }
-
-            my_free(query_rt);
-            query_rt = query_rt_next;
-        }
-
-        my_free(query_print_cache_node);
-        query_print_cache_node = query_print_cache_node_next;
-    }
-
-    my_free(thd->query_print_cache);
-    thd->query_print_cache= NULL;
     mysql_free_db_object(thd);
 
     DBUG_RETURN(FALSE);
 }
-
 
 int mysql_show_print_and_execute_simple(THD *thd)
 {
