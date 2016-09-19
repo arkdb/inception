@@ -57,6 +57,7 @@ Inception目前所支持的变量参数如下表所示：
 |inception_enable_sql_statistic|ON/OFF|ON|设置是不是支持统计Inception执行过的语句中，各种语句分别占多大比例，如果打开这个参数，则每次执行的情况都会在备份数据库实例中的inception库的statistic表中以一条记录存储这次操作的统计情况，每次操作对应一条记录，这条记录中含有的信息是各种类型的语句执行次数情况，具体的信息需要参考后面一章<<**Inception 的统计功能**>>|
 |inception_read_only|ON/OFF|OFF|设置当前Inception服务器是不是只读的，这是为了防止一些人具有修改权限的帐号时，通过Inception误修改一些数据，如果inception_read_only设置为ON，则即使开了enable-execute，同时又有执行权限，也不会去执行，审核完成即返回|
 |inception_check_identifier|ON/OFF|ON|打开与关闭Inception对SQL语句中各种名字的检查，如果设置为ON，则如果发现名字中存在除数字、字母、下划线之外的字符时，会报Identifier "invalidname" is invalid, valid options: [a-z,A-Z,0-9,_].|
+|inception_format_Sql_full_path|ON/OFF|OFF|这个参数是配合sql format功能使用。如果设置为ON，则打印出来的sql语句中的字段名是db.table.column_name形式;如果设置为OFF，则正常打印字段名。注意，如果use的db不存在或者mysql实例没开启，这个参数无效.|
 
 -------
 
