@@ -708,6 +708,8 @@ int mysql_cache_one_sql(THD* thd)
         strcat(sql_cache_node->sql_statement, str_get(thd->show_result));
     }
 
+    mysql_extract_update_tables(thd, sql_cache_node);
+
     sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
@@ -716,8 +718,6 @@ int mysql_cache_one_sql(THD* thd)
     sql_cache_node->ignore = thd->lex->ignore;
     thd->affected_rows = 0;
     sprintf(sql_cache_node->execute_time, "0");
-
-    mysql_extract_update_tables(thd, sql_cache_node);
 
     /* 记录下当前语句所在的数据库环境 */
     strcpy(sql_cache_node->env_dbname, thd->thd_sinfo->db);
@@ -2950,7 +2950,7 @@ mysql_check_ddldml_coexisted(
         {
             //同一个表只报一个错误，多了就不报了
             table_info->dmlddl = 4;
-            my_error(ER_DDL_DML_COEXIST, MYF(0), thd->lex->query_tables->table_name);
+            my_error(ER_DDL_DML_COEXIST, MYF(0), table_info->table_name);
             mysql_errmsg_append(thd);
         }
     }
