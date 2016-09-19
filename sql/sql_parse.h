@@ -18,6 +18,7 @@
 
 #include "my_global.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_acl.h"                            /* GLOBAL_ACLS */
+#include "rpl_mi.h"
 
 class Comp_creator;
 class Item;
@@ -186,5 +187,56 @@ int mysql_check_column_default(
 );
 int mysql_field_check(THD* thd, Create_field* field, char* table_name);
 void mysql_check_index_attribute(THD * thd, Key* key, char* table_name);
+int mysql_get_command_type(int sql_command, char* command_type);
+int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
+int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
+int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
+int mysql_execute_commit(THD *thd);
+void mysql_free_all_table_definition(THD*  thd);
+int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql);
+int mysql_check_binlog_format(THD* thd, char* binlogformat);
+int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
+int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
+ulong mysql_read_event(MYSQL* mysql);
+int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_event** evlog);
+int mysql_parse_table_map_log_event_low(Master_info *mi, Log_event* ev, table_info_t* table_info);
+table_info_t* mysql_get_table_object(THD* thd, char* dbname, char* tablename, int not_exist_report);
+int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index, int qurot_flag,  int doublequtor_escape);
+int inception_transfer_execute_store_with_transaction( Master_info* mi, Log_event* ev, char*  sql);
+int inception_transfer_execute_store_simple( Master_info* mi, Log_event* ev, char*  sql);
+int mysql_unpack_row(
+    Master_info* mi,
+    ulong          m_table_id,
+    uchar const *const row_data,
+    MY_BITMAP const *cols,
+    uchar const **const row_end,
+    uchar const *const row_end_ptr, 
+    int update_after);
+bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
+ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql);
+void free_tables_to_lock(Master_info*	mi);
+int mysql_get_field_string_for_tranfer(Master_info* mi,  Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag);
+void mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field);
+int inception_mts_get_commit_positions( Master_info* mi, Log_event* ev);
+int inception_stop_transfer( transfer_cache_t* datacenter);
+bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
+void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
+int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
+int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
+int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
+int inception_table_create(THD *thd, String *create_sql);
+int mysql_cache_deinit_task(THD* thd);
+char* inception_get_task_sequence(THD* thd);
+int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
+int mysql_dup_char( char* src, char* dest, char chr);
+table_info_t* mysql_get_table_info_by_id( Master_info* mi, ulong m_table_id);
+int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
+int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* mysql);
+int mysql_execute_inception_set_command_for_dc(THD* thd);
+table_info_t* mysql_get_table_object_from_cache( THD*  thd, char*  dbname, char*  tablename);
+int mysql_extract_update_tables( THD* thd, sql_cache_node_t* sql_cache_node);
+int mysql_check_dml_query_tables(THD* thd);
+uint mysql_get_explain_info(THD* thd, MYSQL*  mysql, char*  select_sql, explain_info_t** explain_ret, int report_err, char* dbname);
+int mysql_anlyze_explain(THD* thd, explain_info_t* explain);
 
 #endif /* SQL_PARSE_INCLUDED */

@@ -20,14 +20,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "unireg.h"                    // REQUIRED: for other includes
 #include "sql_parse.h"        // sql_kill, *_precheck, *_prepare
 #include "lock.h"             // try_transactional_lock,
-// check_transactional_lock,
-// set_handler_table_locks,
-// lock_global_read_lock,
-// make_global_read_lock_block_commit
 #include "sql_base.h"         // find_temporary_table
 #include "sql_cache.h"        // QUERY_CACHE_FLAGS_SIZE, query_cache_*
 #include "sql_show.h"         // mysqld_list_*, mysqld_show_*,
-// calc_sum_of_all_status
 #include "mysqld.h"
 #include "sql_locale.h"                         // my_locale_en_US
 #include "log.h"                                // flush_error_log
@@ -37,39 +32,20 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql_update.h"       // mysql_update, mysql_multi_update
 #include "sql_partition.h"    // struct partition_info
 #include "sql_db.h"           // mysql_change_db, mysql_create_db,
-// mysql_rm_db, mysql_upgrade_db,
-// mysql_alter_db,
-// check_db_dir_existence,
-// my_dbopt_cleanup
 #include "sql_table.h"        // mysql_create_like_table,
-// mysql_create_table,
-// mysql_alter_table,
-// mysql_backup_table,
-// mysql_restore_table
 #include "sql_reload.h"       // reload_acl_and_cache
 #include "sql_admin.h"        // mysql_assign_to_keycache
 #include "sql_connect.h"      // check_user,
-// decrease_user_connections,
-// thd_init_client_charset, check_mqh,
-// reset_mqh
 #include "sql_rename.h"       // mysql_rename_table
 #include <string.h>
 #include "sql_tablespace.h"   // mysql_alter_tablespace
 #include "hostname.h"         // hostname_cache_refresh
 #include "sql_acl.h"          // *_ACL, check_grant, is_acl_user,
-// has_any_table_level_privileges,
-// mysql_drop_user, mysql_rename_user,
-// check_grant_routine,
-// mysql_routine_grant,
-// mysql_show_grants,
-// sp_grant_privileges, ...
 #include "sql_test.h"         // mysql_print_status
 #include "sql_select.h"       // handle_select, mysql_select,
 #include "sql_load.h"         // mysql_load
 #include "sql_servers.h"      // create_servers, alter_servers,
-// drop_servers, servers_reload
 #include "sql_handler.h"      // mysql_ha_open, mysql_ha_close,
-// mysql_ha_read
 #include "sql_binlog.h"       // mysql_client_binlog_statement
 #include "sql_do.h"           // mysql_do
 #include "sql_help.h"         // mysqld_help
@@ -102,7 +78,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql_rewrite.h"
 #include "global_threads.h"
 #include "sql_analyse.h"
-//#include "table_cache.h" // table_cache_manager
 #include "sql_common.h"
 #include "derror.h"
 #include "mysys_err.h"
@@ -210,7 +185,8 @@ const char *xa_state_names[]={
     "NON-EXISTING", "ACTIVE", "IDLE", "PREPARED", "ROLLBACK ONLY"
 };
 
-#define REMOTE_BACKUP_TABLE "$_$Inception_backup_information$_$"
+#define REMOTE_BACKUP_TABLE "inception_execution_backup"
+#define REMOTE_INCPEITON_DB "inception"
 
 #define INC_VARCHAR_MAX_TO_TEXT     8000
 #define INC_CHAR_MAX_TO_VARCHAR     16
@@ -264,53 +240,6 @@ const char* transfer_stage_type_array[]=
 extern const char *osc_recursion_method[];
 extern const char *osc_alter_foreign_keys_method[];
 
-int mysql_get_command_type(int sql_command, char* command_type);
-int mysql_check_subselect_item( THD* thd, st_select_lex *select_lex, bool top);
-int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
-int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
-int mysql_execute_commit(THD *thd);
-void mysql_free_all_table_definition(THD*  thd);
-int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql);
-int mysql_check_binlog_format(THD* thd, char* binlogformat);
-int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
-int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
-ulong mysql_read_event(MYSQL* mysql);
-int mysql_process_event(Master_info* mi,const char* buf, ulong event_len, Log_event** evlog);
-int mysql_parse_table_map_log_event(Master_info *mi, Log_event* ev, table_info_t* table_info);
-table_info_t* mysql_get_table_object(THD* thd, char* dbname, char* tablename, int not_exist_report);
-int mysql_get_field_string(Field* field, String* backupsql, char* null_arr, int field_index, int qurot_flag,  int doublequtor_escape);
-int inception_transfer_execute_store_with_transaction( Master_info* mi, Log_event* ev, char*  sql);
-int inception_transfer_execute_store_simple( Master_info* mi, Log_event* ev, char*  sql);
-int mysql_unpack_row(
-    Master_info* mi,
-    ulong          m_table_id,
-    uchar const *const row_data,
-    MY_BITMAP const *cols,
-    uchar const **const row_end,
-    uchar const *const row_end_ptr, 
-    int update_after);
-bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
-ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql);
-void free_tables_to_lock(Master_info*	mi);
-int mysql_get_field_string_for_tranfer(Master_info* mi,  Field* field, str_t* backup_sql, char* null_arr, int field_index, int qutor_flag);
-void mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field);
-int inception_mts_get_commit_positions( Master_info* mi, Log_event* ev);
-int inception_stop_transfer( transfer_cache_t* datacenter);
-bool inception_transfer_killed(THD* thd, transfer_cache_t* datacenter);
-void inception_transfer_fetch_binlogsha1( Master_info* mi, Log_event* ev);
-int inception_mts_insert_commit_positions( transfer_cache_t* datacenter, mts_thread_t* mts_thread);
-int inception_wait_mts_threads_finish( transfer_cache_t* datacenter);
-int inception_wait_and_free_mts( transfer_cache_t* datacenter, int need_lock);
-int inception_table_create(THD *thd, String *create_sql);
-int mysql_cache_deinit_task(THD* thd);
-char* inception_get_task_sequence(THD* thd);
-int mysql_print_subselect( THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, st_select_lex *select_lex, bool top);
-int mysql_dup_char( char* src, char* dest, char chr);
-table_info_t* mysql_get_table_info_by_id( Master_info* mi, ulong m_table_id);
-int inception_transfer_options_init(THD* thd,char* datacenter,MYSQL* mysql,str_t* insert_sql);
-int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* mysql);
-int mysql_execute_inception_set_command_for_dc(THD* thd);
-
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
     MYSQL_ROWS *tmp=0;
@@ -320,21 +249,6 @@ void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
     result->current_row=0;
     result->data_cursor = tmp;
 }
-
-uint
-mysql_get_explain_info(
-    THD*        thd,
-    MYSQL*  mysql,
-    char*  select_sql,
-    explain_info_t** explain_ret,
-    int report_err,
-    char* dbname
-);
-
-int mysql_anlyze_explain(
-    THD*   thd,
-    explain_info_t* explain
-);
 
 str_t*
 str_init(str_t* str)
@@ -730,7 +644,7 @@ void mysql_compute_sql_sha1(THD* thd, sql_cache_node_t* sql_cache_node)
         return;
 
     sqlinfo = str_init(&sqlinfo_space);
-    sqlinfo = str_append(sqlinfo, sql_cache_node->dbname);
+    sqlinfo = str_append(sqlinfo, str_get(&sql_cache_node->tables.full_table_names));
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->password);
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->host);
     sqlinfo = str_append(sqlinfo, thd->thd_sinfo->user);
@@ -802,17 +716,8 @@ int mysql_cache_one_sql(THD* thd)
     sql_cache_node->ignore = thd->lex->ignore;
     thd->affected_rows = 0;
     sprintf(sql_cache_node->execute_time, "0");
-    if (thd->lex->query_tables != NULL)
-    {
-        strcpy(sql_cache_node->dbname, thd->lex->query_tables->db);
-        strcpy(sql_cache_node->tablename, thd->lex->query_tables->table_name);
-    }
 
-    if (mysql_statement_is_backup(sql_cache_node))
-        mysql_get_remote_backup_dbname(thd->thd_sinfo->host, thd->thd_sinfo->port,
-                sql_cache_node->dbname, sql_cache_node->backup_dbname);
-    else
-        sprintf(sql_cache_node->backup_dbname, "None");
+    mysql_extract_update_tables(thd, sql_cache_node);
 
     /* 记录下当前语句所在的数据库环境 */
     strcpy(sql_cache_node->env_dbname, thd->thd_sinfo->db);
@@ -1030,17 +935,17 @@ int mysql_send_all_results(THD* thd)
     }
 
     field_list.push_back(new Item_return_int("ID", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("stage", NAME_CHAR_LEN));
-    field_list.push_back(new Item_return_int("errlevel", 20, MYSQL_TYPE_LONG));
-    field_list.push_back(new Item_empty_string("stagestatus",NAME_CHAR_LEN));
-    field_list.push_back(new Item_empty_string("errormessage",FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Stage", NAME_CHAR_LEN));
+    field_list.push_back(new Item_return_int("Error_Level", 20, MYSQL_TYPE_LONG));
+    field_list.push_back(new Item_empty_string("Stage_Status",NAME_CHAR_LEN));
+    field_list.push_back(new Item_empty_string("Error_Message",FN_REFLEN));
     field_list.push_back(new Item_empty_string("SQL", FN_REFLEN));
     field_list.push_back(new Item_return_int("Affected_rows", 20, MYSQL_TYPE_LONGLONG));
-    field_list.push_back(new Item_empty_string("sequence", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("backup_dbname", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("execute_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Sequence", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Backup_Dbnames", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Execute_Time", FN_REFLEN));
     field_list.push_back(new Item_empty_string("sqlsha1", FN_REFLEN));
-    field_list.push_back(new Item_empty_string("command", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Command", FN_REFLEN));
 
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -1084,12 +989,11 @@ int mysql_send_all_results(THD* thd)
 
             protocol->store(sql_cache_node->affected_rows);
 
-//            sprintf(tmp_buf, "\'%ld_%lu_%d\'", sql_cache_node->exec_time,
-//                    sql_cache_node->thread_id, (int)sql_cache_node->seqno);
-            make_opid_time(tmp_buf, sql_cache_node->exec_time, sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+            make_opid_time(tmp_buf, sql_cache_node->exec_time, 
+                sql_cache_node->thread_id, (int)sql_cache_node->seqno);
             protocol->store(tmp_buf, system_charset_info);
 
-            protocol->store(sql_cache_node->backup_dbname, system_charset_info);
+            protocol->store(str_get(&sql_cache_node->tables.backup_dbnames), system_charset_info);
             protocol->store(sql_cache_node->execute_time, system_charset_info);
             protocol->store(sql_cache_node->sqlsha1, system_charset_info);
             mysql_get_command_type(sql_cache_node->optype, command_type);
@@ -3483,7 +3387,6 @@ int mysql_check_insert_select_ex(THD *thd, table_info_t* table_info)
         mysql_errmsg_append(thd);
     }
 
-
     if (thd->lex->select_lex.order_list.elements != 0)
     {
         for (order= thd->lex->select_lex.order_list.first ; order; order= order->next)
@@ -3520,7 +3423,8 @@ int mysql_check_insert_select_ex(THD *thd, table_info_t* table_info)
         str_append(str_select, "EXPLAIN ");
         str_append(str_select, sql_p);
         my_free(sql_statement);
-        if (mysql_get_explain_info(thd, mysql, str_get(str_select), &explain, TRUE, table_info->db_name))
+        if (mysql_get_explain_info(thd, mysql, str_get(str_select), 
+              &explain, TRUE, table_info->db_name))
         {
             str_deinit(str_select);
             DBUG_RETURN(FALSE);
@@ -3788,15 +3692,19 @@ mysql_get_explain_info(
 
     LIST_INIT(explain->field_lst);
 
-    sprintf(usedb, "use `%s`", dbname);
-    if (mysql_real_query(mysql, usedb, strlen(usedb)))
+    /* if current context have no use db operation */
+    if (dbname[0] != '\0')
     {
-        if (report_err) {
-            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-            mysql_errmsg_append(thd);
-        }
+        sprintf(usedb, "use `%s`", dbname);
+        if (mysql_real_query(mysql, usedb, strlen(usedb)))
+        {
+            if (report_err) {
+                my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+                mysql_errmsg_append(thd);
+            }
 
-        DBUG_RETURN(FALSE);
+            DBUG_RETURN(FALSE);
+        }
     }
 
     if (mysql_real_query(mysql, select_sql, strlen(select_sql)))
@@ -3951,58 +3859,51 @@ int mysql_anlyze_explain(
     DBUG_RETURN(err);
 }
 
-int mysql_explain_or_analyze_statement(
-    THD*    thd,
-    table_info_t* table_info
+int mysql_explain_or_analyze_statement_low(
+    THD*    thd
 )
 {
     str_t  str;
     str_t*  str_select;
     explain_info_t* explain = NULL;
-    Item* item;
+    MYSQL*  mysql;
+    char*   sql_statement;
 
-    DBUG_ENTER("mysql_explain_or_analyze_statement");
-
-    mysql_check_subselect_item(thd, &thd->lex->select_lex, false);
-    List_iterator<Item> it(thd->lex->value_list);
-    while ((item= it++))
-        mysql_check_item(thd,  item, &thd->lex->select_lex);
+    DBUG_ENTER("mysql_explain_or_analyze_statement_low");
 
     //如果表和列都是已经存在的，则到线上做一次EXPLAIN验证一次
     //并且返回一些可用的信息供分析
-    if (!table_info->new_cache && !table_info->new_column_cache)
+    mysql = thd->get_audit_connection();
+    str_select = str_init(&str);
+    //如果是5.6版本的，则直接做一次EXPLAIN即可，而如果是5.6之下的，则需要拼成查询语句
+    //但有时候不一定能完全转换
+    if (mysql_check_version_56(thd))
     {
-        MYSQL*  mysql;
-        char*   sql_statement;
-        mysql = thd->get_audit_connection();
-        str_select = str_init(&str);
-        //如果是5.6版本的，则直接做一次EXPLAIN即可，而如果是5.6之下的，则需要拼成查询语句
-        //但有时候不一定能完全转换
-        if (mysql_check_version_56(thd))
-        {
-            sql_statement = thd_query_with_length(thd);
-            str_append(str_select, "EXPLAIN ");
-            str_append(str_select, sql_statement);
-            mysql_get_explain_info(thd, mysql, str_get(str_select), &explain, TRUE, table_info->db_name);
-            my_free(sql_statement);
-            str_deinit(str_select);
-        }
-        else
-        {
-            if (mysql_make_select_sql(thd, table_info, str_select))
-            {
-                str_deinit(str_select);
-                goto err2;
-            }
-
-            mysql_get_explain_info(thd, mysql, str_get(str_select), &explain, FALSE, table_info->db_name);
-            str_deinit(str_select);
-        }
-
-        mysql_anlyze_explain(thd, explain);
+        sql_statement = thd_query_with_length(thd);
+        str_append(str_select, "EXPLAIN ");
+        str_append(str_select, sql_statement);
+        mysql_get_explain_info(thd, mysql, str_get(str_select), 
+            &explain, TRUE, thd->thd_sinfo->db);
+        my_free(sql_statement);
+        str_deinit(str_select);
+    }
+    else
+    {
+        /* TODO: 
+         * 通过语法树，反拼一个查询语句出来 */
+        // if (mysql_make_select_sql(thd, table_info, str_select))
+        // {
+        //     str_deinit(str_select);
+        //     goto err2;
+        // }
+        //
+        // mysql_get_explain_info(thd, mysql, str_get(str_select), 
+        //     &explain, FALSE, table_info->db_name);
+        // str_deinit(str_select);
     }
 
-err2:
+    mysql_anlyze_explain(thd, explain);
+
     mysql_errmsg_append(thd);
     mysql_free_explain_info(explain);
     DBUG_RETURN(false);
@@ -4010,10 +3911,6 @@ err2:
 
 int mysql_check_delete(THD *thd)
 {
-    table_info_t* table_info;
-    int tablenotexisted = false;
-    TABLE_LIST *table;
-
     DBUG_ENTER("mysql_check_delete");
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT){
@@ -4023,30 +3920,6 @@ int mysql_check_delete(THD *thd)
         DBUG_RETURN(FALSE);
     }
 
-    if (thd->lex->sql_command == SQLCOM_DELETE_MULTI)
-    {
-        for (table=thd->lex->query_tables; table; table=table->next_global)
-        {
-            if (table->is_view_or_derived())
-            {
-                my_error(ER_SUBSELECT_IN_DML, MYF(0));
-                mysql_errmsg_append(thd);
-                continue;
-            }
-
-            table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
-            if (table_info == NULL) {
-                tablenotexisted=true;
-            }
-        }
-    }
-
-    table_info = mysql_get_table_object(thd, thd->lex->query_tables->db,
-            thd->lex->query_tables->table_name, TRUE);
-    if (tablenotexisted || table_info == NULL)
-        DBUG_RETURN(FALSE);
-
-    mysql_check_ddldml_coexisted(thd, table_info, MYSQLDML);
     if (thd->lex->select_lex.where == NULL)
     {
         my_error(ER_NO_WHERE_CONDITION, MYF(0));
@@ -4065,7 +3938,7 @@ int mysql_check_delete(THD *thd)
         mysql_errmsg_append(thd);
     }
 
-    mysql_explain_or_analyze_statement(thd, table_info);
+    mysql_check_dml_query_tables(thd);
 
     DBUG_RETURN(FALSE);
 }
@@ -4779,7 +4652,6 @@ int mysql_show_datacenter_threads_status(THD* thd, char* datacenter_name)
 {
     int res= 0;
     List<Item>    field_list;
-    char tmp[1024];
     Protocol *    protocol= thd->protocol;
     int i;
     mts_thread_t*   mts_thread;
@@ -5131,10 +5003,10 @@ int mysql_inception_remote_show(THD* thd)
     if (mysql_real_query(mysql, exesql + strlen("inception")/*skip inception*/, 
           thd->query_length() - strlen("inception")))
     {
-      my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-      mysql_errmsg_append(thd);
-      my_free(exesql);
-      DBUG_RETURN(TRUE);
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(thd);
+        my_free(exesql);
+        DBUG_RETURN(TRUE);
     }
 
     if ((source_res = mysql_store_result(mysql)) == NULL)
@@ -6067,7 +5939,7 @@ inception_transfer_table_map(
     table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
 
-    if (mysql_parse_table_map_log_event(mi, ev, table_info))
+    if (mysql_parse_table_map_log_event_low(mi, ev, table_info))
         sql_print_error("transfer parse table map event failed, db: %s, table: %s", 
 		        (char*)tab_map_ev->get_db(), (char*)tab_map_ev->get_table_name());
 
@@ -6545,7 +6417,7 @@ int inception_transfer_write_row(
     write_ev = (Write_rows_log_event*)ev;
 
     str_init(&pk_string);
-    table_info = mysql_get_table_info_by_id(mi, write_ev->m_table_id);
+    table_info = mysql_get_table_info_by_id(mi, write_ev->get_table_id());
     if ((table_info && table_info->doignore == INCEPTION_DO_IGNORE) ||
         table_info == NULL)
         DBUG_RETURN(error);
@@ -9178,12 +9050,48 @@ int mysql_execute_inception_command(THD* thd)
     return false;
 }
 
+int mysql_check_dml_query_tables(THD* thd)
+{
+    DBUG_ENTER("mysql_check_query_tables");
+    TABLE_LIST*     table;
+    table_info_t*   table_info;
+    Item* item;
+
+    int new_cache = false;
+
+    for (table=thd->lex->query_tables; table; table=table->next_global)
+    {
+        if (table->is_view_or_derived())
+        {
+            my_error(ER_SUBSELECT_IN_DML, MYF(0));
+            mysql_errmsg_append(thd);
+            continue;
+        }
+        table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
+        if (table_info == NULL) 
+            continue;
+
+        if (table->updating)
+            mysql_check_ddldml_coexisted(thd, table_info, MYSQLDML);
+
+        /* if one table is new created, then no need to get explain */
+        if (table_info->new_cache || table_info->new_column_cache)
+            new_cache = true;
+    }
+
+    mysql_check_subselect_item(thd, &thd->lex->select_lex, false);
+    List_iterator<Item> it(thd->lex->value_list);
+    while ((item= it++))
+        mysql_check_item(thd,  item, &thd->lex->select_lex);
+
+    if (!new_cache)
+        mysql_explain_or_analyze_statement_low(thd);
+
+    DBUG_RETURN(FALSE);
+}
+
 int mysql_check_update(THD *thd)
 {
-    table_info_t* table_info;
-    int tablenotexisted=false;
-    TABLE_LIST *table;
-
     DBUG_ENTER("mysql_check_update");
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
@@ -9193,29 +9101,6 @@ int mysql_check_update(THD *thd)
         DBUG_RETURN(FALSE);
     }
 
-    if (thd->lex->sql_command == SQLCOM_UPDATE_MULTI)
-    {
-        for (table=thd->lex->query_tables; table; table=table->next_global)
-        {
-            if (table->is_view_or_derived())
-            {
-                my_error(ER_SUBSELECT_IN_DML, MYF(0));
-                mysql_errmsg_append(thd);
-                continue;
-            }
-            table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
-            if (table_info == NULL) {
-                tablenotexisted=true;
-            }
-        }
-    }
-
-    table_info = mysql_get_table_object(thd, thd->lex->query_tables->db,
-            thd->lex->query_tables->table_name, TRUE);
-    if (tablenotexisted || table_info == NULL)
-        DBUG_RETURN(FALSE);
-
-    mysql_check_ddldml_coexisted(thd, table_info, MYSQLDML);
     if (thd->lex->select_lex.where == NULL)
     {
         my_error(ER_NO_WHERE_CONDITION, MYF(0));
@@ -9234,7 +9119,7 @@ int mysql_check_update(THD *thd)
         mysql_errmsg_append(thd);
     }
 
-    mysql_explain_or_analyze_statement(thd, table_info);
+    mysql_check_dml_query_tables(thd); 
 
     DBUG_RETURN(FALSE);
 }
@@ -10944,7 +10829,7 @@ int mysql_show_table_status(THD *thd, table_info_t* table_info)
     }
 
     if ((source_row = mysql_fetch_row(source_res)) != NULL)
-        thd->affected_rows = atoi(source_row[4]);
+        thd->affected_rows += atoi(source_row[4]);
 
     mysql_free_result(source_res);
     DBUG_RETURN(FALSE);
@@ -11333,6 +11218,7 @@ int mysql_check_drop_table(THD *thd)
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
     table_info_t*   table_info;
+    TABLE_LIST *    table;
     DBUG_ENTER("mysql_check_drop_table");
 
     //在切分时，DROP TABLE和谁也不能共容，只有
@@ -11343,32 +11229,31 @@ int mysql_check_drop_table(THD *thd)
         DBUG_RETURN(FALSE);
     }
 
-    table_info = mysql_get_table_object(thd, thd->lex->query_tables->db, 
-        thd->lex->query_tables->table_name, !thd->lex->drop_if_exists);
-    //drop table t if existed
-    //如果表不存在，存在if existed，则直接啥都不做返回即可，不报错了
-    if (thd->lex->drop_if_exists && !table_info)
+    /* 处理删除多表的情况 */
+    for (table = thd->lex->query_tables; table; table=table->next_global)
     {
-        DBUG_RETURN(FALSE);
-    }
+        table_info = mysql_get_table_object(thd, table->db, 
+            table->table_name, !thd->lex->drop_if_exists);
+        //drop table t if existed
+        //如果表不存在，存在if existed，则直接啥都不做返回即可，不报错了
+        if (thd->lex->drop_if_exists && !table_info)
+            DBUG_RETURN(FALSE);
 
-    if (table_info == NULL)
-        DBUG_RETURN(TRUE);
+        if (table_info == NULL)
+            DBUG_RETURN(TRUE);
 
-    mysql_check_ddldml_coexisted(thd, table_info, MYSQLDDL);
-    mysql_show_table_status(thd, table_info);
-    if (!table_info->new_cache && inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
-    {
-        //生成回滚语句
-        mysql_show_create_table(thd, thd->lex->query_tables->db, 
-          thd->lex->query_tables->table_name, &thd->ddl_rollback);
+        mysql_check_ddldml_coexisted(thd, table_info, MYSQLDDL);
+        mysql_show_table_status(thd, table_info);
+
+        table_info->isdeleted = 1;
     }
+    
+    /* 回滚语句生成在mysql_extract_update_tables中实现 */
     
     //这里删除缓存对象没有用
     //LIST_REMOVE(link, thd->tablecache.tablecache_lst, table_info);
     //mysql_remove_table_object(thd, table_info);
     //todo:从缓存中将表对象删除，不过这个可以不做
-    table_info->isdeleted = 1;
     DBUG_RETURN(FALSE);
 }
 
@@ -12893,7 +12778,7 @@ mysql_check_item(
         {
             String* stringval;
             String tmp;
-            char* fieldname;
+            // char* fieldname;
             stringval = ((Item_string*) item)->val_str(&tmp);
             // fieldname= (char*)my_malloc(stringval->length(), MY_ZEROFILL);
         }
@@ -12959,6 +12844,128 @@ int mysql_get_command_type(int sql_command, char* command_type)
         sprintf(command_type, "OTHERS");
         break;
     }
+    return false;
+}
+
+int mysql_extract_update_tables(
+    THD* thd,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    TABLE_LIST *    table;
+    sql_table_t*    tables;
+    table_rt_t*     table_rt;
+    table_info_t*   table_info;
+    int             first = true;
+    char            namebuf[1024];
+    char            namedup[1024];
+    char            dbname[1024];
+
+    tables = &sql_cache_node->tables;
+    LIST_INIT(tables->table_lst);
+    str_init(&tables->full_table_names);
+    str_init(&tables->backup_dbnames);
+    str_init(&tables->db_names);
+    str_init(&tables->table_names);
+
+    str_append(&tables->full_table_names, "{\"updated_tables\":[");
+    str_append(&tables->backup_dbnames, "{\"rollback_tables\":[");
+    for (table = thd->lex->query_tables; table; table=table->next_global)
+    {
+        if (table->is_view_or_derived())
+            continue;
+
+        if (table->updating)
+        {
+            table_info = mysql_get_table_object_from_cache(thd, table->db, table->table_name);
+            if (table_info == NULL) 
+                continue;
+
+            if (!first)
+            {
+                str_append(&tables->full_table_names, ",");
+                str_append(&tables->table_names, ",");
+                str_append(&tables->db_names, ",");
+                str_append(&tables->backup_dbnames, ",");
+            }
+
+            table_rt = (table_rt_t*)my_malloc(sizeof(table_rt_t), MY_ZEROFILL);
+            table_rt->table_info = table_info;
+
+            str_append(&tables->full_table_names, "{");
+            str_append(&tables->backup_dbnames, "{");
+
+            /* use json to store the dbname and tablename */
+            // "dbname":"dbname"
+            sprintf(namebuf, "\"dbname\":");
+            str_append(&tables->full_table_names, namebuf);
+            mysql_dup_char(table_info->db_name, namedup, '"');
+            sprintf(namebuf, "\"%s\"", namedup);
+            str_append(&tables->full_table_names, namebuf);
+
+            str_append(&tables->full_table_names, ",");
+
+            /* "tablename":"tablename" */
+            sprintf(namebuf, "\"tablename\":");
+            str_append(&tables->full_table_names, namebuf);
+            mysql_dup_char(table_info->table_name, namedup, '"');
+            sprintf(namebuf, "\"%s\"", namedup);
+            str_append(&tables->full_table_names, namebuf);
+
+            str_append(&tables->table_names, table_info->table_name);
+            str_append(&tables->db_names, table_info->db_name);
+
+            /* 生成删表的回滚语句，因为有可能存在删多个表的情况 */
+            if (!table_info->new_cache && 
+                inception_get_type(thd) == INCEPTION_TYPE_EXECUTE &&
+                thd->lex->sql_command == SQLCOM_DROP_TABLE)
+            {
+                mysql_show_create_table(thd, table_info->db_name, 
+                  table_info->table_name, &thd->ddl_rollback);
+                table_rt->drop_table_rollback = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+                str_init(table_rt->drop_table_rollback);
+                str_append(table_rt->drop_table_rollback, str_get(&thd->ddl_rollback));
+                str_truncate_0(&thd->ddl_rollback);
+            }
+
+            /* generate the backup names for every table updating */
+            if (mysql_get_remote_backup_dbname(thd->thd_sinfo->host,
+                thd->thd_sinfo->port, table_info->db_name, dbname))
+                return true;
+            sprintf(namebuf, "\"dbname\":");
+            str_append(&tables->backup_dbnames, namebuf);
+            mysql_dup_char(dbname, namedup, '"');
+            sprintf(namebuf, "\"%s\"", namedup);
+            str_append(&tables->backup_dbnames, namebuf);
+
+            str_append(&tables->backup_dbnames, ",");
+
+            sprintf(namebuf, "\"tablename\":");
+            str_append(&tables->backup_dbnames, namebuf);
+            mysql_dup_char(table_info->table_name, namedup, '"');
+            sprintf(namebuf, "\"%s\"", namedup);
+            str_append(&tables->backup_dbnames, namebuf);
+
+            str_append(&tables->full_table_names, "}");
+            str_append(&tables->backup_dbnames, "}");
+
+            LIST_ADD_LAST(link, tables->table_lst, table_rt);
+            first = false;
+        }
+    }
+
+    str_append(&tables->full_table_names, "]}");
+    str_append(&tables->backup_dbnames, "]}");
+
+    /* if no table used, truncate the names to 0 length */
+    if (first == true)
+    {
+        str_truncate_0(&tables->full_table_names);
+        str_truncate_0(&tables->backup_dbnames);
+        str_truncate_0(&tables->db_names);
+        str_truncate_0(&tables->table_names);
+    }
+
     return false;
 }
 
@@ -13120,7 +13127,7 @@ int mysql_get_create_sql_backup_table(
 {
     char   sql_tmp[100];
 
-    sprintf(sql_tmp, "`%s`.`%s`", dbname, REMOTE_BACKUP_TABLE);
+    sprintf(sql_tmp, "`%s`.`%s`", REMOTE_INCPEITON_DB, REMOTE_BACKUP_TABLE);
     create_sql->append("create table ");
     create_sql->append(sql_tmp);
     create_sql->append("(");
@@ -13129,12 +13136,15 @@ int mysql_get_create_sql_backup_table(
     create_sql->append("start_binlog_file varchar(512),");
     create_sql->append("start_binlog_pos int,");
     create_sql->append("end_binlog_file varchar(512),");
-    create_sql->append("end_binlog_pos int,");
-    create_sql->append("sql_statement text,");
-    create_sql->append("host VARCHAR(64),");
-    create_sql->append("dbname VARCHAR(64),");
-    create_sql->append("tablename VARCHAR(64),");
-    create_sql->append("port INT,");
+    create_sql->append("end_binlog_pos int comment 'the roughly end " 
+        "binlog position of current SQL',");
+    create_sql->append("sql_statement text comment 'to execute SQL',");
+    create_sql->append("host VARCHAR(64) comment 'on which host to execute current SQL',");
+    create_sql->append("port INT comment 'on which host port to execute current SQL',");
+    create_sql->append("tables_full_path VARCHAR(4096) comment"
+        " 'store all tables used in current SQL',");
+    create_sql->append("rollback_dbnames VARCHAR(4096) comment "
+        "'the rollback statement dbnames for every table',");
     create_sql->append("time TIMESTAMP,");
     create_sql->append("type VARCHAR(20)");
 
@@ -13173,6 +13183,7 @@ mysql_sql_cache_is_valid_for_ddl(
 {
     if ((sql_cache_node->optype == SQLCOM_CREATE_TABLE ||
         sql_cache_node->optype == SQLCOM_DROP_TABLE ||
+        sql_cache_node->optype == SQLCOM_TRUNCATE ||
         sql_cache_node->optype == SQLCOM_ALTER_TABLE)
         && sql_cache_node->exe_complete)
     {
@@ -13190,6 +13201,8 @@ mysql_sql_cache_is_valid(
     if ((
         sql_cache_node->optype == SQLCOM_INSERT ||
         sql_cache_node->optype == SQLCOM_DELETE ||
+        sql_cache_node->optype == SQLCOM_DELETE_MULTI||
+        sql_cache_node->optype == SQLCOM_UPDATE_MULTI||
         sql_cache_node->optype == SQLCOM_INSERT_SELECT ||
         sql_cache_node->optype == SQLCOM_UPDATE)
         && sql_cache_node->exe_complete)
@@ -13206,7 +13219,8 @@ int mysql_get_statistic_table_sql(
 {
     create_sql->truncate();
     create_sql->append("create table ");
-    create_sql->append("inception.statistic");
+    create_sql->append(REMOTE_INCPEITON_DB);
+    create_sql->append(".statistic");
     create_sql->append("(");
 
     create_sql->append("id bigint auto_increment primary key, ");
@@ -13241,7 +13255,8 @@ int mysql_get_progress_table_sql(
 {
     create_sql->truncate();
     create_sql->append("create table ");
-    create_sql->append("inception.execute_progress");
+    create_sql->append(REMOTE_INCPEITON_DB);
+    create_sql->append(".execute_progress");
     create_sql->append("(");
 
     create_sql->append("task_sequence varchar(128) primary key, ");
@@ -13267,7 +13282,7 @@ int inception_table_create(THD *thd, String *create_sql)
     if ((mysql_remote= thd->get_backup_connection()) == NULL)
         DBUG_RETURN(TRUE);
 
-    sprintf(desc_sql, "create database inception;");
+    sprintf(desc_sql, "create database `%s`;", REMOTE_INCPEITON_DB);
     if (mysql_real_query(mysql_remote, desc_sql, strlen(desc_sql)))
     {
         if (mysql_errno(mysql_remote) != 1007/*ER_DB_CREATE_EXISTS*/)
@@ -13302,7 +13317,8 @@ int mysql_get_statistic_table_insert_sql(
 
     create_sql->truncate();
     create_sql->append("INSERT INTO ");
-    create_sql->append("inception.statistic");
+    create_sql->append(REMOTE_INCPEITON_DB);
+    create_sql->append(".statistic");
     create_sql->append("(");
     create_sql->append("usedb, ");
     create_sql->append("deleting, ");
@@ -13670,7 +13686,8 @@ int mysql_operation_statistic(THD* thd)
 }
 
 
-int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_node)
+
+int mysql_make_sure_backupdb_table_exist_low(THD *thd, table_info_t* table_info)
 {
     char  dbname[NAME_CHAR_LEN + 1];
     char  desc_sql[256];
@@ -13680,20 +13697,8 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
 
     DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
 
-    if (!sql_cache_node->table_info)
-    {
-        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
-            thd->thd_sinfo->port, __FILE__, __LINE__);
-        DBUG_RETURN(FALSE);
-    }
-
-    if (sql_cache_node->table_info->remote_existed)
-        DBUG_RETURN(FALSE);
-
     if (mysql_get_remote_backup_dbname(thd->thd_sinfo->host, thd->thd_sinfo->port,
-        sql_cache_node->dbname, dbname))
+        table_info->db_name, dbname))
         DBUG_RETURN(TRUE);
 
     if ((mysql_remote= thd->get_backup_connection()) == NULL)
@@ -13711,7 +13716,7 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
         thd->clear_error();
     }
 
-    mysql_get_create_sql_from_table_info(dbname, sql_cache_node->table_info, &create_sql);
+    mysql_get_create_sql_from_table_info(dbname, table_info, &create_sql);
 
     if (mysql_real_query(mysql_remote, create_sql.ptr(), create_sql.length()))
     {
@@ -13736,8 +13741,28 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
         thd->clear_error();
     }
 
-    sql_cache_node->table_info->remote_existed = TRUE;
+    table_info->remote_existed = TRUE;
     DBUG_RETURN(false);
+}
+
+int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_node)
+{
+    table_rt_t*     table_rt;
+    sql_table_t*    tables;
+    table_info_t*   table_info;
+
+    tables = &sql_cache_node->tables;
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_info = table_rt->table_info; 
+        if (table_info && !table_info->remote_existed)
+            mysql_make_sure_backupdb_table_exist_low(thd, table_info);
+
+        table_rt = LIST_GET_NEXT(link, table_rt);
+    }
+
+    return false;
 }
 
 void mysql_change_db_impl(THD *thd,
@@ -14430,7 +14455,7 @@ enum_tbl_map_status
     DBUG_RETURN(res);
 }
 
-int mysql_parse_table_map_log_event(
+int mysql_parse_table_map_log_event_low(
     Master_info *mi, 
     Log_event* ev,
     table_info_t*   table_info
@@ -14441,7 +14466,7 @@ int mysql_parse_table_map_log_event(
     void *memory;
     Table_map_log_event* tab_map_ev;
 
-    DBUG_ENTER("mysql_parse_table_map_log_event");
+    DBUG_ENTER("mysql_parse_table_map_log_event_low");
 
     if (!(memory= my_multi_malloc(MYF(MY_WME),
         &table_list, (uint) sizeof(RPL_TABLE_LIST),
@@ -14489,11 +14514,11 @@ int mysql_parse_table_map_log_event(
         my_free(memory);
     }
 
-    if (mi->table_info && !mi->table_info->have_pk && mi->datacenter == NULL)
+    if (table_info && !table_info->have_pk && mi->datacenter == NULL)
     {
         sql_print_warning("MySQL instance(%s:%d), Table(%s:%s) have no "
             "primary key, omit the backup", mi->thd->thd_sinfo->host, 
-            mi->thd->thd_sinfo->port, mi->table_info->db_name, mi->table_info->table_name);
+            mi->thd->thd_sinfo->port, table_info->db_name, table_info->table_name);
     }
 
     DBUG_RETURN(tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE);
@@ -14762,6 +14787,8 @@ mysql_dup_char(
         dest++;
         src++;
     }
+
+    dest[0] = '\0';
     return ret;
 }
 
@@ -15125,8 +15152,6 @@ int mysql_get_field_string(
     return result;
 }
 
-
-
 int mysql_execute_backup_info_insert_sql(
     Master_info*  mi,
     sql_cache_node_t* sql_cache_node
@@ -15137,21 +15162,15 @@ int mysql_execute_backup_info_insert_sql(
     String  backup_sql_space;
     String*  backup_sql = &backup_sql_space;
     char  tmp_buf[512];
-    char  dbname[NAME_CHAR_LEN + 1];
 
     DBUG_ENTER("mysql_execute_backup_info_insert_sql");
 
-    if (mysql_get_remote_backup_dbname(mi->thd->thd_sinfo->host,
-        mi->thd->thd_sinfo->port, sql_cache_node->dbname, dbname))
-        DBUG_RETURN(false);
-
     backup_sql->append("INSERT INTO ");
-    sprintf(tmp_buf, "`%s`.`%s` VALUES (", dbname, REMOTE_BACKUP_TABLE);
+    sprintf(tmp_buf, "`%s`.`%s` VALUES (", REMOTE_INCPEITON_DB, REMOTE_BACKUP_TABLE);
     backup_sql->append(tmp_buf);
 
-//    sprintf(tmp_buf, "\'%ld_%lu_%d\',", sql_cache_node->exec_time,
-//            sql_cache_node->thread_id, (int)sql_cache_node->seqno);
-    make_opid_time(tmp_buf, sql_cache_node->exec_time, sql_cache_node->thread_id, (int)sql_cache_node->seqno);
+    make_opid_time(tmp_buf, sql_cache_node->exec_time, 
+        sql_cache_node->thread_id, (int)sql_cache_node->seqno);
     backup_sql->append(tmp_buf);
     backup_sql->append(",");
     sprintf(tmp_buf, "\'%s\',", sql_cache_node->start_binlog_file);
@@ -15172,32 +15191,26 @@ int mysql_execute_backup_info_insert_sql(
     backup_sql->append(",");
     my_free(dupcharsql);
 
+    /* host */
     sprintf(tmp_buf, "\'%s\',", mi->thd->thd_sinfo->host);
     backup_sql->append(tmp_buf);
-    if (!sql_cache_node->table_info)
-    {
-        // FOR TEST start
-        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-            sql_cache_node->sql_statement, mi->thd->thd_sinfo->host, 
-            mi->thd->thd_sinfo->port, __FILE__, __LINE__);
-        // FOR TEST end
-        sprintf(tmp_buf, "\'%s\',", "UNKNOWN");
-        backup_sql->append(tmp_buf);
-        sprintf(tmp_buf, "\'%s\',", "UNKNOWN");
-        backup_sql->append(tmp_buf);
-    }
-    else
-    {
-        sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->db_name);
-        backup_sql->append(tmp_buf);
-        sprintf(tmp_buf, "\'%s\',", sql_cache_node->table_info->table_name);
-        backup_sql->append(tmp_buf);
-    }
 
+    /* port */
     sprintf(tmp_buf, "%d,", mi->thd->thd_sinfo->port);
     backup_sql->append(tmp_buf);
+
+    /* tables_full_path */
+    backup_sql->append("\'");
+    backup_sql->append(str_get(&sql_cache_node->tables.full_table_names));
+    backup_sql->append("\',");
+
+    /* rollback_dbnames */
+    backup_sql->append("\'");
+    backup_sql->append(str_get(&sql_cache_node->tables.backup_dbnames));
+    backup_sql->append("\',");
+
     backup_sql->append("NOW(),");
+
     switch(sql_cache_node->optype)
     {
     case SQLCOM_INSERT:
@@ -15207,8 +15220,14 @@ int mysql_execute_backup_info_insert_sql(
     case SQLCOM_DELETE:
         backup_sql->append("\'DELETE\'");
         break;
+    case SQLCOM_DELETE_MULTI:
+        backup_sql->append("\'MULTI_DELETE\'");
+        break;
     case SQLCOM_UPDATE:
         backup_sql->append("\'UPDATE\'");
+        break;
+    case SQLCOM_UPDATE_MULTI:
+        backup_sql->append("\'MULTI_UPDATE\'");
         break;
     case SQLCOM_CREATE_DB:
         backup_sql->append("\'CREATEDB\'");
@@ -15221,6 +15240,9 @@ int mysql_execute_backup_info_insert_sql(
         break;
     case SQLCOM_DROP_TABLE:
         backup_sql->append("\'DROPTABLE\'");
+        break;
+    case SQLCOM_TRUNCATE:
+        backup_sql->append("\'TRUNCATE\'");
         break;
 
     default:
@@ -15254,18 +15276,19 @@ int mysql_generate_field_insert_values_for_rollback(
     char   tmp_buf[256];
     int    err = 0;
     int    field_index=0;
-    int    pkcount=0;
+    int   first = true;
 
     if (optype == SQLCOM_INSERT)
     {
         sprintf(tmp_buf, "DELETE FROM `%s`.`%s` WHERE ", dbname, tablename);
+        first = true;
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
         {
             if (field_node->primary_key)
             {
-                if (pkcount >= 1)
+                if (!first)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
@@ -15273,73 +15296,87 @@ int mysql_generate_field_insert_values_for_rollback(
 
                 err = mysql_get_field_string(field_node->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
-                pkcount++;
+                first = false;
             }
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
         }
 
         backup_sql->append(";");
-    } else if (optype == SQLCOM_DELETE) {
-        sprintf(tmp_buf, "INSERT INTO `%s`.`%s` ( ", dbname, tablename);
+    } 
+    else if (optype == SQLCOM_DELETE) 
+    {
+        first = true;
+        sprintf(tmp_buf, "INSERT INTO `%s`.`%s` (", dbname, tablename);
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
         {
-            backup_sql->append(field_node->field_name);
-            if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
+            if (!first)
                 backup_sql->append(",");
+            backup_sql->append(field_node->field_name);
+            first = false;
             field_node = LIST_GET_NEXT(link, field_node);
         }
 
-        backup_sql->append(") values( ");
+        first = true;
+        backup_sql->append(") values(");
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
         {
-            err = mysql_get_field_string(field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
-            if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
+            if (!first)
                 backup_sql->append(",");
 
+            err = mysql_get_field_string(field_node->conv_field,
+                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
+
+            first = false;
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
         }
 
         backup_sql->append(");");
-    } else if (optype == SQLCOM_UPDATE) {
+    } 
+    else if (optype == SQLCOM_UPDATE) 
+    {
+        first = true;
         sprintf(tmp_buf, "UPDATE `%s`.`%s` SET ", dbname, tablename);
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
         {
+            if (!first)
+                backup_sql->append(",");
+
             sprintf(tmp_buf, "%s=", field_node->field_name);
             backup_sql->append(tmp_buf);
             err = mysql_get_field_string(field_node->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
 
-            if (LIST_GET_LAST(mi->table_info->field_lst) != field_node)
-                backup_sql->append(",");
-
+            first = false;
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
         }
 
         backup_sql->append(" WHERE ");
-    } else if (optype == SQLCOM_UPDATE + 1000) {
+    } 
+    else if (optype == SQLCOM_UPDATE + 1000) 
+    {
+        first = true;
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
         {
             if (field_node->primary_key)
             {
-                if (pkcount >= 1)
+                if (!first)
                     backup_sql->append(" AND ");
 
                 sprintf(tmp_buf, "%s=", field_node->field_name);
                 backup_sql->append(tmp_buf);
 
-                err = mysql_get_field_string(field_node->conv_field,
+                mysql_get_field_string(field_node->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
-                pkcount++;
+                first = false;
             }
             field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
@@ -15362,15 +15399,6 @@ int mysql_generate_field_insert_values(
     String   tmpsql;
     char* dupcharfield;
 
-    /* field_node = LIST_GET_FIRST(mi->table_info->field_lst); */
-    /* while (field_node != NULL) */
-    /* { */
-    /*     err = mysql_get_field_string(field_node->field, */
-    /*             backup_sql, mi->table_info->null_arr, ","); */
-
-    /*     field_node = LIST_GET_NEXT(link, field_node); */
-    /* } */
-
     if (optype != SQLCOM_UPDATE)
     {
         mysql_generate_field_insert_values_for_rollback(mi, optype, &tmpsql,
@@ -15380,7 +15408,9 @@ int mysql_generate_field_insert_values(
         mysql_dup_char(tmpsql.c_ptr(), dupcharfield, '\'');
         backup_sql->append("'");
         backup_sql->append(dupcharfield);
-    } else {
+    } 
+    else 
+    {
         dupcharfield = (char*)my_malloc(rollback_sql->length() * 2 + 1, MY_ZEROFILL);
         mysql_dup_char(rollback_sql->c_ptr(), dupcharfield, '\'');
         backup_sql->append("'");
@@ -15410,23 +15440,14 @@ int mysql_generate_backup_sql_by_record_for_update_before(
     backup_sql->truncate();
 
     thd_sinfo = mi->thd->thd_sinfo;
-    if (mysql_get_remote_backup_dbname(thd_sinfo->host, thd_sinfo->port,
-        mi->table_info->db_name, dbname))
+    if (mysql_get_remote_backup_dbname(thd_sinfo->host, 
+          thd_sinfo->port, mi->table_info->db_name, dbname))
         DBUG_RETURN(true);
 
     backup_sql->append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`%s` (rollback_statement, opid_time) VALUES (",
             dbname, mi->table_info->table_name);
     backup_sql->append(tmp_buf);
-
-    /* field_node = LIST_GET_FIRST(mi->table_info->field_lst); */
-    /* while (field_node != NULL) */
-    /* { */
-    /*    err = mysql_get_field_string(field_node->field, */
-    /*         backup_sql, mi->table_info->null_arr, ", "); */
-
-    /*     field_node = LIST_GET_NEXT(link, field_node); */
-    /* } */
 
     DBUG_RETURN(false);
 }
@@ -15473,8 +15494,8 @@ int mysql_generate_backup_sql_by_record(
     backup_sql->truncate();
 
     thd_sinfo = mi->thd->thd_sinfo;
-    if (mysql_get_remote_backup_dbname(thd_sinfo->host, thd_sinfo->port,
-        mi->table_info->db_name, dbname))
+    if (mysql_get_remote_backup_dbname(thd_sinfo->host, 
+          thd_sinfo->port, mi->table_info->db_name, dbname))
         DBUG_RETURN(true);
 
     backup_sql->append("INSERT INTO ");
@@ -15492,9 +15513,14 @@ int mysql_parse_write_row_log_event(Master_info *mi, Log_event* ev)
     Write_rows_log_event*  write_ev;
     int       error= 0;
     String backup_sql;
+    table_info_t* table_info;
 
     DBUG_ENTER("mysql_parse_write_row_log_event");
     write_ev = (Write_rows_log_event*)ev;
+
+    table_info = mysql_get_table_info_by_id(mi, write_ev->get_table_id());
+    if (!table_info)
+        DBUG_RETURN(true);
 
     do
     {
@@ -15504,7 +15530,7 @@ int mysql_parse_write_row_log_event(Master_info *mi, Log_event* ev)
             DBUG_RETURN(true);
 
         //只有主键的情况下，才做备份
-        if (mi->table_info->have_pk)
+        if (table_info->have_pk)
         {
             if (mysql_generate_backup_sql_by_record(mi, SQLCOM_INSERT, &backup_sql, NULL))
                 DBUG_RETURN(true);
@@ -15514,7 +15540,7 @@ int mysql_parse_write_row_log_event(Master_info *mi, Log_event* ev)
         }
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
-    }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
+    } while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
     DBUG_RETURN(false);
 }
@@ -15524,9 +15550,14 @@ int mysql_parse_delete_row_log_event(Master_info *mi, Log_event* ev)
     Delete_rows_log_event*  write_ev;
     int       error= 0;
     String backup_sql;
+    table_info_t* table_info;
 
     DBUG_ENTER("mysql_parse_delete_row_log_event");
     write_ev = (Delete_rows_log_event*)ev;
+
+    table_info = mysql_get_table_info_by_id(mi, write_ev->get_table_id());
+    if (!table_info)
+        DBUG_RETURN(true);
 
     do
     {
@@ -15535,7 +15566,7 @@ int mysql_parse_delete_row_log_event(Master_info *mi, Log_event* ev)
             &write_ev->m_curr_row_end, write_ev->m_rows_end, false))
             DBUG_RETURN(true);
 
-        if (mi->table_info->have_pk)
+        if (table_info->have_pk)
         {
             if (mysql_generate_backup_sql_by_record(mi, SQLCOM_DELETE, &backup_sql, NULL))
                 DBUG_RETURN(true);
@@ -15545,7 +15576,7 @@ int mysql_parse_delete_row_log_event(Master_info *mi, Log_event* ev)
         }
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
-    }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
+    } while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
     DBUG_RETURN(false);
 }
@@ -15556,9 +15587,14 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
     int       error= 0;
     String backup_sql;
     String rollback_sql;
+    table_info_t* table_info;
 
     DBUG_ENTER("mysql_parse_update_row_log_event");
     write_ev = (Update_rows_log_event*)ev;
+
+    table_info = mysql_get_table_info_by_id(mi, write_ev->get_table_id());
+    if (!table_info)
+        DBUG_RETURN(true);
 
     do
     {
@@ -15568,14 +15604,15 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
             &write_ev->m_curr_row_end, write_ev->m_rows_end, false))
             DBUG_RETURN(true);
 
-        if (mi->table_info->have_pk)
+        if (table_info->have_pk)
         {
             if (mysql_generate_backup_sql_by_record_for_update_before(mi,
                         SQLCOM_UPDATE, &backup_sql))
                 DBUG_RETURN(true);
 
-            mysql_generate_field_insert_values_for_rollback(mi, SQLCOM_UPDATE, &rollback_sql,
-                                        mi->table_info->db_name, mi->table_info->table_name);
+            mysql_generate_field_insert_values_for_rollback(mi, 
+                SQLCOM_UPDATE, &rollback_sql,
+                table_info->db_name, table_info->table_name);
         }
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
@@ -15585,10 +15622,11 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
             &write_ev->m_curr_row_end, write_ev->m_rows_end, false))
             DBUG_RETURN(true);
 
-        if (mi->table_info->have_pk)
+        if (table_info->have_pk)
         {
-            mysql_generate_field_insert_values_for_rollback(mi, SQLCOM_UPDATE + 1000, &rollback_sql,
-                                        mi->table_info->db_name, mi->table_info->table_name);
+            mysql_generate_field_insert_values_for_rollback(mi, 
+                SQLCOM_UPDATE + 1000, &rollback_sql,
+                table_info->db_name, table_info->table_name);
 
             if (mysql_generate_backup_sql_by_record_for_update_after(mi,
                         SQLCOM_UPDATE, &backup_sql, &rollback_sql))
@@ -15598,7 +15636,7 @@ int mysql_parse_update_row_log_event(Master_info *mi, Log_event* ev)
         }
 
         write_ev->m_curr_row = write_ev->m_curr_row_end;
-    }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
+    } while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
     DBUG_RETURN(false);
 }
@@ -15671,6 +15709,24 @@ mysql_parse_query_log_event(
     DBUG_RETURN(false);
 }
 
+int mysql_parse_table_map_log_event(
+    Master_info *mi, 
+    Log_event* ev
+)
+{
+    table_info_t*   table_info;
+    Table_map_log_event* tab_map_ev;
+
+    tab_map_ev = (Table_map_log_event*)ev;
+
+    table_info = mysql_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
+        (char*)tab_map_ev->get_table_name(), TRUE);
+    if (table_info)
+        return mysql_parse_table_map_log_event_low(mi, ev, table_info);
+
+    return true;
+}
+
 int mysql_parse_event_and_backup(
     Master_info* mi,
     Log_event* ev,
@@ -15694,7 +15750,7 @@ int mysql_parse_event_and_backup(
     switch(ev->get_type_code())
     {
     case TABLE_MAP_EVENT:
-        err = mysql_parse_table_map_log_event(mi, ev, mi->table_info);
+        err = mysql_parse_table_map_log_event(mi, ev);
         break;
 
     case WRITE_ROWS_EVENT_V1:
@@ -15950,22 +16006,15 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
 int mysql_generate_backup_field_insert_values_for_ddl(
     Master_info* mi,
     String*   backup_sql,
-    sql_cache_node_t* sql_cache_node
+    str_t*    ddl_rollback
 )
 {
     char   tmp_buf[256];
     String   tmpsql;
     char* dupcharfield;
 
-    /* field_node = LIST_GET_FIRST(mi->table_info->field_lst); */
-    /* while (field_node != NULL) */
-    /* { */
-    /*     backup_sql->append("NULL,"); */
-    /*     field_node = LIST_GET_NEXT(link, field_node); */
-    /* } */
-
-    dupcharfield = (char*)my_malloc(str_get_len(sql_cache_node->ddl_rollback)* 2 + 1, MY_ZEROFILL);
-    mysql_dup_char(str_get(sql_cache_node->ddl_rollback), dupcharfield, '\'');
+    dupcharfield = (char*)my_malloc(str_get_len(ddl_rollback)* 2 + 1, MY_ZEROFILL);
+    mysql_dup_char(str_get(ddl_rollback), dupcharfield, '\'');
     backup_sql->append("'");
     backup_sql->append(dupcharfield);
     my_free(dupcharfield);
@@ -15977,9 +16026,10 @@ int mysql_generate_backup_field_insert_values_for_ddl(
     return 0;
 }
 
-int mysql_backup_sql_for_ddl(
+int mysql_backup_sql_for_ddl_low(
     Master_info* mi,
-    sql_cache_node_t* sql_cache_node
+    table_info_t*   table_info,
+    str_t*          ddl_rollback
 )
 {
     char  dbname[NAME_CHAR_LEN + 1];
@@ -15987,29 +16037,58 @@ int mysql_backup_sql_for_ddl(
     char   tmp_buf[256];
     String     backup_sql;
 
-    DBUG_ENTER("mysql_backup_sql_for_ddl");
+    DBUG_ENTER("mysql_backup_sql_for_ddl_low");
     backup_sql.truncate();
 
     //如果没有生成语句，则不备份
-    if (str_get_len(sql_cache_node->ddl_rollback) == 0)
+    if (str_get_len(ddl_rollback) == 0)
         DBUG_RETURN(false);
         
     thd_sinfo = mi->thd->thd_sinfo;
-    if (mysql_get_remote_backup_dbname(thd_sinfo->host, thd_sinfo->port,
-        mi->table_info->db_name, dbname))
+    if (mysql_get_remote_backup_dbname(thd_sinfo->host, 
+          thd_sinfo->port, table_info->db_name, dbname))
         DBUG_RETURN(true);
 
     backup_sql.append("INSERT INTO ");
     sprintf(tmp_buf, "`%s`.`%s`(rollback_statement, opid_time) VALUES (", 
-            dbname, mi->table_info->table_name);
+            dbname, table_info->table_name);
     backup_sql.append(tmp_buf);
-    mysql_generate_backup_field_insert_values_for_ddl(mi, &backup_sql, sql_cache_node);
+    mysql_generate_backup_field_insert_values_for_ddl(mi, &backup_sql, ddl_rollback);
     backup_sql.append(");");
 
     if (mysql_execute_remote_backup_sql(mi->thd, backup_sql.c_ptr()))
         DBUG_RETURN(true);
 
     DBUG_RETURN(false);
+}
+
+int mysql_backup_sql_for_ddl(
+    Master_info* mi,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    table_rt_t*     table_rt;
+    sql_table_t*    tables;
+    table_info_t*   table_info;
+
+    tables = &sql_cache_node->tables;
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_info = table_rt->table_info; 
+        if (table_info)
+        {
+            if (sql_cache_node->optype == SQLCOM_DROP_TABLE && 
+                table_rt->drop_table_rollback)
+                mysql_backup_sql_for_ddl_low(mi, table_info, table_rt->drop_table_rollback);
+            else
+                mysql_backup_sql_for_ddl_low(mi, table_info, sql_cache_node->ddl_rollback);
+        }
+
+        table_rt = LIST_GET_NEXT(link, table_rt);
+    }
+
+    return false;
 }
 
 int mysql_backup_single_ddl_statement(
@@ -16023,17 +16102,6 @@ int mysql_backup_single_ddl_statement(
 
     mi->thread_id = sql_cache_node->thread_id;
     mi->exec_time = sql_cache_node->exec_time;
-    mi->table_info = sql_cache_node->table_info;
-    if (!sql_cache_node->table_info)
-    {
-        // FOR TEST start
-        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
-            thd->thd_sinfo->port, __FILE__, __LINE__);
-        // FOR TEST end
-    }
-
     mi->seqno  = sql_cache_node->seqno;
 
     if (mysql_execute_backup_info_insert_sql(mi, sql_cache_node))
@@ -16066,16 +16134,6 @@ int mysql_backup_single_statement(
 
     mi->thread_id = sql_cache_node->thread_id;
     mi->exec_time = sql_cache_node->exec_time;
-    mi->table_info = sql_cache_node->table_info;
-    if (!sql_cache_node->table_info)
-    {
-        // FOR TEST start
-        sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-            "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-            sql_cache_node->sql_statement, thd->thd_sinfo->host, 
-            thd->thd_sinfo->port, __FILE__, __LINE__);
-        // FOR TEST end
-    }
     mi->seqno  = sql_cache_node->seqno;
 
     if (mysql_execute_backup_info_insert_sql(mi, sql_cache_node))
@@ -16286,8 +16344,8 @@ int mysql_add_new_percent_cache_node(
     osc_percent_node = (osc_percent_cache_t*)my_malloc(sizeof(osc_percent_cache_t), MY_ZEROFILL);
     osc_percent_node->percent = 0;
     osc_percent_node->proc = proc;
-    strcpy(osc_percent_node->dbname, sql_cache_node->dbname);
-    strcpy(osc_percent_node->tablename, sql_cache_node->tablename);
+    strcpy(osc_percent_node->dbname, str_get(&sql_cache_node->tables.db_names));
+    strcpy(osc_percent_node->tablename, str_get(&sql_cache_node->tables.table_names));
     strcpy(osc_percent_node->remaintime, "");
     strcpy(osc_percent_node->execute_time, "");
     strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
@@ -16312,7 +16370,8 @@ int mysql_analyze_osc_output(
 
     DBUG_ENTER("mysql_analyze_osc_output");
     sprintf(Successfully, "Successfully altered `%s`.`%s`.", 
-        sql_cache_node->dbname, sql_cache_node->tablename);
+        str_get(&sql_cache_node->tables.db_names), 
+        str_get(&sql_cache_node->tables.table_names));
 
     if (!strcasecmp(Successfully, tmp))
     {
@@ -16352,11 +16411,12 @@ int mysql_analyze_osc_output(
 
     if (osc_percent_node == NULL)
     {
-        osc_percent_node = (osc_percent_cache_t*)my_malloc(sizeof(osc_percent_cache_t), MY_ZEROFILL);
+        osc_percent_node = (osc_percent_cache_t*)my_malloc(
+            sizeof(osc_percent_cache_t), MY_ZEROFILL);
         osc_percent_node->percent = percent;
         osc_percent_node->start_timer = start_timer();
-        strcpy(osc_percent_node->dbname, sql_cache_node->dbname);
-        strcpy(osc_percent_node->tablename, sql_cache_node->tablename);
+        strcpy(osc_percent_node->dbname, str_get(&sql_cache_node->tables.db_names));
+        strcpy(osc_percent_node->tablename, str_get(&sql_cache_node->tables.table_names));
         strcpy(osc_percent_node->remaintime, timeremain);
         strcpy(osc_percent_node->execute_time, "");
         strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
@@ -16511,7 +16571,8 @@ int mysql_execute_alter_table_osc(
     oscargv[count++] = strdup(cmd_line);
     sprintf(cmd_line, "--port=%d", thd->thd_sinfo->port);
     oscargv[count++] = strdup(cmd_line);
-    sprintf(cmd_line, "D=%s,t=%s", sql_cache_node->dbname, sql_cache_node->tablename);
+    sprintf(cmd_line, "D=%s,t=%s", str_get(&sql_cache_node->tables.db_names), 
+        str_get(&sql_cache_node->tables.table_names));
     oscargv[count++] = strdup(cmd_line);
     oscargv[count++] = NULL;
 
@@ -16632,12 +16693,6 @@ int mysql_execute_statement(
         {
             sprintf(sql_cache_node->execute_time, "%.3f",
                 (double)(start_timer() - timer) / CLOCKS_PER_SEC);
-            sql_print_warning("mysql_execute_statement return error, SQL: (%s)"
-                "FILE: (%s), LINE: (%d), ERROR: (%s)", 
-                sql_cache_node->sql_statement, __FILE__, __LINE__, 
-                str_get(sql_cache_node->errmsg));
-            sql_print_warning("mysql_execute_statement tablename: (%s)"
-                "dbname: (%s)", sql_cache_node->tablename, sql_cache_node->dbname);
             DBUG_RETURN(true);
         }
     }
@@ -16650,49 +16705,22 @@ int mysql_execute_statement(
             my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
             DBUG_RETURN(true);
         }
-        sql_cache_node->exe_complete = TRUE;
     }
 
     sprintf(sql_cache_node->execute_time, "%.3f",  
         (double)(start_timer() - timer) / CLOCKS_PER_SEC);
 
-    sql_cache_node->affected_rows = mysql_affected_rows(mysql);
-
     //print the warnings only when execute SQL directly
     if (!sql_cache_node->use_osc)
     {
+        sql_cache_node->affected_rows = mysql_affected_rows(mysql);
         print_warnings(thd, mysql, sql_cache_node);
+        if (mysql_fetch_thread_id(mysql, &sql_cache_node->thread_id))
+            DBUG_RETURN(true);
     }
 
-    if (mysql_fetch_thread_id(mysql, &sql_cache_node->thread_id))
-    {
-        sql_print_warning("mysql_execute_statement2 return error, SQL: (%s)"
-            "FILE: (%s), LINE: (%d), ERROR: (%s)", 
-            sql_cache_node->sql_statement, __FILE__, __LINE__, 
-            mysql_error(mysql));
-        sql_print_warning("mysql_execute_statement2 tablename: (%s)"
-            "dbname: (%s)", sql_cache_node->tablename, sql_cache_node->dbname);
-        DBUG_RETURN(true);
-    }
-
+    sql_cache_node->exe_complete = TRUE;
     time(&sql_cache_node->exec_time);
-
-    if (sql_cache_node->dbname[0] != '\0' && 
-        sql_cache_node->tablename[0] != '\0' && 
-        !sql_cache_node->table_info)
-    {
-        sql_cache_node->table_info = mysql_get_table_object_from_cache(thd, 
-          sql_cache_node->dbname, sql_cache_node->tablename);
-        if (!sql_cache_node->table_info)
-        {
-            // FOR TEST start
-            sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-                "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-                sql_cache_node->sql_statement, thd->thd_sinfo->host, 
-                thd->thd_sinfo->port, __FILE__, __LINE__);
-            // FOR TEST end
-        }
-    }
 
     DBUG_RETURN(false);
 }
@@ -16783,19 +16811,23 @@ mysql_execute_progress_update(
         msg = thd->get_stmt_da()->message();
         errmsg = (char*)my_malloc(strlen(msg)*2+1, MY_ZEROFILL);
         mysql_dup_char((char*)msg, (char*)errmsg, '\'');
-        sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
-            "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, '%s', '%s')"
+        sprintf(sql, "INSERT INTO `%s`.execute_progress(task_sequence, "
+            "sequence, status, errcode, message, dbname) values(" 
+            "'%s', %d, '%s', %d, '%s', '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
-            inception_get_task_sequence(thd), seqno, stage, errrno, errmsg, env_dbname);
+            REMOTE_INCPEITON_DB, inception_get_task_sequence(thd), 
+            seqno, stage, errrno, errmsg, env_dbname);
     }
     else
     {
-        sprintf(sql, "INSERT INTO inception.execute_progress(task_sequence, "
-            "sequence, status, errcode, message, dbname) values('%s', %d, '%s', %d, NULL, '%s')"
+        sprintf(sql, "INSERT INTO `%s`.execute_progress(task_sequence, "
+            "sequence, status, errcode, message, dbname) values("
+            "'%s', %d, '%s', %d, NULL, '%s')"
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
-            inception_get_task_sequence(thd), seqno, stage, 0, env_dbname);
+            REMOTE_INCPEITON_DB, inception_get_task_sequence(thd), 
+            seqno, stage, errrno, errmsg, env_dbname);
     }
 
     mysql_execute_remote_backup_sql(thd, sql);
@@ -16974,6 +17006,27 @@ mysql_backup_sql(
     return FALSE;
 }
 
+int mysql_alloc_cache_table_record_low(THD *thd, sql_cache_node_t* sql_cache_node)
+{
+    table_rt_t*     table_rt;
+    sql_table_t*    tables;
+    table_info_t*   table_info;
+
+    tables = &sql_cache_node->tables;
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_info = table_rt->table_info; 
+        if (table_info && mysql_sql_cache_is_valid(sql_cache_node))
+            if(mysql_alloc_record(table_info, thd->get_audit_connection()))
+                return TRUE;
+
+        table_rt = LIST_GET_NEXT(link, table_rt);
+    }
+
+    return false;
+}
+
 int mysql_alloc_cache_table_record(THD* thd, sql_cache_t* sql_cache)
 {
     sql_cache_node_t*  sql_cache_node;
@@ -16987,17 +17040,7 @@ int mysql_alloc_cache_table_record(THD* thd, sql_cache_t* sql_cache)
             if (mysql_create_backup_tables(thd, sql_cache_node))
                 return TRUE;
 
-            if (!sql_cache_node->table_info)
-            {
-                sql_print_warning("sql_cache_node Null table info, SQL: (%s)"
-                    "IP: (%s), PORT: (%d), FILE: (%s), LINE: (%d)", 
-                    sql_cache_node->sql_statement, thd->thd_sinfo->host, 
-                    thd->thd_sinfo->port, __FILE__, __LINE__);
-            }
-
-            if (mysql_sql_cache_is_valid(sql_cache_node))
-                if(mysql_alloc_record(sql_cache_node->table_info, thd->get_audit_connection()))
-                    return TRUE;
+            mysql_alloc_cache_table_record_low(thd, sql_cache_node);
         }
 
         sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
