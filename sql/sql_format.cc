@@ -25,7 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 int mysql_format_subselect(THD* thd, format_cache_node_t*   format_node, str_t* print_str, st_select_lex *select_lex, bool top);
 int format_item(THD* thd, format_cache_node_t*   format_node, str_t* print_str, Item* item, st_select_lex *select_lex);
-void mysql_dup_char( char* src, char* dest, char chr);
+int mysql_dup_char( char* src, char* dest, char chr);
 
 int
 format_sum_item(
