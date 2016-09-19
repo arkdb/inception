@@ -420,6 +420,37 @@ struct source_info_space_struct
     enum enum_inception_optype optype;
 };
 
+typedef struct table_rt_struct table_rt_t;
+struct table_rt_struct 
+{
+    table_info_t*     table_info;
+    char              alias[FN_LEN];
+    int               derived;
+    str_t*            drop_table_rollback;
+    
+    LIST_NODE_T(table_rt_t)         link;
+};
+
+typedef struct check_rt_struct check_rt_t;
+struct check_rt_struct 
+{
+    void*             select_lex;
+    
+    LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
+    LIST_NODE_T(check_rt_t)                 link;
+};
+
+
+typedef struct sql_table_struct sql_table_t;
+struct sql_table_struct
+{
+    LIST_BASE_NODE_T(table_rt_t)  table_lst;
+    str_t                         full_table_names;
+    str_t                         backup_dbnames;
+    str_t                         db_names;
+    str_t                         table_names;
+};
+
 typedef struct sql_cache_node_struct sql_cache_node_t;
 struct sql_cache_node_struct
 {
@@ -429,13 +460,10 @@ struct sql_cache_node_struct
     int         start_binlog_pos;
     char        end_binlog_file[FN_REFLEN];
     int         end_binlog_pos;
-    char        dbname[NAME_CHAR_LEN];
-    char        backup_dbname[NAME_CHAR_LEN];
-    char        tablename[NAME_CHAR_LEN];
+    char        env_dbname[NAME_CHAR_LEN];
     ulong       thread_id;
     time_t      exec_time;//执行时间点
     int         optype;
-    table_info_t*    table_info;
     int         exe_complete;    //”√¿¥±Ì æ «∑Ò÷¥––π˝
     int         seqno;            //”√¿¥º«¬º√ø¥Œ÷¥––µƒ”Ôæ‰µƒ–Ú∫≈
     int         errrno;
@@ -452,6 +480,8 @@ struct sql_cache_node_struct
     str_t*      oscoutput;
     volatile int     oscpercent;
     rt_lst_t*   rt_lst;
+
+    sql_table_t tables;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -736,25 +766,6 @@ struct split_cache_struct
     int            seqno_cache;
 };
 
-
-typedef struct table_rt_struct table_rt_t;
-struct table_rt_struct 
-{
-    table_info_t*     table_info;
-    char              alias[FN_LEN];
-    int               derived;
-    
-    LIST_NODE_T(table_rt_t)         link;
-};
-
-typedef struct check_rt_struct check_rt_t;
-struct check_rt_struct 
-{
-    void*             select_lex;
-    
-    LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
-    LIST_NODE_T(check_rt_t)                 link;
-};
 
 typedef struct query_print_cache_node_struct query_print_cache_node_t;
 struct query_print_cache_node_struct
@@ -5953,7 +5964,7 @@ int mysql_format_change_db(THD* thd);
 int mysql_format_set(THD* thd);
 int mysql_format_not_support(THD* thd);
 double my_rnd(struct rand_struct *rand_st);
-
+int handle_fatal_signal_low(THD* thd);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

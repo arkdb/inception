@@ -1,24 +1,25 @@
 site_name: Inception使用规范及说明文档
 theme: readthedocs
 pages: 
- - [index.md, 'Inception使用规范及说明文档']
- - [chapter1.md, 'Inception序']
- - [source.md, '1. Inception 是如何诞生的']
- - [inception.md, '2. Inception 总述及体系结构']
- - [install.md, '3. Inception 安装说明']
- - [usage.md, '4. Inception 使用方法']
- - [option.md, '5. Inception 支持选项及意义']
- - [backup.md, '6. Inception 备份功能说明']
- - [rules.md, '7. Inception 审核规范及原则']
- - [variables.md, '8. Inception所支持的参数变量']
- - [results.md, '9. Inception结果集']
- - [command.md, '10. Inception命令集']
- - [requires.md, '11. Inception 对线上配置需求']
- - [extras.md, '12. Inception 额外功能说明']
- - [osc.md, '13. Inception 对OSC的支持']
- - [statistic.md, '14. Inception 的统计功能']
- - [queryprint.md, '15. Inception 语法树打印']
- - [format.md, '16. Inception 格式化语句']
- - [inception_gate_rd.md, '17. Inception Gate开发者手册']
- - [inception_gate_dba.md, '18. Inception Gate DBA运维手册']
- - [release.md, '19. Inception 发布日志']
+- 'Inception使用规范及说明文档': 'index.md'
+- 'Inception序': 'chapter1.md'
+- 'Inception是如何诞生的': 'source.md'
+- 'Inception总述及体系结构': 'inception.md'
+- 'Inception安装说明': 'install.md'
+- 'Inception使用方法': 'usage.md'
+- 'Inception支持选项及意义': 'option.md'
+- 'Inception备份功能说明': 'backup.md'
+- 'Inception审核规范及原则': 'rules.md'
+- 'Inception所支持的参数变量': 'variables.md'
+- 'Inception结果集': 'results.md'
+- 'Inception命令集': 'command.md'
+- 'Inception对线上配置需求': 'requires.md'
+- 'Inception额外功能说明': 'extras.md'
+- 'Inception对OSC的支持': 'osc.md'
+- 'Inception执行进度控制': 'progress.md'
+- 'Inception的统计功能': 'statistic.md'
+- 'Inception语法树打印': 'queryprint.md'
+- 'Inception格式化语句': 'format.md'
+- 'InceptionGate开发者手册': 'inception_gate_rd.md'
+- 'InceptionGateDBA运维手册': 'inception_gate_dba.md'
+- 'Inception发布日志': 'release.md'
