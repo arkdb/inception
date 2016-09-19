@@ -17546,7 +17546,7 @@ int handle_fatal_signal_low(THD* thd)
     my_safe_printf_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
 
     if (sql_cache_node)
-        my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
+        my_safe_printf_stderr("\nCurrent DB Name: %s\n", sql_cache_node->env_dbname); 
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE || 
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
