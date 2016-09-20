@@ -3838,6 +3838,9 @@ int mysql_anlyze_explain(
 
     DBUG_ENTER("mysql_anlyze_explain");
 
+    if (explain == NULL)
+        DBUG_RETURN(TRUE);
+
     select_count = LIST_GET_LEN(explain->field_lst);
 
     select_node = LIST_GET_FIRST(explain->field_lst);
@@ -17387,11 +17390,11 @@ int mysql_need_source_info(THD *thd)
 int mysql_cache_deinit_task(THD* thd)
 {
     task_progress_t* task_node;
+    DBUG_ENTER("mysql_cache_deinit_task");
 
     if (!inception_get_task_sequence(thd))
-        return false;
+        DBUG_RETURN(false);
 
-    DBUG_ENTER("mysql_cache_deinit_task");
     mysql_mutex_lock(&task_mutex);
     task_node = LIST_GET_FIRST(global_task_cache.task_lst);
     while (task_node)
@@ -17409,7 +17412,7 @@ int mysql_cache_deinit_task(THD* thd)
     }
 
     mysql_mutex_unlock(&task_mutex);
-    return false;
+    DBUG_RETURN(false);
 }
 
 int mysql_cache_new_task(THD* thd)
@@ -17689,7 +17692,7 @@ int mysql_deinit_sql_cache_low(THD* thd)
     if ((inception_get_type(thd) != INCEPTION_TYPE_CHECK && 
         inception_get_type(thd) != INCEPTION_TYPE_EXECUTE) ||
         thd->sql_cache == NULL)
-        return false;
+        DBUG_RETURN(false);
 
     sql_cache_node = LIST_GET_FIRST(thd->sql_cache->field_lst);
     while (sql_cache_node != NULL)
@@ -17776,9 +17779,12 @@ int mysql_deinit_sql_cache(THD* thd)
     mysql_cache_deinit_task(thd);
 
     thd->current_execute = NULL;
-    str_deinit(thd->errmsg);
-    my_free(thd->errmsg);
-    thd->errmsg = NULL;
+    if (thd->errmsg)
+    {
+        str_deinit(thd->errmsg);
+        my_free(thd->errmsg);
+        thd->errmsg = NULL;
+    }
 
     str_deinit(thd->show_result);
     thd->show_result = NULL;

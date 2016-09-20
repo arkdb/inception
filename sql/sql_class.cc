@@ -1052,6 +1052,8 @@ THD::THD(bool enable_plugins)
   parse_error = FALSE;
   check_error_before = FALSE;
   errmsg = NULL;
+  LIST_INIT(dbcache.dbcache_lst);
+  show_result = NULL;
   use_osc = 0;
   LIST_INIT(tablecache.tablecache_lst);
   memset(&sql_statistic, 0, sizeof(sql_statistic_t));
@@ -1788,8 +1790,8 @@ THD::~THD()
   dbug_sentry= THD_SENTRY_GONE;
 #endif  
 
-  my_free(thd_sinfo);
   mysql_deinit_sql_cache(this);
+  my_free(thd_sinfo);
 
   close_all_connections();
 
