@@ -12924,6 +12924,11 @@ int mysql_extract_update_tables(
                   table_info->table_name, &thd->ddl_rollback);
                 table_rt->drop_table_rollback = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
                 str_init(table_rt->drop_table_rollback);
+                /* 因为show create table出来的语句中，没有库名，所以
+                 * 在这里显式的加上use db语句 */
+                str_append(table_rt->drop_table_rollback, "use ");
+                str_append(table_rt->drop_table_rollback, table_info->db_name);
+                str_append(table_rt->drop_table_rollback, ";\n");
                 str_append(table_rt->drop_table_rollback, str_get(&thd->ddl_rollback));
                 str_truncate_0(&thd->ddl_rollback);
             }
