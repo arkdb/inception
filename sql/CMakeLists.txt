@@ -112,6 +112,7 @@ SET(SQL_SHARED_SOURCES
   sql_list.cc
   sql_locale.cc
   sql_parse.cc
+  sql_biosc.cc
   sql_plugin.cc
   sql_prepare.cc
   sql_rename.cc

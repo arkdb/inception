@@ -1658,12 +1658,10 @@ bool my_yyoverflow(short **yyss, YYSTYPE **yyvs, ulong *yystacksize)
     if (!state->yacc_yyvs)
         old_info= *yystacksize;
     *yystacksize= set_zone((*yystacksize)*2,MY_YACC_INIT,MY_YACC_MAX);
-    if (!(state->yacc_yyvs= (uchar*)
-        my_realloc(state->yacc_yyvs,
+    if (!(state->yacc_yyvs= (uchar*) my_realloc(state->yacc_yyvs,
         *yystacksize*sizeof(**yyvs),
         MYF(MY_ALLOW_ZERO_PTR | MY_FREE_ON_ERROR))) ||
-        !(state->yacc_yyss= (uchar*)
-        my_realloc(state->yacc_yyss,
+        !(state->yacc_yyss= (uchar*) my_realloc(state->yacc_yyss,
         *yystacksize*sizeof(**yyss),
         MYF(MY_ALLOW_ZERO_PTR | MY_FREE_ON_ERROR))))
         return 1;
@@ -7376,7 +7374,7 @@ inception_transfer_write_Xid(
     return false;
 }
 
-int inception_execute_sql_with_retry(
+int inception_transfer_execute_sql_with_retry(
     THD* thd, 
     transfer_cache_t* datacenter,
     char* tmp
@@ -7471,7 +7469,7 @@ inception_transfer_make_checkpoint(
 
     sprintf(sql, "UPDATE `%s`.`transfer_checkpoint` set id= %lld, tid=%lld", 
         datacenter->datacenter_name, min_eid, min_tid);
-    if (inception_execute_sql_with_retry(thd_thread, datacenter, sql))
+    if (inception_transfer_execute_sql_with_retry(thd_thread, datacenter, sql))
         return true;
 
     mysql_mutex_lock(&datacenter->checkpoint_lock);

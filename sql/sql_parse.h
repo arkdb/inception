@@ -212,6 +212,18 @@ int mysql_unpack_row(
     uchar const **const row_end,
     uchar const *const row_end_ptr, 
     int update_after);
+str_t* str_init(str_t* str);
+str_t* str_truncate_0(str_t* str);
+void str_deinit(str_t* str);
+str_t* str_append_1( str_t*  str, const char* new_string);
+str_t* str_append( str_t*  str, const char* new_string);
+char* str_get(str_t* str);
+int str_get_len(str_t* str);
+str_t* str_append_with_length( str_t*  str, const char* new_string, int len);
+int register_slave_on_master(MYSQL* mysql, bool *suppress_warnings, int server_id_in);
+char* mysql_get_alter_table_post_part( THD*  thd, char* statement, int ignore);
+bool setup_connection_thread_globals(THD *thd);
+int inception_init_slave_thread(THD* thd);
 bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
 ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql);
 void free_tables_to_lock(Master_info*	mi);
@@ -238,5 +250,6 @@ int mysql_extract_update_tables( THD* thd, sql_cache_node_t* sql_cache_node);
 int mysql_check_dml_query_tables(THD* thd);
 uint mysql_get_explain_info(THD* thd, MYSQL*  mysql, char*  select_sql, explain_info_t** explain_ret, int report_err, char* dbname);
 int mysql_anlyze_explain(THD* thd, explain_info_t* explain);
+void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row);
 
 #endif /* SQL_PARSE_INCLUDED */

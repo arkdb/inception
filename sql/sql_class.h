@@ -451,7 +451,10 @@ struct sql_cache_node_struct
     volatile int     oscpercent;
     rt_lst_t*   rt_lst;
 
+    char        biosc_new_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
+    char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
     sql_table_t tables;
+    char**      primary_keys;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
