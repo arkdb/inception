@@ -390,98 +390,6 @@ struct source_info_space_struct
     enum enum_inception_optype optype;
 };
 
-typedef struct table_rt_struct table_rt_t;
-struct table_rt_struct 
-{
-    table_info_t*     table_info;
-    char              alias[FN_LEN];
-    int               derived;
-    str_t*            drop_table_rollback;
-    
-    LIST_NODE_T(table_rt_t)         link;
-};
-
-typedef struct check_rt_struct check_rt_t;
-struct check_rt_struct 
-{
-    void*             select_lex;
-    
-    LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
-    LIST_NODE_T(check_rt_t)                 link;
-};
-
-
-typedef struct sql_table_struct sql_table_t;
-struct sql_table_struct
-{
-    LIST_BASE_NODE_T(table_rt_t)  table_lst;
-    str_t                         full_table_names;
-    str_t                         backup_dbnames;
-    str_t                         db_names;
-    str_t                         table_names;
-};
-
-typedef struct sql_cache_node_struct sql_cache_node_t;
-struct sql_cache_node_struct
-{
-    char*       sql_statement;
-    str_t*      ddl_rollback;
-    char        start_binlog_file[FN_REFLEN];
-    int         start_binlog_pos;
-    char        end_binlog_file[FN_REFLEN];
-    int         end_binlog_pos;
-    char        env_dbname[NAME_CHAR_LEN];
-    ulong       thread_id;
-    time_t      exec_time;//执行时间点
-    int         optype;
-    int         exe_complete;    //”√¿¥±Ì æ «∑Ò÷¥––π˝
-    int         seqno;            //”√¿¥º«¬º√ø¥Œ÷¥––µƒ”Ôæ‰µƒ–Ú∫≈
-    int         errrno;
-    str_t*      errmsg;
-    int         err_stage;//÷¥–– ±ªπ «ºÏ≤È ±
-    int         stage;//±Ì æµΩƒƒ∏ˆΩ◊∂Œ¡À
-    int         errlevel;
-    int         use_osc;
-    str_t*      stagereport;
-    my_ulonglong   affected_rows;
-    char        execute_time[NAME_CHAR_LEN]; //执行所用时间 
-    char        sqlsha1[CRYPT_MAX_PASSWORD_SIZE + 1];
-    int         ignore;//for statement ignore, eg. alter ignore table ...
-    str_t*      oscoutput;
-    volatile int     oscpercent;
-    rt_lst_t*   rt_lst;
-
-    char        biosc_new_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
-    char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
-    sql_table_t tables;
-    char**      primary_keys;
-
-    LIST_NODE_T(sql_cache_node_t) link;
-};
-
-void osc_prepend_PATH ( const char* path, THD* thd, sql_cache_node_t* node); 
-class process
-{
-private:
-    FILE*       io_;
-    int         err_;
-    pid_t       pid_;
-    THD*        thd;//current thd
-    sql_cache_node_t*   sql_cache_node;
-
-public:
-/*! @arg type is a pointer to a null-terminated string which  must  contain
-         either  the  letter  'r'  for  reading  or the letter 'w' for writing.
- */
-    process  (THD* thd, sql_cache_node_t* sql_cache_node, char** argv, const char* type);
-    ~process ();
-    int killpid();
-
-    FILE* pipe () { return io_;  }
-    int   error() { return err_; }
-    int   wait ();
-};
-
 typedef struct mts_thread_queue_struct mts_thread_queue_t;
 struct mts_thread_queue_struct
 {
@@ -516,6 +424,114 @@ struct mts_struct
     mts_thread_t*       mts_thread;
     mysql_cond_t        mts_cond;
     mysql_mutex_t       mts_lock;
+};
+
+typedef struct table_rt_struct table_rt_t;
+struct table_rt_struct 
+{
+    table_info_t*     table_info;
+    char              alias[FN_LEN];
+    int               derived;
+    str_t*            drop_table_rollback;
+    
+    LIST_NODE_T(table_rt_t)         link;
+};
+
+typedef struct check_rt_struct check_rt_t;
+struct check_rt_struct 
+{
+    void*             select_lex;
+    
+    LIST_BASE_NODE_T(table_rt_t)            table_rt_lst;
+    LIST_NODE_T(check_rt_t)                 link;
+};
+
+
+typedef struct sql_table_struct sql_table_t;
+struct sql_table_struct
+{
+    LIST_BASE_NODE_T(table_rt_t)  table_lst;
+    str_t                         full_table_names;
+    str_t                         backup_dbnames;
+    str_t                         db_names;
+    str_t                         table_names;
+};
+
+typedef struct sql_cache_node_struct sql_cache_node_t;
+struct sql_cache_node_struct
+{
+    THD*        thd;
+    char*       sql_statement;
+    str_t*      ddl_rollback;
+    char        start_binlog_file[FN_REFLEN];
+    int         start_binlog_pos;
+    char        end_binlog_file[FN_REFLEN];
+    int         end_binlog_pos;
+    char        env_dbname[NAME_CHAR_LEN];
+    ulong       thread_id;
+    time_t      exec_time;//执行时间点
+    int         optype;
+    int         exe_complete;    //”√¿¥±Ì æ «∑Ò÷¥––π˝
+    int         seqno;            //”√¿¥º«¬º√ø¥Œ÷¥––µƒ”Ôæ‰µƒ–Ú∫≈
+    int         errrno;
+    str_t*      errmsg;
+    int         err_stage;//÷¥–– ±ªπ «ºÏ≤È ±
+    int         stage;//±Ì æµΩƒƒ∏ˆΩ◊∂Œ¡À
+    int         errlevel;
+    int         use_osc;
+    str_t*      stagereport;
+    my_ulonglong   affected_rows;
+    char        execute_time[NAME_CHAR_LEN]; //执行所用时间 
+    char        sqlsha1[CRYPT_MAX_PASSWORD_SIZE + 1];
+    int         ignore;//for statement ignore, eg. alter ignore table ...
+    str_t*      oscoutput;
+    volatile int     oscpercent;
+    rt_lst_t*   rt_lst;
+
+    char        biosc_new_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
+    char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
+    sql_table_t tables;
+    char**      primary_keys;
+    volatile    int         biosc_copy_complete;
+    char        current_binlog_file[FN_REFLEN];
+    int         current_binlog_pos;
+    mysql_mutex_t       osc_lock;
+    volatile bool abort_slave;
+    volatile int  dump_on;
+    mysql_cond_t stop_cond;
+    volatile int rename_connectionid;
+    mysql_cond_t connectionid_ready_cond;
+    mysql_cond_t copy_rows_complete;
+    mysql_cond_t rename_ready_cond;
+    mts_thread_t* mts_queue;
+    mts_thread_queue_t* current_element;
+    mysql_cond_t        mts_cond;
+    mysql_mutex_t       mts_lock;
+
+    LIST_NODE_T(sql_cache_node_t) link;
+};
+
+void osc_prepend_PATH ( const char* path, THD* thd, sql_cache_node_t* node); 
+class process
+{
+private:
+    FILE*       io_;
+    int         err_;
+    pid_t       pid_;
+    THD*        thd;//current thd
+    sql_cache_node_t*   sql_cache_node;
+
+public:
+/*! @arg type is a pointer to a null-terminated string which  must  contain
+         either  the  letter  'r'  for  reading  or the letter 'w' for writing.
+ */
+    process  (THD* thd, sql_cache_node_t* sql_cache_node, char** argv, const char* type);
+    ~process ();
+    int killpid();
+
+    FILE* pipe () { return io_;  }
+    int   error() { return err_; }
+    int   wait ();
 };
 
 enum transfer_option_enum{

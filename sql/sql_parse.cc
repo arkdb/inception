@@ -711,6 +711,7 @@ int mysql_cache_one_sql(THD* thd)
     mysql_extract_update_tables(thd, sql_cache_node);
 
     sql_cache_node->use_osc = thd->use_osc;
+    sql_cache_node->thd = thd;
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
     mysql_compute_sql_sha1(thd, sql_cache_node);
@@ -16695,12 +16696,18 @@ int mysql_execute_statement(
 
     if (sql_cache_node->use_osc)
     {
-        if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+        if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
         {
             sprintf(sql_cache_node->execute_time, "%.3f",
                 (double)(start_timer() - timer) / CLOCKS_PER_SEC);
             DBUG_RETURN(true);
         }
+        // if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+        // {
+        //     sprintf(sql_cache_node->execute_time, "%.3f",
+        //         (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+        //     DBUG_RETURN(true);
+        // }
     }
     else
     {

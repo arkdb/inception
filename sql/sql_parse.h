@@ -251,5 +251,9 @@ int mysql_check_dml_query_tables(THD* thd);
 uint mysql_get_explain_info(THD* thd, MYSQL*  mysql, char*  select_sql, explain_info_t** explain_ret, int report_err, char* dbname);
 int mysql_anlyze_explain(THD* thd, explain_info_t* explain);
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row);
+int mysql_execute_alter_table_biosc( THD* thd, MYSQL* mysql, char* statement, sql_cache_node_t* sql_cache_node);
+int inception_execute_sql_with_retry( THD* thd, char* tmp, char* var_sql);
+int mysql_binlog_position_compare( char* binlog_file_1, int   binlog_pos_1, char* binlog_file_2, int   binlog_pos_2);
+MYSQL* inception_init_binlog_connection( char* hostname, int port, char* username, char* password);
 
 #endif /* SQL_PARSE_INCLUDED */
