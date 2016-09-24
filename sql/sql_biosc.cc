@@ -544,6 +544,13 @@ retry:
         goto error;
     }
 
+    if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
+    {
+        sql_print_information("Execute SQL(%s) ERROR: %d, %s", 
+            tmp, mysql_errno(mysql), mysql_error(mysql));
+        goto error;
+    }
+
     return false;
 error:
     if (retry_count < 3)
@@ -578,6 +585,13 @@ retry:
     }
 
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        sql_print_information("Execute SQL(%s) ERROR: %d, %s", 
+            tmp, mysql_errno(mysql), mysql_error(mysql));
+        goto error;
+    }
+
+    if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
     {
         sql_print_information("Execute SQL(%s) ERROR: %d, %s", 
             tmp, mysql_errno(mysql), mysql_error(mysql));
@@ -1046,10 +1060,11 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     change_cond_sql = &change_sql;
     greater_cond_sql = &front_sql;
     lesser_cond_sql = &behind_sql;
+    memcpy(thd->thd_sinfo, query_thd->thd_sinfo, sizeof (sinfo_space_t));
 
 reconnect:
     mysql_close(mysql);
-    mysql = query_thd->get_audit_connection();
+    mysql = thd->get_audit_connection();
     if (mysql == NULL)
     {
         if (!inception_biosc_abort(query_thd, sql_cache_node) && retrycount++ < 3)
@@ -1070,7 +1085,7 @@ reconnect:
         &execute_sql, sql_cache_node, first_time);
     while(!complete && !inception_biosc_abort(query_thd, sql_cache_node))
     {
-        inception_get_table_select_where(query_thd, &execute_sql, 
+        inception_get_table_select_where(thd, &execute_sql, 
             lesser_cond_sql, greater_cond_sql, sql_cache_node, first_time);
 
         str_truncate_0(&execute_sql);
@@ -1082,7 +1097,7 @@ reconnect:
              * 中间状态，每次取到的边界值都有2个，分别是本分片的最大值和
              * 下一个分片的最小值
              * 得到一个分片查询的语句,目标串为copy_rows_sql */
-            inception_get_table_rows_copy_sql(query_thd, &copy_rows_sql, 
+            inception_get_table_rows_copy_sql(thd, &copy_rows_sql, 
                 &insert_select_prefix, change_cond_sql, lesser_cond_sql);
 
             /* 得到用来取得下一个分片的边界 */
@@ -1109,7 +1124,7 @@ reconnect:
             /* 1. 正好取到一条，本分片的最大边界值 */
             if (str_get_len(lesser_cond_sql) > 0)
             {
-                inception_get_table_rows_copy_sql(query_thd, &copy_rows_sql, 
+                inception_get_table_rows_copy_sql(thd, &copy_rows_sql, 
                     &insert_select_prefix, change_cond_sql, lesser_cond_sql);
             }
             else
@@ -1119,7 +1134,7 @@ reconnect:
                  * 不过有隐患，如果此时正好插入大批数据，会导致这个分片一下子增大
                  * 这里需要处理，最好是取到最后一条数据，再插入进来也不需要管了
                  * 因为有Binlog做增量处理 */
-                inception_get_table_rows_copy_sql(query_thd, &copy_rows_sql, 
+                inception_get_table_rows_copy_sql(thd, &copy_rows_sql, 
                     &insert_select_prefix, change_cond_sql, NULL);
             }
             complete = true;
@@ -1127,7 +1142,7 @@ reconnect:
 
         /*execute the copy_rows_sql to copy rows from old to new table*/
         if (str_get_len(&copy_rows_sql) > 0)
-            inception_execute_sql_with_retry(query_thd, str_get(&copy_rows_sql), NULL);
+            inception_execute_sql_with_retry(thd, str_get(&copy_rows_sql), NULL);
     }
 
 error:
