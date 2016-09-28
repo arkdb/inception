@@ -213,8 +213,11 @@ int mysql_execute_alter_table_biosc(
 
     /* start to copy rows use one thread */
     /* start to catch binlog */
-    mysql_analyze_biosc_output(thd, "Create copy rows thread completely", sql_cache_node);
-    mysql_analyze_biosc_output(thd, "Create binary logs catch thread completely", sql_cache_node);
+    mysql_analyze_biosc_output(thd, 
+        (char*)"Create copy rows thread completely", sql_cache_node);
+    mysql_analyze_biosc_output(thd, 
+        (char*)"Create binary logs catch thread completely", sql_cache_node);
+
     if (mysql_thread_create(0, &threadid, &connection_attrib,
         inception_move_rows_thread, (void*)sql_cache_node) || 
         mysql_thread_create(0, &threadid, &connection_attrib,
@@ -1060,7 +1063,6 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     char* binlog_file = NULL;
     int binlog_position = 0;
     int retrycount = 0;
-    time_t skr;
     int   first_time = true;
     char  osc_output[1024];
     sql_cache_node_t* sql_cache_node;
@@ -1110,7 +1112,6 @@ pthread_handler_t inception_move_rows_thread(void* arg)
 
     sprintf(osc_output, "[Copy thread] Start to Copy rows, batch size: %d", 200);
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-reconnect:
     sprintf(osc_output, "[Copy thread] Start to get connection, retry: %d/3", retrycount++);
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     if (!(mysql = inception_get_connection_with_retry(thd)))
@@ -1288,7 +1289,6 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
     int binlog_position = 0;
     int retrycount = 0;
     bool suppress_warnings;
-    time_t skr;
     THD*      query_thd;
     THD*      thd;
     char      osc_output[1024];
@@ -1517,7 +1517,6 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
     char      osc_output[1024];
     MYSQL*    mysql;
     int       ret;
-    struct timespec abstime;
 
     my_thread_init();
     thd= new THD;
@@ -1599,7 +1598,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                 sql_cache_node->osc_complete = true;
 
                 sprintf(osc_output, "[Master thread] Increament SQL consume over, "
-                    "exactly %d rows, including %d insert(s), %d update(s), %d delete(s)", 
+                    "exactly %lld rows, including %d insert(s), %d update(s), %d delete(s)", 
                     sql_cache_node->mts_queue->event_count, 0, 0, 0);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
@@ -1653,7 +1652,6 @@ int inception_catch_rename_blocked_in_processlist(
     MYSQL_RES *source_res1;
     MYSQL_ROW  source_row;
     MYSQL*    mysql;
-    int       rows;
     struct timespec abstime;
     int       first_time = true;
     char      osc_output[1024];
@@ -1663,7 +1661,7 @@ int inception_catch_rename_blocked_in_processlist(
 
     sprintf(osc_output, "[Master thread] try to catch connection_id");
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-retry:
+
     while(!inception_biosc_abort(thd, sql_cache_node))
     {
         if (sql_cache_node->rename_timeout)
@@ -1845,11 +1843,9 @@ int inception_rename_table(
 {
     MYSQL*    mysql = NULL;
     char      lock_sql[1024];
-    char      new_table_lock_sql[1024];
     char      set_var_sql[1024];
     int       locked = false;
     int       ret;
-    struct    timespec abstime;
     char      unlock_tables[1024];
     ulonglong start_lock_time = 0;
     str_t*    execute_sql;
@@ -1943,7 +1939,7 @@ reconnect:
                 /* 如果一直没有找到上锁之后的位置，则通过参数计时，超过这个时间
                  * 需要再解锁，保证不影响线上 */
                 if (my_getsystime() - start_lock_time > 
-                    thd->variables.inception_biosc_rename_wait_timeout)
+                    (ulonglong)thd->variables.inception_biosc_rename_wait_timeout * 10000000)
                 {
                     sprintf(osc_output, "[Master thread] Table locked timeout, "
                         "unlock them and retry");
@@ -1957,7 +1953,8 @@ reconnect:
                  * 做重命名表的工作了，但即使已经追上了，但此时已经锁表，时间
                  * 如果超过设置时间，就不能去RENAME了，需要重新等机会 */
                 if (my_getsystime() - start_lock_time < 
-                    thd->variables.inception_biosc_rename_wait_timeout && ret >= 0)
+                    (ulonglong)thd->variables.inception_biosc_rename_wait_timeout 
+                    * 10000000 && ret >= 0)
                 {
                     /* make sure all events are finished */
                     if (inception_finish_event_queue(thd, mysql, sql_cache_node))
