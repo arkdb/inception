@@ -16685,7 +16685,8 @@ int mysql_execute_statement(
     DBUG_ENTER("mysql_execute_statement");
     timer=start_timer();
 
-    if (thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+    if (thd->variables.inception_alter_table_method == osc_method_build_in_osc &&
+        sql_cache_node->optype == SQLCOM_ALTER_TABLE)
     {
         if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
         {
@@ -16694,7 +16695,8 @@ int mysql_execute_statement(
             DBUG_RETURN(true);
         }
     }
-    else if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
+    else if (thd->variables.inception_alter_table_method == osc_method_pt_osc &&
+         sql_cache_node->optype == SQLCOM_ALTER_TABLE)
     {
         if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
         {
