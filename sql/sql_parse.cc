@@ -95,26 +95,6 @@ using std::min;
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
-#if defined(__WIN__)
-#include <time.h>
-#else
-#include <sys/times.h>
-#ifdef _SC_CLK_TCK        // For mit-pthreads
-#undef CLOCKS_PER_SEC
-#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
-#endif
-#endif
-
-static ulong start_timer(void)
-{
-#if defined(__WIN__)
-    return clock();
-#else
-    struct tms tms_tmp;
-    return times(&tms_tmp);
-#endif
-}
-
 /**
 @defgroup Runtime_Environment Runtime Environment
 */
@@ -239,6 +219,16 @@ const char* transfer_stage_type_array[]=
 
 extern const char *osc_recursion_method[];
 extern const char *osc_alter_foreign_keys_method[];
+
+ulong start_timer(void)
+{
+#if defined(__WIN__)
+    return clock();
+#else
+    struct tms tms_tmp;
+    return times(&tms_tmp);
+#endif
+}
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {

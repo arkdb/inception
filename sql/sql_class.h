@@ -492,21 +492,27 @@ struct sql_cache_node_struct
     char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
     sql_table_t tables;
     char**      primary_keys;
+    /* 0表示没有完成，1表示已经完成，2表示出错中止了 */
     volatile    int         biosc_copy_complete;
     char        current_binlog_file[FN_REFLEN];
     int         current_binlog_pos;
     mysql_mutex_t       osc_lock;
-    volatile bool abort_slave;
+    volatile bool osc_complete;
+    volatile bool osc_abort;
+    volatile bool rename_timeout;
     volatile int  dump_on;
     mysql_cond_t stop_cond;
     volatile int rename_connectionid;
     mysql_cond_t connectionid_ready_cond;
     mysql_cond_t copy_rows_complete;
     mysql_cond_t rename_ready_cond;
+    mysql_cond_t alter_status;
     mts_thread_t* mts_queue;
     mts_thread_queue_t* current_element;
     mysql_cond_t        mts_cond;
     mysql_mutex_t       mts_lock;
+    ulonglong start_lock_time ;
+    pthread_t binlog_catch_threadid;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };

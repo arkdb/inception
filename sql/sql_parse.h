@@ -20,6 +20,16 @@
 #include "sql_acl.h"                            /* GLOBAL_ACLS */
 #include "rpl_mi.h"
 
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
+
 class Comp_creator;
 class Item;
 class Object_creation_ctx;
@@ -49,6 +59,8 @@ enum enum_mysql_completiontype {
 #define INCEPTION_STATE_BACKUP          4
 #define INCEPTION_STATE_DEINIT          5
 #define INCEPTION_STATE_SEND            6
+
+
 
 extern "C" int test_if_data_home_dir(const char *dir);
 
@@ -255,5 +267,7 @@ int mysql_execute_alter_table_biosc( THD* thd, MYSQL* mysql, char* statement, sq
 int inception_execute_sql_with_retry( THD* thd, char* tmp, char* var_sql);
 int mysql_binlog_position_compare( char* binlog_file_1, int   binlog_pos_1, char* binlog_file_2, int   binlog_pos_2);
 MYSQL* inception_init_binlog_connection( char* hostname, int port, char* username, char* password);
+int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
+ulong start_timer(void);
 
 #endif /* SQL_PARSE_INCLUDED */
