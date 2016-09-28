@@ -1726,7 +1726,8 @@ int inception_catch_rename_blocked_in_processlist(
 int inception_finish_event_queue(
     THD*              thd,
     MYSQL*            mysql,
-    sql_cache_node_t* sql_cache_node
+    sql_cache_node_t* sql_cache_node,
+    ulonglong         start_lock_time
 )
 {
     str_t*    execute_sql;
@@ -1742,6 +1743,13 @@ int inception_finish_event_queue(
         sql_cache_node->mts_queue->dequeue_index = 
           (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
         execute_sql = inception_event_dequeue(thd, sql_cache_node);
+
+        /* 如果锁表时间超了，则需要提前返回释放锁 */
+        if (my_getsystime() - start_lock_time > 
+            (ulonglong)thd->variables.inception_biosc_lock_table_max_time * 10000000)
+        {
+            return false;
+        }
     }
 
     return false;
@@ -1927,7 +1935,7 @@ reconnect:
             {
                 /* 如果当前Binlog位置已经大于上锁之后的位置了，则说明
                  * 这个位置之后，再不会有这个表的Binlog了，则可以做RENAME了 */
-                if (inception_finish_event_queue(thd, mysql, sql_cache_node))
+                if (inception_finish_event_queue(thd, mysql, sql_cache_node, start_lock_time))
                     goto reconnect;
 
                 mysql_mutex_lock(&sql_cache_node->osc_lock); 
@@ -1939,25 +1947,24 @@ reconnect:
                 /* 如果一直没有找到上锁之后的位置，则通过参数计时，超过这个时间
                  * 需要再解锁，保证不影响线上 */
                 if (my_getsystime() - start_lock_time > 
-                    (ulonglong)thd->variables.inception_biosc_rename_wait_timeout * 10000000)
+                    (ulonglong)thd->variables.inception_biosc_lock_table_max_time * 10000000)
                 {
-                    sprintf(osc_output, "[Master thread] Table locked timeout, "
-                        "unlock them and retry");
+                    sprintf(osc_output, "[Master thread] Table locked timeout(%ds), "
+                        "unlock them and retry", thd->variables.inception_biosc_lock_table_max_time);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     if (mysql_execute_sql_with_retry(thd, mysql, unlock_tables, NULL))
                         goto reconnect;
                     locked = false;
                 }
-
-                /* 这里如果返回值大于等于0，则说明Binlog已经追上了，此时就可以
-                 * 做重命名表的工作了，但即使已经追上了，但此时已经锁表，时间
-                 * 如果超过设置时间，就不能去RENAME了，需要重新等机会 */
-                if (my_getsystime() - start_lock_time < 
-                    (ulonglong)thd->variables.inception_biosc_rename_wait_timeout 
+                else if (my_getsystime() - start_lock_time < 
+                    (ulonglong)thd->variables.inception_biosc_lock_table_max_time
                     * 10000000 && ret >= 0)
                 {
+                    /* 这里如果返回值大于等于0，则说明Binlog已经追上了，此时就可以
+                     * 做重命名表的工作了，但即使已经追上了，但此时已经锁表，时间
+                     * 如果超过设置时间，就不能去RENAME了，需要重新等机会 */
                     /* make sure all events are finished */
-                    if (inception_finish_event_queue(thd, mysql, sql_cache_node))
+                    if (inception_finish_event_queue(thd, mysql, sql_cache_node, start_lock_time))
                         goto reconnect;
 
                     sprintf(osc_output, "[Master thread] Notify the rename thread to start work");
