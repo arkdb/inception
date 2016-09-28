@@ -26,9 +26,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "thr_alarm.h"
 #include "errmsg.h"
 
-#define LOCK_TIME_WAIT          60
-#define RENAME_TIME_PERIOD      (LOCK_TIME_WAIT * 10000000)
-
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
 int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node);
 pthread_handler_t inception_move_rows_thread(void* arg);
@@ -1534,7 +1531,8 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
     /* TODO:
      * 将这两个参数参数化 */
     sprintf(set_var_sql, "set session lock_wait_timeout=%d," 
-        "session innodb_lock_wait_timeout=%d;", LOCK_TIME_WAIT, 1);
+        "session innodb_lock_wait_timeout=%d;", 
+        thd->variables.inception_biosc_lock_wait_timeout, 1);
 
     sprintf(rename_sql, "RENAME TABLE `%s`.`%s` TO `%s`.`%s`, `%s`.`%s` TO `%s`.`%s`", 
         str_get(&sql_cache_node->tables.db_names), str_get(&sql_cache_node->tables.table_names),
@@ -1573,14 +1571,14 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
             }
 
             sprintf(osc_output, "[rename thread] Rename table start "
-                "to blocking, timout: %d", LOCK_TIME_WAIT);
+                "to blocking, timout: %d", thd->variables.inception_biosc_lock_wait_timeout);
             mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             if ((ret = mysql_execute_sql_with_retry(thd, mysql, rename_sql, NULL)) > 0)
             {
                 if (ret == 1205/* ER_LOCK_WAIT_TIMEOUT */)
                 {
                     sprintf(osc_output, "[rename thread] Table rename timeout(%d)", 
-                        LOCK_TIME_WAIT);
+                        thd->variables.inception_biosc_lock_wait_timeout);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     sql_cache_node->rename_timeout = true;
                 }
@@ -1880,7 +1878,8 @@ int inception_rename_table(
     /* TODO:
      * 将这两个参数参数化 */
     sprintf(set_var_sql, "set session lock_wait_timeout=%d," 
-        "session innodb_lock_wait_timeout=%d;", LOCK_TIME_WAIT, 1);
+        "session innodb_lock_wait_timeout=%d;", 
+        thd->variables.inception_biosc_lock_wait_timeout, 1);
 
     sprintf(osc_output, "[Master thread] Start to consume the increament SQL");
 reconnect:
@@ -1943,7 +1942,8 @@ reconnect:
 
                 /* 如果一直没有找到上锁之后的位置，则通过参数计时，超过这个时间
                  * 需要再解锁，保证不影响线上 */
-                if (my_getsystime() - start_lock_time > RENAME_TIME_PERIOD)
+                if (my_getsystime() - start_lock_time > 
+                    thd->variables.inception_biosc_rename_wait_timeout)
                 {
                     sprintf(osc_output, "[Master thread] Table locked timeout, "
                         "unlock them and retry");
@@ -1956,7 +1956,8 @@ reconnect:
                 /* 这里如果返回值大于等于0，则说明Binlog已经追上了，此时就可以
                  * 做重命名表的工作了，但即使已经追上了，但此时已经锁表，时间
                  * 如果超过设置时间，就不能去RENAME了，需要重新等机会 */
-                if (my_getsystime() - start_lock_time < RENAME_TIME_PERIOD && ret >= 0)
+                if (my_getsystime() - start_lock_time < 
+                    thd->variables.inception_biosc_rename_wait_timeout && ret >= 0)
                 {
                     /* make sure all events are finished */
                     if (inception_finish_event_queue(thd, mysql, sql_cache_node))

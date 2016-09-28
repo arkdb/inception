@@ -89,6 +89,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql_time.h"
 #include "thr_alarm.h"
 #include "my_stacktrace.h"
+#include "sys_vars.h"
 
 using std::max;
 using std::min;
@@ -16684,7 +16685,7 @@ int mysql_execute_statement(
     DBUG_ENTER("mysql_execute_statement");
     timer=start_timer();
 
-    if (sql_cache_node->use_osc)
+    if (thd->variables.inception_alter_table_method == osc_method_build_in_osc)
     {
         if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
         {
@@ -16692,12 +16693,15 @@ int mysql_execute_statement(
                 (double)(start_timer() - timer) / CLOCKS_PER_SEC);
             DBUG_RETURN(true);
         }
-        // if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
-        // {
-        //     sprintf(sql_cache_node->execute_time, "%.3f",
-        //         (double)(start_timer() - timer) / CLOCKS_PER_SEC);
-        //     DBUG_RETURN(true);
-        // }
+    }
+    else if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
+    {
+        if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+        {
+            sprintf(sql_cache_node->execute_time, "%.3f",
+                (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+            DBUG_RETURN(true);
+        }
     }
     else
     {

@@ -1272,6 +1272,9 @@ typedef struct system_variables
   ulong inception_osc_critical_running;
   ulong inception_osc_critical_connected;
   ulong inception_osc_min_table_size;
+  int inception_biosc_lock_wait_timeout;
+  int inception_biosc_rename_wait_timeout;
+  ulong inception_alter_table_method;
 
 } SV;
 

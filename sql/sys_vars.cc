@@ -1057,3 +1057,23 @@ static Sys_var_ulong Sys_server_id(
     GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
     VALID_RANGE(2, UINT_MAX32), DEFAULT(2), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
+static Sys_var_int32 Sys_inception_biosc_lock_wait_timeout(
+    "inception_biosc_lock_wait_timeout",
+    "the max lock table period time when alter table ",
+    SESSION_VAR(inception_biosc_lock_wait_timeout), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
+
+static Sys_var_int32 Sys_inception_biosc_rename_wait_timeout(
+    "inception_biosc_rename_wait_timeout",
+    "the wait timeout period when rename table, when timeout, then alter table retry ",
+    SESSION_VAR(inception_biosc_rename_wait_timeout), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
+
+const char *osc_method[]= {"build-in-osc", "pt-osc", "direct-alter", NullS};
+static Sys_var_enum Sys_inception_alter_table_method(
+    "inception_alter_table_method",
+    "alter table methods.",
+    SESSION_VAR(inception_alter_table_method), CMD_LINE(REQUIRED_ARG),
+    osc_method, DEFAULT(osc_method_build_in_osc), 
+    NO_MUTEX_GUARD, NOT_IN_BINLOG);
