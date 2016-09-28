@@ -1320,7 +1320,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
     sprintf(osc_output, "[Binlog thread] Start to read the binlog "
-        "events and produce the increament SQL");
+        "events and produce the increament SQL(s)");
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
 reconnect:
@@ -1597,7 +1597,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 sql_cache_node->osc_complete = true;
 
-                sprintf(osc_output, "[Master thread] Increament SQL consume over, "
+                sprintf(osc_output, "[Master thread] Increament SQL(s) consume over, "
                     "exactly %lld rows, including %d insert(s), %d update(s), %d delete(s)", 
                     sql_cache_node->mts_queue->event_count, 0, 0, 0);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
@@ -1860,6 +1860,7 @@ int inception_rename_table(
     pthread_t threadid;
     int       lock_count = 0;
     char      osc_output[1024];
+    struct timespec abstime;
 
     sprintf(lock_sql, "LOCK TABLES `%s`.`%s` WRITE, `%s`.`%s` WRITE", 
         str_get(&sql_cache_node->tables.db_names), 
@@ -1885,7 +1886,7 @@ int inception_rename_table(
         "session innodb_lock_wait_timeout=%d;", 
         thd->variables.inception_biosc_lock_wait_timeout, 1);
 
-    sprintf(osc_output, "[Master thread] Start to consume the increament SQL");
+    sprintf(osc_output, "[Master thread] Start to consume the increament SQL(s)");
 reconnect:
     if (!(mysql = inception_get_connection_with_retry(thd)))
     {
@@ -1950,10 +1951,17 @@ reconnect:
                     (ulonglong)thd->variables.inception_biosc_lock_table_max_time * 10000000)
                 {
                     sprintf(osc_output, "[Master thread] Table locked timeout(%ds), "
-                        "unlock them and retry", thd->variables.inception_biosc_lock_table_max_time);
+                        "unlock them and retry, wait %d(s) before lock again", 
+                        thd->variables.inception_biosc_lock_table_max_time,
+                        thd->variables.inception_biosc_retry_wait_time);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     if (mysql_execute_sql_with_retry(thd, mysql, unlock_tables, NULL))
                         goto reconnect;
+                    set_timespec_nsec(abstime, thd->variables.inception_biosc_retry_wait_time*
+                        1000 * 1000000ULL);
+                    mysql_mutex_lock(&thd->sleep_lock);
+                    mysql_cond_timedwait(&thd->sleep_cond, &thd->sleep_lock, &abstime);
+                    mysql_mutex_unlock(&thd->sleep_lock);
                     locked = false;
                 }
                 else if (my_getsystime() - start_lock_time < 

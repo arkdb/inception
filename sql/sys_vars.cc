@@ -1077,3 +1077,10 @@ static Sys_var_enum Sys_inception_alter_table_method(
     SESSION_VAR(inception_alter_table_method), CMD_LINE(REQUIRED_ARG),
     osc_method, DEFAULT(osc_method_build_in_osc), 
     NO_MUTEX_GUARD, NOT_IN_BINLOG);
+
+static Sys_var_int32 Sys_inception_biosc_retry_wait_time(
+    "inception_biosc_retry_wait_time",
+    "the wait timeout period when rename table, when timeout, then alter table retry ",
+    SESSION_VAR(inception_biosc_retry_wait_time), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024), DEFAULT(1), BLOCK_SIZE(1));
+
