@@ -2695,8 +2695,7 @@ mysql_convert_desc_to_table_info(
     DBUG_ENTER("mysql_convert_desc_to_table_info");
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, tablename);
@@ -2706,9 +2705,7 @@ mysql_convert_desc_to_table_info(
     while (source_row)
     {
         //free memory
-        field_info = (field_info_t*)malloc(sizeof(field_info_t));
-
-        memset(field_info, 0, sizeof(field_info_t));
+        field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
         strcpy(field_info->field_name, source_row[0]);
         if (strcasecmp(source_row[3], "YES") == 0)
             field_info->nullable = true;
@@ -2727,7 +2724,14 @@ mysql_convert_desc_to_table_info(
         if (source_row[2] != NULL)
             field_info->charset = get_charset(get_collation_number(source_row[2]),MYF(0));
 
-        strcpy(field_info->data_type, source_row[1]);
+        if (!strncasecmp("set(", source_row[1], 4))
+            strcpy(field_info->data_type, "set");
+        else if (!strncasecmp("enum(", source_row[1], 5))
+            strcpy(field_info->data_type, "enum");
+        else if (strlen(source_row[1]) > FN_LEN)
+            strcpy(field_info->data_type, "UNKNOWN");
+        else
+            strcpy(field_info->data_type, source_row[1]);
 
         LIST_ADD_LAST(link, table_info->field_lst, field_info);
         source_row = mysql_fetch_row(source_res);
@@ -7857,7 +7861,8 @@ int mysql_get_create_sql_backup_table(
     create_sql->append("tablename VARCHAR(64),");
     create_sql->append("port INT,");
     create_sql->append("time TIMESTAMP,");
-    create_sql->append("type VARCHAR(20)");
+    create_sql->append("type VARCHAR(20),");
+    create_sql->append("PRIMARY KEY(opid_time)");
 
     create_sql->append(")ENGINE INNODB DEFAULT CHARSET UTF8;");
 
