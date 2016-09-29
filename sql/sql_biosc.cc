@@ -152,6 +152,7 @@ int mysql_execute_alter_table_biosc(
     str_init(&new_sql);
     str_init(&new_table_name);
     str_init(&new_create_sql);
+    str_init(&old_create_sql);
     sprintf(timestamp, "%d", (int)now);
     str_append(&new_table_name, timestamp);
     str_append(&new_table_name, str_get(&sql_cache_node->tables.db_names));
@@ -253,6 +254,7 @@ int mysql_execute_alter_table_biosc(
     mysql_cond_destroy(&sql_cache_node->rename_ready_cond);
     mysql_cond_destroy(&sql_cache_node->alter_status);
     str_deinit(&new_table_name);
+    str_deinit(&old_create_sql);
     str_deinit(&new_create_sql);
     str_deinit(&new_sql);
     return false;
