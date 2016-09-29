@@ -1277,7 +1277,8 @@ typedef struct system_variables
   int inception_biosc_lock_wait_timeout;
   ulong inception_alter_table_method;
   int inception_biosc_retry_wait_time;
-  int inception_biosc_min_relay_time;
+  int inception_biosc_min_delay_time;
+  int inception_biosc_check_delay_period;
 
 } SV;
 

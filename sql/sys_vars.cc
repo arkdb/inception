@@ -1084,9 +1084,16 @@ static Sys_var_int32 Sys_inception_biosc_retry_wait_time(
     SESSION_VAR(inception_biosc_retry_wait_time), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, 1024), DEFAULT(1), BLOCK_SIZE(1));
 
-static Sys_var_int32 Sys_inception_biosc_min_relay_time(
-    "inception_biosc_min_relay_time",
-    "the wait timeout period when rename table, when timeout, then alter table retry ",
-    SESSION_VAR(inception_biosc_min_relay_time), CMD_LINE(REQUIRED_ARG),
+static Sys_var_int32 Sys_inception_biosc_min_delay_time(
+    "inception_biosc_min_delay_time",
+    "the minimun time period of delay time, when delay time is bigger then it, continue "
+    "to consume and wait the delay time less then this param",
+    SESSION_VAR(inception_biosc_min_delay_time), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, 65535), DEFAULT(10), BLOCK_SIZE(1));
+
+static Sys_var_int32 Sys_inception_biosc_check_delay_period(
+    "inception_biosc_check_delay_period",
+    "the numbers of events to apply between two checks of delay time",
+    SESSION_VAR(inception_biosc_check_delay_period), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024*1024), DEFAULT(10000), BLOCK_SIZE(1));
 

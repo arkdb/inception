@@ -137,6 +137,7 @@ int mysql_execute_alter_table_biosc(
     str_t     new_sql;
     str_t     new_table_name;
     str_t     new_create_sql;
+    str_t     old_create_sql;
     char      new_tablename[1024];
     char      old_tablename[1024];
     char      timestamp[1024];
@@ -182,13 +183,27 @@ int mysql_execute_alter_table_biosc(
     str_append(&new_create_sql, ".");
     str_append(&new_create_sql, str_get(&sql_cache_node->tables.table_names));
 
+    /* create old table statement */
+    str_append(&old_create_sql, "CREATE TABLE ");
+    str_append(&old_create_sql, str_get(&sql_cache_node->tables.db_names));
+    str_append(&old_create_sql, ".");
+    str_append(&old_create_sql, old_tablename);
+    str_append(&old_create_sql, " LIKE ");
+    str_append(&old_create_sql, str_get(&sql_cache_node->tables.db_names));
+    str_append(&old_create_sql, ".");
+    str_append(&old_create_sql, str_get(&sql_cache_node->tables.table_names));
+
     /* create new table and then alter it */
     if (mysql_execute_sql_with_retry(thd, mysql, str_get(&new_create_sql), NULL) ||
-        mysql_execute_sql_with_retry(thd, mysql, str_get(&new_sql), NULL))
+        mysql_execute_sql_with_retry(thd, mysql, str_get(&new_sql), NULL) ||
+        mysql_execute_sql_with_retry(thd, mysql, str_get(&old_create_sql), NULL))
         return true;
 
     sprintf(timestamp, "Create new table: %s.%s completely", 
         str_get(&sql_cache_node->tables.db_names), new_tablename);
+    mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
+    sprintf(timestamp, "Create magic/old table: %s.%s completely", 
+        str_get(&sql_cache_node->tables.db_names), old_tablename);
     mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
 
     strcpy(sql_cache_node->biosc_new_tablename, new_tablename);
@@ -1528,7 +1543,7 @@ inception_get_connection_id(
 
     sql_cache_node->rename_connectionid = strtoul(source_row[0], 0, 10);
     mysql_free_result(source_res1);
-    sprintf(osc_output, "[rename thread] Rename table thread get connection_id: %d",
+    sprintf(osc_output, "[Rename thread] Rename table thread get connection_id: %d",
         sql_cache_node->rename_connectionid);
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     return false;
@@ -1575,12 +1590,12 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
 
         /* waiting the master thread to lock the origin table and new table */
         sql_cache_node->rename_connectionid = 0;
-        sprintf(osc_output, "[rename thread] Rename table thread start to waiting");
+        sprintf(osc_output, "[Rename thread] Rename table thread start to waiting");
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         mysql_mutex_lock(&sql_cache_node->osc_lock);
         mysql_cond_wait(&sql_cache_node->rename_ready_cond, &sql_cache_node->osc_lock);
         mysql_mutex_unlock(&sql_cache_node->osc_lock);
-        sprintf(osc_output, "[rename thread] Rename table thread is awake");
+        sprintf(osc_output, "[Rename thread] Rename table thread is awake");
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
         if ((mysql = inception_init_binlog_connection(query_thd->thd_sinfo->host, 
@@ -1590,27 +1605,27 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
             if (inception_get_connection_id(thd, mysql, sql_cache_node) ||
                 mysql_execute_sql_with_retry(thd, mysql, set_var_sql, NULL))
             {
-                sprintf(osc_output, "[rename thread] Alter table abort");
+                sprintf(osc_output, "[Rename thread] Alter table abort");
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 sql_cache_node->osc_abort = true;
                 break;
             }
 
-            sprintf(osc_output, "[rename thread] Rename table start "
+            sprintf(osc_output, "[Rename thread] Rename table start "
                 "to blocking, timout: %d", thd->variables.inception_biosc_lock_wait_timeout);
             mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             if ((ret = mysql_execute_sql_with_retry(thd, mysql, rename_sql, NULL)) > 0)
             {
                 if (ret == 1205/* ER_LOCK_WAIT_TIMEOUT */)
                 {
-                    sprintf(osc_output, "[rename thread] Table rename timeout(%d)", 
+                    sprintf(osc_output, "[Rename thread] Table rename timeout(%d)", 
                         thd->variables.inception_biosc_lock_wait_timeout);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     sql_cache_node->rename_timeout = true;
                 }
                 else
                 {
-                    sprintf(osc_output, "[rename thread] Alter table abort");
+                    sprintf(osc_output, "[Rename thread] Alter table abort");
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     sql_cache_node->osc_abort = true;
                     break;
@@ -1618,7 +1633,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
             }
             else
             {
-                sprintf(osc_output, "[rename thread] Successfully altered `%s`.`%s`.", 
+                sprintf(osc_output, "[Rename thread] Successfully altered `%s`.`%s`.", 
                     str_get(&sql_cache_node->tables.db_names), 
                     str_get(&sql_cache_node->tables.table_names));
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
@@ -1629,7 +1644,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                     sql_cache_node->mts_queue->event_count, 0, 0, 0);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
-                sprintf(osc_output, "[rename thread] Locked table for %lld(ms)", 
+                sprintf(osc_output, "[Rename thread] Locked table for %lld(ms)", 
                     (my_getsystime() - sql_cache_node->start_lock_time)/10000);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             }
@@ -1638,7 +1653,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
         mysql_cond_signal(&sql_cache_node->alter_status);
     }
 
-    sprintf(osc_output, "[rename thread] Rename thread exit");
+    sprintf(osc_output, "[Rename thread] Rename thread exit");
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     delete thd;
     my_thread_end();
@@ -1884,19 +1899,20 @@ int inception_catch_binlog_relay(
     MYSQL_RES *source_res1;
     MYSQL_ROW  source_row;
     char      osc_output[1024];
+    ulonglong last_report_time = 0;
 
 execute_continue:
     to_execute = inception_event_dequeue(thd, sql_cache_node);
     while (to_execute && !inception_biosc_abort(thd, sql_cache_node))
     {
-        if (exec_count > 100)
-            break;
         if (mysql_execute_sql_with_retry(thd, mysql, str_get(to_execute), NULL))
             return true;
         sql_cache_node->mts_queue->dequeue_index = 
           (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
         to_execute = inception_event_dequeue(thd, sql_cache_node);
         exec_count++;
+        if (exec_count > thd->variables.inception_biosc_check_delay_period)
+            break;
     }
 
     if (!to_execute)
@@ -1923,11 +1939,19 @@ execute_continue:
         }
 
         delay_time = strtoul(source_row[0], 0, 10);
-        if (delay_time > thd->variables.inception_biosc_min_relay_time)
+        if (delay_time > thd->variables.inception_biosc_min_delay_time)
         {
-            sprintf(osc_output, "[Master thread] Binlog catch delay %d(s), "
-                "lock tables is delayed, continue to catch up...", delay_time);
-            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+            /* 每隔3秒才输出一次，不然有时候会太频繁，每
+             * 一次必须会输出，因为last_report_time为0 */
+            if (my_getsystime() - last_report_time > (3 * 10000000))
+            {
+                sprintf(osc_output, "[Master thread] Binlog catch delay %d(s), "
+                    "lock tables is delayed, continue to catch up...", delay_time);
+                mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+            }
+
+            last_report_time = my_getsystime();
+            exec_count = 0;
             goto execute_continue;
         }
     }
@@ -1942,6 +1966,7 @@ int inception_rename_table(
 {
     MYSQL*    mysql = NULL;
     char      lock_sql[1024];
+    char      drop_old_table[1024];
     char      set_var_sql[1024];
     int       locked = false;
     int       ret;
@@ -1953,9 +1978,15 @@ int inception_rename_table(
     char      osc_output[1024];
     struct timespec abstime;
 
-    sprintf(lock_sql, "LOCK TABLES `%s`.`%s` WRITE, `%s`.`%s` WRITE", 
+    sprintf(drop_old_table, "DROP TABLE `%s`.`%s` ", 
+        str_get(&sql_cache_node->tables.db_names), 
+        sql_cache_node->biosc_old_tablename);
+    sprintf(unlock_tables, "UNLOCK TABLES");
+    sprintf(lock_sql, "LOCK TABLES `%s`.`%s` WRITE, `%s`.`%s` WRITE, `%s`.`%s` WRITE", 
         str_get(&sql_cache_node->tables.db_names), 
         str_get(&sql_cache_node->tables.table_names),
+        str_get(&sql_cache_node->tables.db_names), 
+        sql_cache_node->biosc_old_tablename,
         str_get(&sql_cache_node->tables.db_names), 
         sql_cache_node->biosc_new_tablename);
     sprintf(unlock_tables, "UNLOCK TABLES");
@@ -2012,8 +2043,8 @@ reconnect:
                     goto reconnect;
 
                 /* 如果没有上锁成功，则需要重新再来 */
-                sprintf(osc_output, "[Master thread] Lock origin table and new table, "
-                    "retry: %d", lock_count++);
+                sprintf(osc_output, "[Master thread] Lock origin table, new table "
+                    "and magic table, retry: %d", lock_count++);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 if (mysql_execute_sql_with_retry(thd, mysql, lock_sql, NULL))
                     goto reconnect;
@@ -2086,8 +2117,16 @@ reconnect:
                     {
                         /* 两种可能：成功改表及需要重来，不管哪种，都需要将表锁释放掉*/
                         locked = false;
+
                         /* 下面的解锁操作，不管成功还是失败，结果都是一样的，通过等待
                          * RENAME线程的结果来判断得新来还是放弃改表，或者成功改表 */
+                        /* 如果删除表操作失败了，则说明表没有删掉，锁还是可以放的
+                         * 如果表成功删掉了，那再放锁，成功改表 */
+                        sprintf(osc_output, "[Master thread] Drop magic/old table");
+                        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+                        mysql_execute_sql_with_retry(thd, mysql, drop_old_table, NULL);
+                        sprintf(osc_output, "[Master thread] unlock tables");
+                        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                         mysql_execute_sql_with_retry(thd, mysql, unlock_tables, NULL);
                         /* 如果已经完成，则这里就结束了，否则就重新来过 */
                         if (inception_wait_biosc_complete(thd, sql_cache_node))
