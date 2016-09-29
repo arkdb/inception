@@ -27,7 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "errmsg.h"
 
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
-int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node);
+int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node, time_t timestamp);
 pthread_handler_t inception_move_rows_thread(void* arg);
 pthread_handler_t inception_catch_binlog_thread(void* arg);
 int inception_get_master_status( THD* thd, sql_cache_node_t* sql_cache_node, int after);
@@ -657,6 +657,7 @@ int inception_biosc_write_row(
     str_t*                  backup_sql;
     table_info_t*           table_info;
     THD*                    thd;
+    time_t last_event_timestamp;
 
     DBUG_ENTER("inception_biosc_write_row");
     write_ev = (Write_rows_log_event*)ev;
@@ -706,7 +707,8 @@ int inception_biosc_write_row(
             }
         }
 
-        inception_event_enqueue(thd, sql_cache_node);
+        last_event_timestamp = write_ev->get_time() + write_ev->exec_time;
+        inception_event_enqueue(thd, sql_cache_node, last_event_timestamp);
     }while(!error && write_ev->m_rows_end != write_ev->m_curr_row);
 
 error:
@@ -1236,8 +1238,9 @@ error:
 
 int 
 inception_event_enqueue(
-    THD*  thd,
-    sql_cache_node_t* sql_cache_node
+    THD*              thd,
+    sql_cache_node_t* sql_cache_node,
+    time_t            last_event_timestamp
 )
 {
     mts_thread_queue_t* element;
@@ -1247,9 +1250,33 @@ inception_event_enqueue(
     element = sql_cache_node->current_element;
     mysql_mutex_lock(&element->element_lock);
     element->valid = true;
+    element->timestamp = last_event_timestamp;
     mysql_mutex_unlock(&element->element_lock);
     // mysql_cond_broadcast(&sql_cache_node->mts_cond);
     return false;
+}
+
+mts_thread_queue_t*
+inception_event_get_next(
+    THD*  thd,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    mts_thread_queue_t* element = NULL;
+    mts_thread_t* mts_thread;
+    str_t*        sql_buffer = NULL;
+
+    mts_thread = sql_cache_node->mts_queue;
+    if (mts_thread->dequeue_index != mts_thread->enqueue_index)
+    {
+        element = &mts_thread->thread_queue[mts_thread->dequeue_index];
+        if (element->valid)
+        {
+            return element;
+        }
+    }
+
+    return element;
 }
 
 str_t*
@@ -1843,6 +1870,70 @@ int inception_wait_biosc_complete(
     return false;
 }
 
+int inception_catch_binlog_relay(
+    THD*              thd,
+    MYSQL*            mysql,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    str_t*    to_execute;
+    mts_thread_queue_t*    execute_sql;
+    char                    delay_sql[128];
+    int                     delay_time;
+    int                     exec_count = 0;
+    MYSQL_RES *source_res1;
+    MYSQL_ROW  source_row;
+    char      osc_output[1024];
+
+execute_continue:
+    to_execute = inception_event_dequeue(thd, sql_cache_node);
+    while (to_execute && !inception_biosc_abort(thd, sql_cache_node))
+    {
+        if (exec_count > 100)
+            break;
+        if (mysql_execute_sql_with_retry(thd, mysql, str_get(to_execute), NULL))
+            return true;
+        sql_cache_node->mts_queue->dequeue_index = 
+          (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
+        to_execute = inception_event_dequeue(thd, sql_cache_node);
+        exec_count++;
+    }
+
+    if (!to_execute)
+        return false;
+
+    /* 暂停一会儿，先检查一下进度，决定要不要开始锁表 */
+    execute_sql = inception_event_get_next(thd, sql_cache_node);
+    if (execute_sql->timestamp)
+    {
+        sprintf(delay_sql, "select UNIX_TIMESTAMP()-%ld", execute_sql->timestamp);
+        if (mysql_real_query(mysql, delay_sql, strlen(delay_sql)) ||
+           (source_res1 = mysql_store_result(mysql)) == NULL)
+        {
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+            return true;
+        }
+
+        source_row = mysql_fetch_row(source_res1);
+        if (source_row == NULL)
+        {
+            mysql_free_result(source_res1);
+            return true;
+        }
+
+        delay_time = strtoul(source_row[0], 0, 10);
+        if (delay_time > thd->variables.inception_biosc_min_relay_time)
+        {
+            sprintf(osc_output, "[Master thread] Binlog catch delay %d(s), "
+                "lock tables is delayed, continue to catch up...", delay_time);
+            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+            goto execute_continue;
+        }
+    }
+
+    return false;
+}
 
 int inception_rename_table(
     THD*  thd,
@@ -1887,6 +1978,7 @@ int inception_rename_table(
         thd->variables.inception_biosc_lock_wait_timeout, 1);
 
     sprintf(osc_output, "[Master thread] Start to consume the increament SQL(s)");
+    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 reconnect:
     if (!(mysql = inception_get_connection_with_retry(thd)))
     {
@@ -1895,7 +1987,6 @@ reconnect:
         goto error;
     }
 
-    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     while(!inception_biosc_abort(thd, sql_cache_node))
     {
         /* 如果COPY数据已经完成，则处理换表名的事儿 */
@@ -1914,9 +2005,12 @@ reconnect:
         {
             if (mysql_execute_sql_with_retry(thd, mysql, set_var_sql, NULL))
                 goto reconnect;
-            /* TODO: 判断有没有延迟，如果延迟比较长的话，还不能去锁表 */
             if (!locked)
             {
+                /* TODO: 判断有没有延迟，如果延迟比较长的话，还不能去锁表 */
+                if (inception_catch_binlog_relay(thd, mysql, sql_cache_node))
+                    goto reconnect;
+
                 /* 如果没有上锁成功，则需要重新再来 */
                 sprintf(osc_output, "[Master thread] Lock origin table and new table, "
                     "retry: %d", lock_count++);

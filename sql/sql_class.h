@@ -401,6 +401,7 @@ struct mts_thread_queue_struct
     char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
     volatile longlong   eid;
     volatile longlong   tid;
+    time_t              timestamp;
 };
 
 typedef struct mts_thread_struct mts_thread_t;
@@ -1276,6 +1277,7 @@ typedef struct system_variables
   int inception_biosc_lock_wait_timeout;
   ulong inception_alter_table_method;
   int inception_biosc_retry_wait_time;
+  int inception_biosc_min_relay_time;
 
 } SV;
 
