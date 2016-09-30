@@ -514,6 +514,7 @@ struct sql_cache_node_struct
     mysql_mutex_t       mts_lock;
     ulonglong start_lock_time ;
     pthread_t binlog_catch_threadid;
+    THD*        binlog_catch_thread;
 
     LIST_NODE_T(sql_cache_node_t) link;
 };

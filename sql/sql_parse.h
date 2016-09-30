@@ -269,5 +269,6 @@ int mysql_binlog_position_compare( char* binlog_file_1, int   binlog_pos_1, char
 MYSQL* inception_init_binlog_connection( char* hostname, int port, char* username, char* password);
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
 ulong start_timer(void);
+void mysql_errmsg_append_sql_cache( THD * thd, sql_cache_node_t* sql_cache);
 
 #endif /* SQL_PARSE_INCLUDED */
