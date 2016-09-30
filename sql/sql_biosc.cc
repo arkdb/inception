@@ -1887,6 +1887,25 @@ int inception_wait_biosc_complete(
     return false;
 }
 
+int inception_check_biosc_abort(
+    THD*              thd,
+    sql_cache_node_t* sql_cache_node,
+    int               delay_time,
+    int               last_delay_time,
+    int               first_delay,
+    int*              asc_count
+)
+{
+    if (first_delay >= delay_time || delay_time > last_delay_time)
+        *asc_count = *asc_count + 1;
+
+    if (*asc_count > 20)
+        return true;
+
+    *asc_count = 0;
+    return false;
+}
+
 int inception_catch_binlog_relay(
     THD*              thd,
     MYSQL*            mysql,
@@ -1896,12 +1915,15 @@ int inception_catch_binlog_relay(
     str_t*    to_execute;
     mts_thread_queue_t*    execute_sql;
     char                    delay_sql[128];
-    int                     delay_time;
+    int                     delay_time = 0;
     int                     exec_count = 0;
     MYSQL_RES *source_res1;
     MYSQL_ROW  source_row;
     char      osc_output[1024];
     ulonglong last_report_time = 0;
+    ulonglong first_delay = 0;
+    int       asc_count = 0;
+    int       last_delay_time = 0;
 
 execute_continue:
     to_execute = inception_event_dequeue(thd, sql_cache_node);
@@ -1940,6 +1962,7 @@ execute_continue:
             return true;
         }
 
+        last_delay_time = delay_time;
         delay_time = strtoul(source_row[0], 0, 10);
         if (delay_time > thd->variables.inception_biosc_min_delay_time)
         {
@@ -1952,8 +1975,22 @@ execute_continue:
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             }
 
+            if (last_delay_time == 0)
+                last_delay_time = delay_time;
+            if (first_delay == 0)
+                first_delay = delay_time;
             last_report_time = my_getsystime();
             exec_count = 0;
+            if (inception_check_biosc_abort(thd, sql_cache_node, 
+                delay_time, last_delay_time, first_delay, &asc_count))
+            {
+                sprintf(osc_output, "[Master thread] Binlog increment "
+                    "too fast, consumer can not catch up, give up...");
+                mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+                sql_cache_node->osc_abort = true;
+                return true;
+            }
+
             goto execute_continue;
         }
     }
