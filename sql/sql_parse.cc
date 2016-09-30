@@ -2250,34 +2250,21 @@ mysql_errmsg_append_sql_cache(
     sql_cache_node_t* sql_cache
 )
 {
-    if (thd->is_error() && 
-        thd->have_begin && 
-        inception_get_type(thd) != INCEPTION_TYPE_SPLIT)
+    if (thd->is_error() && mysql_check_inception_variables(thd))
     {
-        if (mysql_check_inception_variables(thd))
+        if (sql_cache->errmsg == NULL)
         {
-            if ((inception_get_type(thd) == INCEPTION_TYPE_PRINT && 
-                mysql_get_err_level_by_errno(thd) == INCEPTION_PARSE) || 
-                inception_get_type(thd) != INCEPTION_TYPE_PRINT)
-            {
-                if (sql_cache->errmsg == NULL)
-                {
-                    sql_cache->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-                    str_init(sql_cache->errmsg);
-                }
-
-                str_append(sql_cache->errmsg, thd->get_stmt_da()->message());
-                str_append(sql_cache->errmsg, "\n");
-                sql_cache->errlevel |= mysql_get_err_level_by_errno(thd);
-            }
+            sql_cache->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+            str_init(sql_cache->errmsg);
         }
 
+        str_append(sql_cache->errmsg, thd->get_stmt_da()->message());
+        str_append(sql_cache->errmsg, "\n");
+        sql_cache->errlevel |= mysql_get_err_level_by_errno(thd);
         thd->clear_error();
     }
-
-    if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT)
-        thd->clear_error();
 }
+
 void
 mysql_errmsg_append(
     THD * thd
