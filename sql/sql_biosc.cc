@@ -685,7 +685,9 @@ int inception_biosc_write_row(
         
     do
     {
-        backup_sql = inception_get_sql_execute_element(thd, sql_cache_node);
+        if (!(backup_sql = inception_get_sql_execute_element(thd, sql_cache_node)))
+            goto error;
+
         if (mysql_unpack_row(mi, write_ev->get_table_id(), write_ev->m_curr_row, 
               write_ev->get_cols(), &write_ev->m_curr_row_end, write_ev->m_rows_end, false))
         {
