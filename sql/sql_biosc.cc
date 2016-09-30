@@ -1897,10 +1897,12 @@ int inception_check_biosc_abort(
 )
 {
     if (first_delay >= delay_time || delay_time > last_delay_time)
+    {
         *asc_count = *asc_count + 1;
-
-    if (*asc_count > 20)
-        return true;
+        if (*asc_count > 20)
+            return true;
+        return false;
+    }
 
     *asc_count = 0;
     return false;
