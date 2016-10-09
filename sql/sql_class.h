@@ -515,6 +515,9 @@ struct sql_cache_node_struct
     ulonglong start_lock_time ;
     pthread_t binlog_catch_threadid;
     THD*        binlog_catch_thread;
+    ulonglong   total_rows;
+    char        rename_table[NAME_CHAR_LEN]; //执行所用时间 
+    char        rename_db[NAME_CHAR_LEN]; //执行所用时间 
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -3607,6 +3610,8 @@ public:
   int             useflag;//use temporary where set names utf8, when analyze next statement, reset it
   int          setnamesflag;//the same to above;
   str_t*        show_result;
+  str_t*        osc_select_columns;
+  str_t*        osc_insert_columns;
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
   volatile      int thread_state;

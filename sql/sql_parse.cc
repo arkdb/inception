@@ -2245,27 +2245,6 @@ mysql_errmsg_append_without_errno_osc(
 }
 
 void
-mysql_errmsg_append_sql_cache(
-    THD * thd,
-    sql_cache_node_t* sql_cache
-)
-{
-    if (thd->is_error() && mysql_check_inception_variables(thd))
-    {
-        if (sql_cache->errmsg == NULL)
-        {
-            sql_cache->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-            str_init(sql_cache->errmsg);
-        }
-
-        str_append(sql_cache->errmsg, thd->get_stmt_da()->message());
-        str_append(sql_cache->errmsg, "\n");
-        sql_cache->errlevel |= mysql_get_err_level_by_errno(thd);
-        thd->clear_error();
-    }
-}
-
-void
 mysql_errmsg_append(
     THD * thd
 )
@@ -10849,6 +10828,103 @@ int mysql_show_table_status(THD *thd, table_info_t* table_info)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_select_insert_column(
+    THD *thd,
+    char*             column_name,
+    int               *insert_use,
+    int               *select_use,
+    char*             insert_column_name
+)
+{
+    int err;
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+    char        tmp_buf[256];
+    DBUG_ENTER("mysql_select_insert_column");
+
+    while (alter_info_ptr->flags)
+    {
+        if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
+            alter_info_ptr->flags & Alter_info::ALTER_COLUMN_ORDER)
+        {
+            *insert_use = false;
+            *select_use = false;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            *insert_use = true;
+            *select_use = true;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            *insert_use = mysql_drop_column_select(thd, column_name);
+            *select_use = *insert_use;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
+        {
+            strcpy(sql_cache_node->rename_db, thd->lex->select_lex.db);
+            strcpy(sql_cache_node->rename_table, thd->lex->name.str);
+            *select_use = *insert_use = true;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            *select_use = *insert_use = true;
+            mysql_change_column_select(thd, column_name, insert_column_name);
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            *insert_use = true;
+            *select_use = true;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
+        {
+            *insert_use = true;
+            *select_use = true;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_OPTIONS)
+        {
+            *insert_use = true;
+            *select_use = true;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_CONVERT)
+        {
+            *insert_use = true;
+            *select_use = true;
+        }
+        else
+        {
+            my_error(ER_NOT_SUPPORTED_YET, MYF(0));
+            mysql_errmsg_append(thd);
+            break;
+        }
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
+int mysql_check_alter_use_osc_type(
+    THD*            thd,
+    table_info_t*   table_info
+)
+{
+    field_info_t*     field_node;
+    int               insert_use;
+    int               select_use;
+    char              insert_column_name[FN_LEN];
+
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        mysql_select_insert_column(thd, field_node->field_name, 
+            &insert_use, &select_use, insert_column_name);
+
+        field_node = LIST_GET_NEXT(link, field_node);
+    }
+       
+    return FALSE;
+}
+
 int mysql_check_alter_use_osc(
     THD*            thd,
     table_info_t*   table_info
@@ -17502,6 +17578,8 @@ int mysql_init_sql_cache(THD* thd)
     LIST_INIT(thd->tablecache.tablecache_lst);
     LIST_INIT(thd->dbcache.dbcache_lst);
     thd->rt_lst = NULL;
+    thd->osc_select_columns = NULL;
+    thd->osc_insert_columns = NULL;
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache = (split_cache_t*)my_malloc(sizeof(split_cache_t), MY_ZEROFILL);

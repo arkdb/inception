@@ -270,5 +270,6 @@ MYSQL* inception_init_binlog_connection( char* hostname, int port, char* usernam
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
 ulong start_timer(void);
 void mysql_errmsg_append_sql_cache( THD * thd, sql_cache_node_t* sql_cache);
+void mysql_sqlcachenode_errmsg_append(THD* thd, sql_cache_node_t* node, int type) ;
 
 #endif /* SQL_PARSE_INCLUDED */

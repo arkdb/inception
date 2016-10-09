@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "thr_alarm.h"
 #include "errmsg.h"
 
+int inception_get_table_rows(THD* thd, sql_cache_node_t* sql_cache_node);
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows, sql_cache_node_t* sql_cache_node);
 int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node, time_t timestamp);
 pthread_handler_t inception_move_rows_thread(void* arg);
@@ -74,6 +75,64 @@ int inception_stop_dump(
     return false;
 }
 
+int mysql_update_biosc_progress(
+    THD* thd, 
+    sql_cache_node_t* sql_cache_node,
+    ulonglong start_lock_time,
+    ulonglong sum_affected_rows 
+)
+{
+    int percent = -1;
+    char    timeremain[100];
+    osc_percent_cache_t* osc_percent_node;
+    double clockperrow = 0;
+    double remainclock= 0;
+
+    DBUG_ENTER("mysql_update_biosc_progress");
+
+    mysql_mutex_lock(&osc_mutex); 
+
+    osc_percent_node = LIST_GET_FIRST(global_osc_cache.osc_lst);
+    while(osc_percent_node)
+    {
+        if (!strcasecmp(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1))
+            break;
+
+        osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
+    }
+
+    if (osc_percent_node == NULL)
+    {
+        osc_percent_node = (osc_percent_cache_t*)my_malloc(
+            sizeof(osc_percent_cache_t), MY_ZEROFILL);
+        osc_percent_node->percent = 0;
+        osc_percent_node->start_timer = start_timer();
+        strcpy(osc_percent_node->dbname, str_get(&sql_cache_node->tables.db_names));
+        strcpy(osc_percent_node->tablename, str_get(&sql_cache_node->tables.table_names));
+        strcpy(osc_percent_node->remaintime, "");
+        strcpy(osc_percent_node->execute_time, "");
+        strcpy(osc_percent_node->sqlsha1, sql_cache_node->sqlsha1);
+        osc_percent_node->sql_cache_node = sql_cache_node;
+        LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
+    }
+
+    clockperrow = ((double)(my_getsystime() - 
+          start_lock_time)) / (double)sum_affected_rows;
+
+    if (sum_affected_rows < sql_cache_node->total_rows)
+    {
+        osc_percent_node->percent = ((double)sum_affected_rows / 
+            (double)sql_cache_node->total_rows) * 100;
+        remainclock = (sql_cache_node->total_rows - sum_affected_rows) * clockperrow;
+        sprintf(osc_percent_node->remaintime, "%.3f(s)", remainclock / 10000000);
+        sprintf(osc_percent_node->execute_time, "%.3f",
+            (double)(start_timer() - osc_percent_node->start_timer) / CLOCKS_PER_SEC);
+    }
+
+    mysql_mutex_unlock(&osc_mutex);
+    DBUG_RETURN(false);
+}
+
 int mysql_analyze_biosc_output(
     THD* thd, 
     char* tmp, 
@@ -95,8 +154,6 @@ int mysql_analyze_biosc_output(
         {
             osc_percent_node->percent = 0;
             strcpy(osc_percent_node->remaintime, "\0");
-            sprintf(osc_percent_node->execute_time, "%.3f",
-                (double)(start_timer() - osc_percent_node->start_timer) / CLOCKS_PER_SEC);
             break;
         }
 
@@ -118,12 +175,6 @@ int mysql_analyze_biosc_output(
         LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
     }
 
-    if (sql_cache_node->osc_complete)
-    {
-        percent = 100;
-        strcpy(timeremain, "00:00");
-        sql_cache_node->oscpercent = 100;
-    }
     //因为有了进度查询，所以输出中的进度就不再打印了
     sql_cache_node->oscoutput = str_append(sql_cache_node->oscoutput, tmp);
     sql_cache_node->oscoutput = str_append(sql_cache_node->oscoutput, "\n");
@@ -147,6 +198,7 @@ int mysql_execute_alter_table_biosc(
     char      timestamp[1024];
     time_t now= my_time(0);
     pthread_t threadid;
+    int       ret = false;
 
     /* sha1 compute from time+dbname+seqno */
     sql_cache_node->oscoutput = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
@@ -220,7 +272,10 @@ int mysql_execute_alter_table_biosc(
     mysql_cond_init(NULL, &sql_cache_node->alter_status, NULL);
 
     /* show MASTER STAUTS FIRST, and then copy rows */
-    inception_get_master_status(thd, sql_cache_node, false);
+    if (inception_get_master_status(thd, sql_cache_node, false) ||
+        inception_get_table_rows(thd, sql_cache_node)) 
+        return true;
+
     sprintf(timestamp, "Get the binary log position before copy rows: %s:%d", 
         sql_cache_node->start_binlog_file, sql_cache_node->start_binlog_pos);
     mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
@@ -245,7 +300,7 @@ int mysql_execute_alter_table_biosc(
         inception_catch_binlog_thread, (void*)sql_cache_node))
     {
         my_message(ER_CREATE_THREAD_ERROR, "Copy rows or binlog parse", MYF(0));
-        mysql_errmsg_append(thd);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         return true;
     }
 
@@ -253,6 +308,14 @@ int mysql_execute_alter_table_biosc(
     inception_rename_table(thd, sql_cache_node);
     inception_stop_dump(sql_cache_node);
     inception_cleanup_biosc(thd, sql_cache_node);
+
+    /* 如果出错了，就把详细信息打印出来 */
+    if (sql_cache_node->osc_abort || !inception_osc_print_none)
+    {
+        str_append(sql_cache_node->errmsg, str_get(sql_cache_node->oscoutput));
+        if (sql_cache_node->osc_abort)
+            ret = true;
+    }
 
     mysql_mutex_destroy(&sql_cache_node->osc_lock);
     mysql_cond_destroy(&sql_cache_node->stop_cond);
@@ -262,9 +325,51 @@ int mysql_execute_alter_table_biosc(
     str_deinit(&old_create_sql);
     str_deinit(&new_create_sql);
     str_deinit(&new_sql);
-    return false;
+    return ret;
 }
 
+int
+inception_get_table_rows(
+    THD*              thd, 
+    sql_cache_node_t* sql_cache_node
+)
+{
+    MYSQL_RES *source_res1;
+    MYSQL_ROW  source_row;
+    MYSQL* mysql;
+    char    tmp[128];
+
+    mysql = inception_get_connection_with_retry(thd);
+    if (!mysql)
+    {
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+        return true;
+    }
+
+    sprintf (tmp, "SHOW TABLE STATUS FROM `%s` LIKE '%s'",
+        str_get(&sql_cache_node->tables.db_names),
+        str_get(&sql_cache_node->tables.table_names));
+
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+       (source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+        return true;
+    }
+
+    source_row = mysql_fetch_row(source_res1);
+    if (source_row == NULL)
+    {
+        mysql_free_result(source_res1);
+        return true;
+    }
+
+    sql_cache_node->total_rows = strtoul(source_row[4], 0, 10);
+
+    mysql_free_result(source_res1);
+    return false;
+}
 int
 inception_get_master_status(
     THD*              thd, 
@@ -280,7 +385,7 @@ inception_get_master_status(
     mysql = inception_get_connection_with_retry(thd);
     if (!mysql)
     {
-        mysql_errmsg_append(thd);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         return true;
     }
 
@@ -289,7 +394,7 @@ inception_get_master_status(
        (source_res1 = mysql_store_result(mysql)) == NULL)
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-        mysql_errmsg_append(thd);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         return true;
     }
 
@@ -663,7 +768,7 @@ error:
         goto retry;
 
     my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-    mysql_errmsg_append_sql_cache(thd, sql_cache_node);
+    mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
 
     return true;
 }
@@ -865,7 +970,7 @@ int inception_get_table_select_where(
     mysql = inception_get_connection_with_retry(thd);
     if (!mysql)
     {
-        mysql_errmsg_append_sql_cache(thd, sql_cache_node);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         return true;
     }
 
@@ -873,7 +978,7 @@ int inception_get_table_select_where(
        (source_res1 = mysql_store_result(mysql)) == NULL)
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-        mysql_errmsg_append_sql_cache(thd, sql_cache_node);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         return true;
     }
 
@@ -964,6 +1069,75 @@ int inception_get_table_primary_keys(
     }
 
     return false;
+}
+
+int mysql_drop_column_select(
+    THD *thd,
+    char*             column_name
+)
+{
+    table_info_t* table_info;
+    Alter_drop*  field;
+    field_info_t* field_info;
+    int    found = FALSE;
+
+    DBUG_ENTER("mysql_drop_column_select");
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
+
+    while ((field=fields++))
+    {
+        if (field->type != Alter_drop::COLUMN)
+            continue;
+
+        found = FALSE;
+        if (strcasecmp(column_name, field->name) == 0)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    DBUG_RETURN(!found);
+}
+
+int mysql_change_column_select(
+    THD *thd,
+    char*             column_name,
+    char*             insert_column_name
+)
+{
+    table_info_t* table_info;
+    Create_field* field;
+    field_info_t* field_info;
+    int    found = FALSE;
+
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Create_field> fields(alter_info_ptr->create_list);
+
+    DBUG_ENTER("mysql_check_change_column");
+
+    strcpy(insert_column_name, "\0");
+    while ((field=fields++))
+    {
+        if (field->change == NULL)
+            continue;
+
+        /* 在审核的时候，列名有可能已经被修改过了，所以这里需要比较的是新名字 */
+        if (strcasecmp(column_name, (char*)field->field_name) == 0)
+        {
+            strcpy(insert_column_name, (char*)field->change);
+            break;
+        }
+    }
+
+    DBUG_RETURN(true);
 }
 
 int inception_get_insert_new_table_sql(
@@ -1106,6 +1280,9 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     int         complete = false;
     my_ulonglong affected_rows = 0;
     my_ulonglong sum_affected_rows = 0;
+    ulonglong         start_lock_time;
+    double clockperrow = 0;
+    double remainclock= 0;
 
     my_thread_init();
 
@@ -1148,7 +1325,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
         sprintf(osc_output, "[Copy thread] Alter table abort");
         mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
         sql_cache_node->biosc_copy_complete = 2;
-        mysql_errmsg_append_sql_cache(thd, sql_cache_node);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         goto error;
     }
 
@@ -1157,6 +1334,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
         &select_prefix, &primary_cols, sql_cache_node);
     inception_get_insert_new_table_sql(&insert_select_prefix, sql_cache_node);
 
+    start_lock_time = my_getsystime();
     /* 获取找到第一条记录的SQL语句 */
     inception_get_copy_rows_batch_sql(&select_prefix, NULL, &primary_cols, 
         &execute_sql, sql_cache_node, first_time);
@@ -1235,6 +1413,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
                 goto error;
             }
             sum_affected_rows += affected_rows;
+            mysql_update_biosc_progress(thd, sql_cache_node, start_lock_time, sum_affected_rows);
         }
     }
 
@@ -1385,7 +1564,7 @@ reconnect:
             thd->get_stmt_da()->message());
         mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
         sql_cache_node->osc_abort = true;
-        mysql_errmsg_append_sql_cache(thd, sql_cache_node);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         goto error;
     }
 
@@ -1653,6 +1832,8 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                     str_get(&sql_cache_node->tables.table_names));
                 mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
                 sql_cache_node->osc_complete = true;
+                osc_percent_node->percent = 100;
+                sprintf(osc_percent_node->remaintime, "%.3f(s)", 0);
 
                 sprintf(osc_output, "[Master thread] Increament SQL(s) consume over, "
                     "exactly %lld rows, including %d insert(s), %d update(s), %d delete(s)", 
@@ -1736,7 +1917,7 @@ int inception_catch_rename_blocked_in_processlist(
 
             if (!(mysql = inception_get_connection_with_retry(thd)))
             {
-                mysql_errmsg_append(thd);
+                mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
                 return 1;
             }
 
@@ -1747,7 +1928,7 @@ int inception_catch_rename_blocked_in_processlist(
                (source_res1 = mysql_store_result(mysql)) == NULL)
             {
                 my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-                mysql_errmsg_append(thd);
+                mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
                 return 1;
             }
 
@@ -1874,6 +2055,48 @@ int inception_cleanup_biosc(
     sql_cache_node_t* sql_cache_node
 )
 {
+    char      new_tablename[1024];
+    char      old_tablename[1024];
+    MYSQL*    mysql;
+    char      osc_output[1024];
+
+    if (!(mysql = inception_get_connection_with_retry(thd)))
+    {
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+        return false;
+    }
+
+    sprintf(new_tablename, "DROP TABLE IF exists `%s`.`%s`", 
+        str_get(&sql_cache_node->tables.db_names), 
+        sql_cache_node->biosc_new_tablename);
+    sprintf(new_tablename, "DROP TABLE IF exists `%s`.`%s`", 
+        str_get(&sql_cache_node->tables.db_names), 
+        sql_cache_node->biosc_old_tablename);
+
+    if (thd->variables.inception_osc_drop_old_table)
+    {
+        sprintf(osc_output, "[Master thread] Drop old table `%s`.`%s`",
+            str_get(&sql_cache_node->tables.db_names), 
+            sql_cache_node->biosc_old_tablename);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+    }
+
+    if (!thd->variables.inception_osc_drop_old_table || 
+        mysql_execute_sql_with_retry(thd, mysql, old_tablename, NULL, sql_cache_node))
+        return true;
+
+    if (thd->variables.inception_osc_drop_new_table)
+    {
+        sprintf(osc_output, "[Master thread] Drop new table `%s`.`%s`",
+            str_get(&sql_cache_node->tables.db_names), 
+            sql_cache_node->biosc_new_tablename);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+    }
+
+    if (!thd->variables.inception_osc_drop_new_table || 
+        mysql_execute_sql_with_retry(thd, mysql, new_tablename, NULL, sql_cache_node))
+        return true;
+
     return false;
 }
 
@@ -1921,7 +2144,7 @@ int inception_check_biosc_abort(
     return false;
 }
 
-int inception_catch_binlog_relay(
+int inception_catch_binlog_delay(
     THD*              thd,
     MYSQL*            mysql,
     sql_cache_node_t* sql_cache_node
@@ -1966,7 +2189,7 @@ execute_continue:
            (source_res1 = mysql_store_result(mysql)) == NULL)
         {
             my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
-            mysql_errmsg_append(thd);
+            mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
             return true;
         }
 
@@ -2054,7 +2277,7 @@ int inception_rename_table(
         inception_rename_to_block_request_thread, (void*)sql_cache_node))
     {
         my_message(ER_CREATE_THREAD_ERROR, "rename table", MYF(0));
-        mysql_errmsg_append(thd);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         sql_cache_node->osc_abort = true;
         goto error;
     }
@@ -2070,7 +2293,7 @@ int inception_rename_table(
 reconnect:
     if (!(mysql = inception_get_connection_with_retry(thd)))
     {
-        mysql_errmsg_append(thd);
+        mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
         sql_cache_node->osc_abort = true;
         goto error;
     }
@@ -2097,7 +2320,7 @@ reconnect:
             if (!locked)
             {
                 /* TODO: 判断有没有延迟，如果延迟比较长的话，还不能去锁表 */
-                if (inception_catch_binlog_relay(thd, mysql, sql_cache_node))
+                if (inception_catch_binlog_delay(thd, mysql, sql_cache_node))
                     goto reconnect;
 
                 /* 如果没有上锁成功，则需要重新再来 */
