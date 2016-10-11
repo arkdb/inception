@@ -289,6 +289,8 @@ typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
     char    field_name[NAME_CHAR_LEN + 1];
+    char    keyname[NAME_CHAR_LEN + 1];
+    uint    key_seq;
     uint    primary_key;
     uint    nullable;
     uint    auto_increment;
@@ -309,6 +311,7 @@ struct field_info_struct
     CHARSET_INFO *charset;
 
     int     cache_new;
+    int     is_deleted;
     //œ¬√Ê «ƒ⁄¥Ê÷–µƒ÷µ
     uint    fixed;        //±Ì æ «∑Ò“—æ≠¥¶¿Ìπ˝¡À
 
@@ -489,10 +492,15 @@ struct sql_cache_node_struct
     volatile int     oscpercent;
     rt_lst_t*   rt_lst;
 
+    sql_table_t tables;
+
+    /* FOR ALTER TABLE SQL START... */
     char        biosc_new_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
     char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
-    sql_table_t tables;
     char**      primary_keys;
+    char**      new_primary_keys;
+    int         new_primary_keys_count;
+    str_t*      pk_string;
     /* 0表示没有完成，1表示已经完成，2表示出错中止了 */
     volatile    int         biosc_copy_complete;
     char        current_binlog_file[FN_REFLEN];
@@ -518,6 +526,9 @@ struct sql_cache_node_struct
     ulonglong   total_rows;
     char        rename_table[NAME_CHAR_LEN]; //执行所用时间 
     char        rename_db[NAME_CHAR_LEN]; //执行所用时间 
+    str_t*        osc_select_columns;
+    str_t*        osc_insert_columns;
+    /* FOR ALTER TABLE SQL END... */
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -3610,12 +3621,14 @@ public:
   int             useflag;//use temporary where set names utf8, when analyze next statement, reset it
   int          setnamesflag;//the same to above;
   str_t*        show_result;
+
   str_t*        osc_select_columns;
   str_t*        osc_insert_columns;
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
   volatile      int thread_state;
   sql_cache_node_t*  current_execute;
+  sql_cache_node_t*  current_sql_cache_node;
   mysql_mutex_t   sleep_lock;
   mysql_cond_t    sleep_cond;
 

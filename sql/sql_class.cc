@@ -1054,6 +1054,7 @@ THD::THD(bool enable_plugins)
   errmsg = NULL;
   LIST_INIT(dbcache.dbcache_lst);
   show_result = NULL;
+  current_sql_cache_node = NULL;
   use_osc = 0;
   LIST_INIT(tablecache.tablecache_lst);
   memset(&sql_statistic, 0, sizeof(sql_statistic_t));

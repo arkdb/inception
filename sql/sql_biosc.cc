@@ -116,11 +116,15 @@ int mysql_update_biosc_progress(
         LIST_ADD_LAST(link, global_osc_cache.osc_lst, osc_percent_node);
     }
 
-    clockperrow = ((double)(my_getsystime() - 
-          start_lock_time)) / (double)sum_affected_rows;
-
-    if (sum_affected_rows < sql_cache_node->total_rows)
+    if (sql_cache_node->osc_complete)
     {
+        osc_percent_node->percent = 100;
+        sprintf(osc_percent_node->remaintime, "0(s)");
+    }
+    else if (sum_affected_rows < sql_cache_node->total_rows)
+    {
+        clockperrow = ((double)(my_getsystime() - 
+              start_lock_time)) / (double)sum_affected_rows;
         osc_percent_node->percent = ((double)sum_affected_rows / 
             (double)sql_cache_node->total_rows) * 100;
         remainclock = (sql_cache_node->total_rows - sum_affected_rows) * clockperrow;
@@ -139,8 +143,6 @@ int mysql_analyze_biosc_output(
     sql_cache_node_t* sql_cache_node
 )
 {
-    int percent = -1;
-    char    timeremain[100];
     osc_percent_cache_t* osc_percent_node;
 
     DBUG_ENTER("mysql_analyze_biosc_output");
@@ -579,20 +581,14 @@ int inception_get_field_string(
                     str_append(backup_sql, "\'");
                 res=field->val_str(&buffer);
                 qutor_end =1;
-                //    MYSQL_TIME tm;
-                //    field->get_date(&tm, TIME_FUZZY_DATE);
                 break;
             }
         case MYSQL_TYPE_TIME:
         case MYSQL_TYPE_TIME2:
-            {
-                if (qutor_flag)
-                    str_append(backup_sql, "\'");
-                res=field->val_str(&buffer);
-                qutor_end =1;
-                //    MYSQL_TIME tm;
-                //    field->get_time(&tm);
-                break;
+            { 
+                if (qutor_flag) 
+                    str_append(backup_sql, "\'"); 
+                res=field->val_str(&buffer); qutor_end =1; 
             }
         }
     }
@@ -606,20 +602,110 @@ int inception_get_field_string(
     return result;
 }
 
-int mysql_generate_biosc_increment_sql(
-    Master_info* mi,
-    int    optype,
-    str_t*   backup_sql,
+field_info_t* 
+inception_find_field_by_id(
+    table_info_t*   table_info,
+    int             field_index
+)
+{
+    field_info_t*   field_node;
+    int             field_index_local = 0;
+
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        if (field_index == field_index_local)
+            return field_node;
+        field_node = LIST_GET_NEXT(link, field_node);
+        field_index_local++;
+    }
+
+    return NULL;
+}
+
+field_info_t* 
+inception_find_field_by_name(
+    table_info_t*   table_info,
+    char*           field_name,
+    int*            field_index
+)
+{
+    field_info_t*   field_node;
+    int             field_index_local = 0;
+
+    *field_index = field_index_local;
+
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        if (!strcasecmp(field_node->field_name, field_name))
+            return field_node;
+
+        field_node = LIST_GET_NEXT(link, field_node);
+        field_index_local++;
+        *field_index = field_index_local;
+    }
+
+    return NULL;
+}
+
+int mysql_get_primary_key_fields_values(
+    Master_info*      mi,
     sql_cache_node_t* sql_cache_node,
+    str_t*            backup_sql,
     int update_after
 )
 {
-    field_info_t* field_node;
-    char   tmp_buf[256];
-    int    err = 0;
-    int    field_index=0;
-    int   first = true;
+    char**  new_pk;
+    int     i = 0;
+    int     first = 1;
+    field_info_t*       field_node_binlog;
+    int                 field_index;
+    char   tmp_buf[256]; 
+    int    err = 0; 
 
+    new_pk = sql_cache_node->new_primary_keys;
+    while (new_pk[i] != NULL)
+    {
+        if (!first)
+            str_append(backup_sql, " AND ");
+
+        sprintf(tmp_buf, "%s=", new_pk[i]);
+        str_append(backup_sql, tmp_buf);
+
+        field_node_binlog = inception_find_field_by_name(
+            mi->table_info, new_pk[i], &field_index);
+
+        err = inception_get_field_string(
+        update_after ? field_node_binlog->conv_field_after: field_node_binlog->conv_field,
+            backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
+        first = false;
+        i++; 
+    } 
+    
+    return false;
+}
+
+int mysql_generate_biosc_increment_sql(
+    Master_info* mi,
+    THD* query_thd,
+    int    optype, 
+    str_t*   backup_sql, 
+    sql_cache_node_t* sql_cache_node, 
+    int update_after
+) 
+{ 
+    field_info_t* field_node; 
+    field_info_t* field_node_binlog; 
+    char   tmp_buf[256]; 
+    int    err = 0; 
+    int    field_index=0; 
+    int   first = true; 
+    table_info_t*   table_info; 
+
+    table_info = mysql_get_table_object_from_cache(query_thd, 
+                str_get(&sql_cache_node->tables.db_names), 
+                str_get(&sql_cache_node->tables.table_names));
     if (optype == SQLCOM_DELETE)
     {
         sprintf(tmp_buf, "DELETE IGNORE FROM `%s`.`%s` WHERE ", 
@@ -627,26 +713,8 @@ int mysql_generate_biosc_increment_sql(
             sql_cache_node->biosc_new_tablename);
         first = true;
         str_append(backup_sql, tmp_buf);
-        field_node = LIST_GET_FIRST(mi->table_info->field_lst);
-        while (field_node != NULL)
-        {
-            if (field_node->primary_key)
-            {
-                if (!first)
-                    str_append(backup_sql, " AND ");
-
-                sprintf(tmp_buf, "%s=", field_node->field_name);
-                str_append(backup_sql, tmp_buf);
-
-                err = inception_get_field_string(
-                update_after ? field_node->conv_field_after: field_node->conv_field,
-                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
-                first = false;
-            }
-            field_node = LIST_GET_NEXT(link, field_node);
-            field_index++;
-        }
-
+        mysql_get_primary_key_fields_values(mi, 
+            sql_cache_node, backup_sql, update_after);
         str_append(backup_sql, ";");
     } 
     else if (optype == SQLCOM_INSERT) 
@@ -657,31 +725,41 @@ int mysql_generate_biosc_increment_sql(
             sql_cache_node->biosc_new_tablename);
 
         str_append(backup_sql, tmp_buf);
-        field_node = LIST_GET_FIRST(mi->table_info->field_lst);
-        while (field_node != NULL)
-        {
-            if (!first)
-                str_append(backup_sql, ",");
-            str_append(backup_sql, field_node->field_name);
-            first = false;
-            field_node = LIST_GET_NEXT(link, field_node);
-        }
+        str_append(backup_sql, str_get(sql_cache_node->osc_insert_columns));
 
         first = true;
+        field_index = 0;
         str_append(backup_sql, ") values(");
-        field_node = LIST_GET_FIRST(mi->table_info->field_lst);
+        field_node = LIST_GET_FIRST(table_info->field_lst);
         while (field_node != NULL)
         {
+            /* 如果是新增列，则这列就不算，因为老表中的Binlog还没有这个列 */
+            /* 如果列被删了，则跳过这个列的数据 */
+            /* 这里只能通过序号来定位列信息，因为列名有可能会变化 */
+            if (field_node->is_deleted)
+            {
+                field_index++;
+                field_node = LIST_GET_NEXT(link, field_node);
+                continue;
+            }
+
+            if (field_node->cache_new)
+            {
+                field_node = LIST_GET_NEXT(link, field_node);
+                continue;
+            }
+                
             if (!first)
                 str_append(backup_sql, ",");
 
+            field_node_binlog = inception_find_field_by_id(mi->table_info, field_index);
             err = inception_get_field_string(
-                update_after ? field_node->conv_field_after : field_node->conv_field,
+                update_after ? field_node_binlog->conv_field_after : field_node_binlog->conv_field,
                     backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
 
             first = false;
-            field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
+            field_node = LIST_GET_NEXT(link, field_node);
         }
 
         str_append(backup_sql, ");");
@@ -693,48 +771,47 @@ int mysql_generate_biosc_increment_sql(
             str_get(&sql_cache_node->tables.db_names), 
             sql_cache_node->biosc_new_tablename);
         str_append(backup_sql, tmp_buf);
-        field_node = LIST_GET_FIRST(mi->table_info->field_lst);
+        field_node = LIST_GET_FIRST(table_info->field_lst);
         while (field_node != NULL)
         {
+            /* 如果是新增列，则这列就不算，因为老表中的Binlog还没有这个列 */
+            /* 如果列被删了，则跳过这个列的数据 */
+            /* 这里只能通过序号来定位列信息，因为列名有可能会变化 */
+            if (field_node->is_deleted)
+            {
+                field_index++;
+                field_node = LIST_GET_NEXT(link, field_node);
+                continue;
+            }
+
+            if (field_node->cache_new)
+            {
+                field_node = LIST_GET_NEXT(link, field_node);
+                continue;
+            }
+
             if (!first)
                 str_append(backup_sql, ",");
 
+            /* 如果是改了列名的，则在审核的时候就将列名已经更新，这里直接使用新列名即可 */
             sprintf(tmp_buf, "%s=", field_node->field_name);
             str_append(backup_sql, tmp_buf);
+            field_node_binlog = inception_find_field_by_id(mi->table_info, field_index);
             err = inception_get_field_string(
-                update_after ? field_node->conv_field: field_node->conv_field_after,
-                    backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
+                update_after ? field_node_binlog->conv_field: field_node_binlog->conv_field_after,
+                    backup_sql, mi->table_info->null_arr, field_index, TRUE, FALSE);
 
             first = false;
-            field_node = LIST_GET_NEXT(link, field_node);
             field_index++;
+            field_node = LIST_GET_NEXT(link, field_node);
         }
 
         str_append(backup_sql, " WHERE ");
     } 
     else if (optype == SQLCOM_UPDATE + 1000) 
     {
-        first = true;
-        field_node = LIST_GET_FIRST(mi->table_info->field_lst);
-        while (field_node != NULL)
-        {
-            if (field_node->primary_key)
-            {
-                if (!first)
-                    str_append(backup_sql, " AND ");
-
-                sprintf(tmp_buf, "%s=", field_node->field_name);
-                str_append(backup_sql, tmp_buf);
-
-                inception_get_field_string(
-                    update_after ? field_node->conv_field: field_node->conv_field_after,
-                    backup_sql, mi->table_info->null_arr, field_index,TRUE, FALSE);
-                first = false;
-            }
-            field_node = LIST_GET_NEXT(link, field_node);
-            field_index++;
-        }
-
+        mysql_get_primary_key_fields_values(mi, 
+            sql_cache_node, backup_sql, update_after);
         str_append(backup_sql, ";");
     }
 
@@ -775,6 +852,7 @@ error:
 
 int inception_biosc_write_row(
     Master_info *mi, 
+    THD*        query_thd,
     Log_event* ev,
     int optype,
     sql_cache_node_t* sql_cache_node
@@ -820,7 +898,7 @@ int inception_biosc_write_row(
         }
 
         str_truncate_0(backup_sql);
-        if (mysql_generate_biosc_increment_sql(mi, optype, 
+        if (mysql_generate_biosc_increment_sql(mi, query_thd, optype, 
               backup_sql, sql_cache_node, false))
         {
             error=true;
@@ -829,7 +907,7 @@ int inception_biosc_write_row(
 
         if (optype == SQLCOM_UPDATE)
         {
-            if (mysql_generate_biosc_increment_sql(mi, 
+            if (mysql_generate_biosc_increment_sql(mi, query_thd,
                   SQLCOM_UPDATE+1000, backup_sql, sql_cache_node, true))
             {
                 error=true;
@@ -847,6 +925,7 @@ error:
 
 int inception_biosc_binlog_process(
     Master_info* mi,
+    THD*        query_thd,
     Log_event* ev,
     sql_cache_node_t* sql_cache_node
 )
@@ -872,17 +951,17 @@ int inception_biosc_binlog_process(
 
     case WRITE_ROWS_EVENT_V1:
     case WRITE_ROWS_EVENT:
-        err = inception_biosc_write_row(mi, ev, SQLCOM_INSERT, sql_cache_node);
+        err = inception_biosc_write_row(mi, query_thd, ev, SQLCOM_INSERT, sql_cache_node);
         break;
 
     case UPDATE_ROWS_EVENT:
     case UPDATE_ROWS_EVENT_V1:
-        err = inception_biosc_write_row(mi, ev, SQLCOM_UPDATE, sql_cache_node);
+        err = inception_biosc_write_row(mi, query_thd, ev, SQLCOM_UPDATE, sql_cache_node);
         break;
 
     case DELETE_ROWS_EVENT:
     case DELETE_ROWS_EVENT_V1:
-        err = inception_biosc_write_row(mi, ev, SQLCOM_DELETE, sql_cache_node);
+        err = inception_biosc_write_row(mi, query_thd, ev, SQLCOM_DELETE, sql_cache_node);
         break;
 
     default:
@@ -1015,144 +1094,17 @@ int inception_get_table_select_where(
     return false;
 }
 
-int inception_get_table_primary_keys(
-    THD* thd,
-    sql_cache_node_t* sql_cache_node,
-    str_t*            pkstring
-)
-{
-    sql_table_t*  tables;
-    table_rt_t*   table_rt;
-    table_info_t* table_info;
-    field_info_t* field_info;
-    int           first = true;
-    int           pkcount = 0;
-
-    tables = &sql_cache_node->tables;
-    table_rt = LIST_GET_FIRST(tables->table_lst);
-    while (table_rt)
-    {
-        table_info = table_rt->table_info;
-        field_info = LIST_GET_FIRST(table_info->field_lst);
-        while (field_info)
-        {
-            if (field_info->primary_key)
-            {
-                if (!first)
-                    str_append(pkstring, ", ");
-                str_append(pkstring, field_info->field_name);
-                first = false;
-                pkcount++;
-            }
-
-            field_info = LIST_GET_NEXT(link, field_info);
-        }
-        
-        sql_cache_node->primary_keys = (char**)my_malloc(sizeof(char*) * pkcount, MY_ZEROFILL);
-        pkcount = 0;
-        field_info = LIST_GET_FIRST(table_info->field_lst);
-        while (field_info)
-        {
-            if (field_info->primary_key)
-            {
-                sql_cache_node->primary_keys[pkcount] = (char*)my_malloc(NAME_LEN, MY_ZEROFILL);
-                strcpy(sql_cache_node->primary_keys[pkcount], field_info->field_name);
-                pkcount++;
-            }
-
-            field_info = LIST_GET_NEXT(link, field_info);
-        }
-
-        /* only one table to alter */
-        break;
-        table_rt = LIST_GET_NEXT(link, table_rt);
-    }
-
-    return false;
-}
-
-int mysql_drop_column_select(
-    THD *thd,
-    char*             column_name
-)
-{
-    table_info_t* table_info;
-    Alter_drop*  field;
-    field_info_t* field_info;
-    int    found = FALSE;
-
-    DBUG_ENTER("mysql_drop_column_select");
-    HA_CREATE_INFO create_info(thd->lex->create_info);
-    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
-    Alter_info* alter_info_ptr = &alter_info;
-
-    List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
-
-    while ((field=fields++))
-    {
-        if (field->type != Alter_drop::COLUMN)
-            continue;
-
-        found = FALSE;
-        if (strcasecmp(column_name, field->name) == 0)
-        {
-            found = true;
-            break;
-        }
-    }
-
-    DBUG_RETURN(!found);
-}
-
-int mysql_change_column_select(
-    THD *thd,
-    char*             column_name,
-    char*             insert_column_name
-)
-{
-    table_info_t* table_info;
-    Create_field* field;
-    field_info_t* field_info;
-    int    found = FALSE;
-
-    HA_CREATE_INFO create_info(thd->lex->create_info);
-    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
-    Alter_info* alter_info_ptr = &alter_info;
-
-    List_iterator<Create_field> fields(alter_info_ptr->create_list);
-
-    DBUG_ENTER("mysql_check_change_column");
-
-    strcpy(insert_column_name, "\0");
-    while ((field=fields++))
-    {
-        if (field->change == NULL)
-            continue;
-
-        /* 在审核的时候，列名有可能已经被修改过了，所以这里需要比较的是新名字 */
-        if (strcasecmp(column_name, (char*)field->field_name) == 0)
-        {
-            strcpy(insert_column_name, (char*)field->change);
-            break;
-        }
-    }
-
-    DBUG_RETURN(true);
-}
 
 int inception_get_insert_new_table_sql(
     str_t* select_sql,
     sql_cache_node_t* sql_cache_node
 )
 {
-    sql_table_t*      tables;
-    str_t             old_table_cols;
     table_info_t*     table_info;
     table_rt_t*       table_rt;
     field_info_t*     field_info;
     int               first=true;
 
-    str_init(&old_table_cols);
     /* first batch start */
     str_append(select_sql, "INSERT LOW_PRIORITY IGNORE INTO ");
     str_append(select_sql, "`");
@@ -1162,29 +1114,12 @@ int inception_get_insert_new_table_sql(
     str_append(select_sql, sql_cache_node->biosc_new_tablename);
     str_append(select_sql, "` ");
 
-    tables = &sql_cache_node->tables;
-    table_rt = LIST_GET_FIRST(tables->table_lst);
-    if (table_rt)
-    {
-        table_info = table_rt->table_info;
-        field_info = LIST_GET_FIRST(table_info->field_lst);
-        while (field_info)
-        {
-            if (!first)
-                str_append(&old_table_cols, ", ");
-            str_append(&old_table_cols, field_info->field_name);
-            first = false;
-
-            field_info = LIST_GET_NEXT(link, field_info);
-        }
-    }
-
     str_append(select_sql, "(");
-    str_append(select_sql, str_get(&old_table_cols));
+    str_append(select_sql, str_get(sql_cache_node->osc_insert_columns));
     str_append(select_sql, ")");
 
     str_append(select_sql, " SELECT ");
-    str_append(select_sql, str_get(&old_table_cols));
+    str_append(select_sql, str_get(sql_cache_node->osc_select_columns));
 
     str_append(select_sql, " FROM ");
     str_append(select_sql, "`");
@@ -1199,13 +1134,12 @@ int inception_get_insert_new_table_sql(
 
 int inception_get_copy_rows_batch_sql_prefix(
     str_t* select_sql,
-    str_t* primary_cols,
     sql_cache_node_t* sql_cache_node
 )
 {
     /* first batch start */
     str_append(select_sql, "SELECT /*!40001 SQL_NO_CACHE */ ");
-    str_append(select_sql, str_get(primary_cols));
+    str_append(select_sql, str_get(sql_cache_node->pk_string));
     str_append(select_sql, " FROM ");
     str_append(select_sql, str_get(&sql_cache_node->tables.db_names));
     str_append(select_sql, ".");
@@ -1217,7 +1151,6 @@ int inception_get_copy_rows_batch_sql_prefix(
 int inception_get_copy_rows_batch_sql(
     str_t* select_prefix,
     str_t* greater_cond_sql,
-    str_t* primary_cols,
     str_t* select_sql,
     sql_cache_node_t* sql_cache_node,
     int   first_time
@@ -1234,7 +1167,7 @@ int inception_get_copy_rows_batch_sql(
         str_append(select_sql, " WHERE ");
         str_append(select_sql, str_get(greater_cond_sql));
         str_append(select_sql, " ORDER BY ");
-        str_append(select_sql, str_get(primary_cols));
+        str_append(select_sql, str_get(sql_cache_node->pk_string));
         /* TODO: 将分片大小参数化，这里先认定2000 */
         str_append(select_sql, " LIMIT 200, 2");
     }
@@ -1266,7 +1199,6 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     int   first_time = true;
     char  osc_output[1024];
     sql_cache_node_t* sql_cache_node;
-    str_t       primary_cols;
     str_t       select_prefix;
     str_t       copy_rows_sql;
     str_t       front_sql;
@@ -1299,7 +1231,6 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     thd->query_thd = query_thd;
     binlog_file = sql_cache_node->start_binlog_file;
     binlog_position = sql_cache_node->start_binlog_pos;
-    str_init(&primary_cols);
     str_init(&copy_rows_sql);
     str_init(&select_prefix);
     str_init(&execute_sql);
@@ -1329,14 +1260,13 @@ pthread_handler_t inception_move_rows_thread(void* arg)
         goto error;
     }
 
-    inception_get_table_primary_keys(query_thd, sql_cache_node, &primary_cols);
     inception_get_copy_rows_batch_sql_prefix(
-        &select_prefix, &primary_cols, sql_cache_node);
+        &select_prefix, sql_cache_node);
     inception_get_insert_new_table_sql(&insert_select_prefix, sql_cache_node);
 
     start_lock_time = my_getsystime();
     /* 获取找到第一条记录的SQL语句 */
-    inception_get_copy_rows_batch_sql(&select_prefix, NULL, &primary_cols, 
+    inception_get_copy_rows_batch_sql(&select_prefix, NULL,
         &execute_sql, sql_cache_node, first_time);
     while(!complete && !inception_biosc_abort(query_thd, sql_cache_node))
     {
@@ -1363,7 +1293,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
 
             /* 得到用来取得下一个分片的边界 */
             inception_get_copy_rows_batch_sql(&select_prefix, greater_cond_sql, 
-                &primary_cols, &execute_sql, sql_cache_node, first_time);
+                &execute_sql, sql_cache_node, first_time);
             str_truncate_0(lesser_cond_sql);
             str_truncate_0(change_cond_sql);
             inception_swap_str(&change_cond_sql, &greater_cond_sql);
@@ -1376,7 +1306,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
             first_time = false;
 
             inception_get_copy_rows_batch_sql(&select_prefix, change_cond_sql, 
-                &primary_cols, &execute_sql, sql_cache_node, first_time);
+                &execute_sql, sql_cache_node, first_time);
         }
         else if (!first_time)
         {
@@ -1424,7 +1354,6 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
 error:
-    str_deinit(&primary_cols);
     str_deinit(&select_prefix);
     str_deinit(&copy_rows_sql);
     str_deinit(&front_sql);
@@ -1538,7 +1467,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
 
     mi = new Master_info(1);
     mi->thd = thd;
-    mi->info_thd = thd;
+    mi->info_thd = query_thd;
 
     sql_cache_node->binlog_catch_thread = thd;
     binlog_file = sql_cache_node->start_binlog_file;
@@ -1611,7 +1540,7 @@ reconnect:
         sql_cache_node->current_binlog_pos = mi->get_master_log_pos();
         mysql_mutex_unlock(&sql_cache_node->osc_lock); 
 
-        if (inception_biosc_binlog_process(mi, evlog, sql_cache_node))
+        if (inception_biosc_binlog_process(mi, query_thd, evlog, sql_cache_node))
         {
             sprintf(osc_output, "[Binlog thread] Alter table abort, error: %s",
                 thd->get_stmt_da()->message());
@@ -1832,8 +1761,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                     str_get(&sql_cache_node->tables.table_names));
                 mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
                 sql_cache_node->osc_complete = true;
-                osc_percent_node->percent = 100;
-                sprintf(osc_percent_node->remaintime, "%.3f(s)", 0);
+                mysql_update_biosc_progress(thd, sql_cache_node, 0, 0);
 
                 sprintf(osc_output, "[Master thread] Increament SQL(s) consume over, "
                     "exactly %lld rows, including %d insert(s), %d update(s), %d delete(s)", 
@@ -2308,7 +2236,11 @@ reconnect:
             {
                 if (mysql_execute_sql_with_retry(thd, mysql, 
                       str_get(execute_sql), NULL, sql_cache_node))
-                    goto reconnect;
+                {
+                    sql_cache_node->osc_abort = true;
+                    goto error;
+                }
+
                 sql_cache_node->mts_queue->dequeue_index = 
                   (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
             }
@@ -2316,7 +2248,10 @@ reconnect:
         else if (sql_cache_node->biosc_copy_complete == true)
         {
             if (mysql_execute_sql_with_retry(thd, mysql, set_var_sql, NULL, sql_cache_node))
-                goto reconnect;
+            {
+                sql_cache_node->osc_abort = true;
+                goto error;
+            }
             if (!locked)
             {
                 /* TODO: 判断有没有延迟，如果延迟比较长的话，还不能去锁表 */
@@ -2328,7 +2263,10 @@ reconnect:
                     "and magic table, retry: %d", lock_count++);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 if (mysql_execute_sql_with_retry(thd, mysql, lock_sql, NULL, sql_cache_node))
-                    goto reconnect;
+                {
+                    sql_cache_node->osc_abort = true;
+                    goto error;
+                }
 
                 inception_get_master_status(thd, sql_cache_node, true);
                 sprintf(osc_output, "[Master thread] The end binlog position is (%s:%d)", 
@@ -2363,7 +2301,11 @@ reconnect:
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                     if (mysql_execute_sql_with_retry(thd, mysql, 
                           unlock_tables, NULL, sql_cache_node))
-                        goto reconnect;
+                    {
+                          sql_cache_node->osc_abort = true;
+                          goto error;
+                    }
+
                     set_timespec_nsec(abstime, thd->variables.inception_biosc_retry_wait_time*
                         1000 * 1000000ULL);
                     mysql_mutex_lock(&thd->sleep_lock);

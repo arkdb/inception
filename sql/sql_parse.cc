@@ -668,11 +668,16 @@ int mysql_cache_one_sql(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
-    sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
-    if (sql_cache_node == NULL)
+    sql_cache_node = thd->current_sql_cache_node;
+    thd->current_sql_cache_node = NULL;
+    if (!sql_cache_node)
     {
-        my_error(ER_OUTOFMEMORY, MYF(0));
-        DBUG_RETURN(ER_NO);
+        sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
+        if (sql_cache_node == NULL)
+        {
+            my_error(ER_OUTOFMEMORY, MYF(0));
+            DBUG_RETURN(ER_NO);
+        }
     }
 
     sql_cache_node->stagereport = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
@@ -699,7 +704,10 @@ int mysql_cache_one_sql(THD* thd)
         strcat(sql_cache_node->sql_statement, str_get(thd->show_result));
     }
 
-    mysql_extract_update_tables(thd, sql_cache_node);
+    sql_cache_node->osc_select_columns = thd->osc_select_columns;
+    sql_cache_node->osc_insert_columns = thd->osc_insert_columns;
+    thd->osc_select_columns = NULL;
+    thd->osc_insert_columns = NULL;
 
     sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->thd = thd;
@@ -2848,6 +2856,8 @@ mysql_query_table_from_source(
     char  sql[100];
     MYSQL_RES* source_res= 0;
     table_info_t* table_info;
+    field_info_t*   field_info;
+    MYSQL_ROW   source_row;
 
     DBUG_ENTER("mysql_query_table_from_source");
 
@@ -2877,6 +2887,47 @@ mysql_query_table_from_source(
     }
 
     table_info = mysql_convert_desc_to_table_info(thd, source_res, dbname, tablename);
+    if (table_info)
+    {
+        sprintf(sql, "SHOW INDEX FROM `%s`.`%s`", table_info->db_name,
+            table_info->table_name);
+        if (mysql_real_query(mysql, sql, strlen(sql)))
+        {
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+            DBUG_RETURN(table_info);
+        }
+
+        if ((source_res = mysql_store_result(mysql)) == NULL)
+        {
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+            DBUG_RETURN(table_info);
+        }
+
+        /* 得到主键列的位置信息 */
+        source_row = mysql_fetch_row(source_res);
+        while (source_row )
+        {
+            if (!strcasecmp(source_row[2], "PRIMARY"))
+            {
+                field_info = LIST_GET_FIRST(table_info->field_lst); 
+                while (field_info)
+                {
+                    if (!strcasecmp(source_row[4], field_info->field_name))
+                    {
+                        strcpy(field_info->keyname, source_row[2]);
+                        field_info->key_seq = strtoll(source_row[3], NULL, 10);
+                    }
+
+                    field_info = LIST_GET_NEXT(link, field_info);
+                }
+            }
+            source_row = mysql_fetch_row(source_res);
+        }
+
+        mysql_free_result(source_res);
+    }
 
     DBUG_RETURN(table_info);
 }
@@ -2944,6 +2995,33 @@ mysql_check_ddldml_coexisted(
             mysql_errmsg_append(thd);
         }
     }
+}
+
+field_info_t*
+mysql_get_table_pk_field_by_seq(
+    THD*  thd,
+    char*  dbname,
+    char*  tablename,
+    int     keyseq
+)
+{
+    field_info_t* fieldinfo = NULL;
+    table_info_t*   tableinfo = NULL;
+
+    if ((tableinfo = mysql_get_table_object(thd, dbname, tablename, TRUE)) == NULL)
+        return NULL;
+
+    fieldinfo = LIST_GET_FIRST(tableinfo->field_lst);
+    while (fieldinfo != NULL) {
+        if (strcasecmp(fieldinfo->keyname, "PRIMARY") == 0 &&
+            fieldinfo->primary_key && fieldinfo->key_seq == keyseq) {
+            return fieldinfo;
+        }
+
+        fieldinfo = LIST_GET_NEXT(link, fieldinfo);
+    }
+
+    return fieldinfo;
 }
 
 field_info_t*
@@ -9295,9 +9373,16 @@ mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field)
     }
 }
 
-field_info_t* mysql_cache_new_column(table_info_t* table_info, Create_field*   field)
+field_info_t* 
+mysql_cache_new_column(
+    table_info_t* table_info, 
+    Create_field*   field,
+    const char*           after
+)
 {
     field_info_t* field_info;
+    field_info_t* field_info_tmp;
+    int found = false;
 
     field_info = (field_info_t*)malloc(sizeof(field_info_t));
 
@@ -9308,12 +9393,33 @@ field_info_t* mysql_cache_new_column(table_info_t* table_info, Create_field*   f
     field_info->primary_key = FALSE;
     field_info->max_length = field->length;
     table_info->new_column_cache = TRUE;
+    field_info->cache_new = TRUE;
     field_info->auto_increment = FALSE;
     field_info->real_type = field->sql_type;
     field_info->charset = (CHARSET_INFO*)field->charset;
     mysql_set_cache_new_column_type(field_info,field);
 
-    LIST_ADD_LAST(link, table_info->field_lst, field_info);
+    /* 外面会报错，这里就只处理找到的情况 */
+    if (after)
+    {
+        field_info_tmp = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info_tmp)
+        {
+            if (strcasecmp(field_info_tmp->field_name, after) == 0)
+            {
+                found=TRUE;
+                break;
+            }
+
+            field_info_tmp = LIST_GET_NEXT(link, field_info_tmp);
+        }
+
+        if (found)
+            LIST_INSERT_AFTER(link, table_info->field_lst, field_info_tmp, field_info);
+    }
+    else 
+        LIST_ADD_LAST(link, table_info->field_lst, field_info);
+
     return field_info;
 }
 
@@ -9349,7 +9455,7 @@ int mysql_cache_new_table(THD *thd, Alter_info* alter_info_ptr)
     it.rewind();
     while ((sql_field=it++))
     {
-        mysql_cache_new_column(table_info, sql_field);
+        mysql_cache_new_column(table_info, sql_field, NULL);
     }
 
     mysql_add_table_object(thd, table_info);
@@ -9832,6 +9938,9 @@ int mysql_check_create_index(THD *thd)
                         keymaxlen += field_node->max_length;
                     }
 
+                    if (key->type == Key::PRIMARY)
+                        field_node->primary_key = true;
+
                     found = TRUE;
                     break;
                 }
@@ -10220,7 +10329,8 @@ int mysql_check_add_column(THD *thd)
             field_info = LIST_GET_NEXT(link, field_info);
         }
 
-        field_info_new = mysql_cache_new_column(table_info, field);
+        /* 按照顺序将新的列缓存起来 */
+        field_info_new = mysql_cache_new_column(table_info, field, field->after);
         if (field->after)
         {
             field_info = LIST_GET_FIRST(table_info->field_lst);
@@ -10406,6 +10516,10 @@ int mysql_check_drop_column(THD *thd)
             my_error(ER_COLUMN_NOT_EXISTED, MYF(0), field->name);
             mysql_errmsg_append(thd);
         }
+        else
+        {
+            field_info->is_deleted = true;
+        }
 
         mysql_drop_column_rollback(thd, table_info, (char*)field->name);
     }
@@ -10413,7 +10527,12 @@ int mysql_check_drop_column(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
-int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* columnname,char* column_change)
+int mysql_change_column_rollback(
+    THD* thd, 
+    table_info_t* table_info, 
+    char* columnname,
+    char* column_change
+)
 {
     char*           tmp_buf;
     char            buff_space[4096];
@@ -10540,13 +10659,15 @@ int mysql_check_change_column(THD *thd)
             strcpy(field_info->field_name, field->field_name);
             field_info->nullable = field->flags & NOT_NULL_FLAG ? 0 : 1;
             field_info->auto_increment = field->flags & AUTO_INCREMENT_FLAG ? 1 : 0;
-            field_info->primary_key= field->flags & PRI_KEY_FLAG ? 1 : 0;
+            /* primary_key 标记保持原样即可 */
+            field_info->primary_key; 
             
             field->charset = system_charset_info;
             mysql_field_check(thd, field, table_info->table_name);
             mysql_check_column_default(thd, field->def, field->flags, 
                 field_info, field->field_name, field->sql_type);
-            mysql_change_column_rollback(thd, table_info, (char*)field->field_name,(char*)field->change);
+            mysql_change_column_rollback(thd, table_info, 
+                (char*)field->field_name,(char*)field->change);
         }
     }
 
@@ -10609,6 +10730,27 @@ int mysql_check_drop_index(THD *thd)
                 my_error(ER_CANT_DROP_FIELD_OR_KEY, MYF(0), field->name);
                 mysql_errmsg_append(thd);
                 continue;
+            }
+
+            /* 去掉主键标志 */
+            if (!strcasecmp(field->name, "PRIMARY"))
+            {
+                field_info_t*   field_info;
+                while (source_row)
+                {
+                    int keyseq;
+                    keyseq = strtoll(source_row[3], NULL, 10);
+                    field_info = mysql_get_table_pk_field_by_seq(thd, thd->lex->query_tables->db, 
+                        thd->lex->query_tables->table_name, keyseq);
+                    if (field_info)
+                    {
+                        field_info->primary_key = false;
+                        field_info->key_seq = 0;
+                        field_info->keyname[0] = '\0';
+                    }
+
+                    source_row = mysql_fetch_row(source_res);
+                }
             }
 
             if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE )
@@ -10828,6 +10970,139 @@ int mysql_show_table_status(THD *thd, table_info_t* table_info)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_drop_column_select(
+    THD *thd,
+    char*             column_name
+)
+{
+    table_info_t* table_info;
+    Alter_drop*  field;
+    field_info_t* field_info;
+    int    found = FALSE;
+
+    DBUG_ENTER("mysql_drop_column_select");
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
+
+    while ((field=fields++))
+    {
+        if (field->type != Alter_drop::COLUMN)
+            continue;
+
+        found = FALSE;
+        if (strcasecmp(column_name, field->name) == 0)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    DBUG_RETURN(!found);
+}
+
+int mysql_change_column_select(
+    THD *thd,
+    char*             column_name,
+    char*             insert_column_name
+)
+{
+    Create_field* field;
+    int    found = FALSE;
+
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Create_field> fields(alter_info_ptr->create_list);
+
+    DBUG_ENTER("mysql_check_change_column");
+
+    strcpy(insert_column_name, "\0");
+    while ((field=fields++))
+    {
+        if (field->change == NULL)
+            continue;
+
+        if (strcasecmp(column_name, (char*)field->change) == 0)
+        {
+            strcpy(insert_column_name, (char*)field->field_name);
+            found = true;
+            break;
+        }
+    }
+
+    DBUG_RETURN(found);
+}
+
+int mysql_check_create_primary_key(
+    THD *thd, 
+    char* column_name, 
+    sql_cache_node_t* sql_cache_node
+)
+{
+    Key*   key;
+    Key_part_spec * col1;
+    field_info_t*   field_node;
+    table_info_t*   table_info;
+    int             found;
+    char            tmp_buf[256];
+    MYSQL*          mysql;
+    MYSQL_RES *     source_res;
+    char            sql[1024];
+    MYSQL_ROW       source_row;
+    uint            key_count;
+    char*           tablename;
+
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Key> key_iterator(alter_info_ptr->key_list);
+
+    DBUG_ENTER("mysql_check_create_primary_key");
+    table_info = mysql_get_table_object(thd, thd->lex->query_tables->db,
+            thd->lex->query_tables->table_name, FALSE);
+    if (table_info == NULL)
+        DBUG_RETURN(TRUE);
+
+    while ((key=key_iterator++))
+    {
+        List_iterator<Key_part_spec> col_it(key->columns);
+
+        if (key->type != Key::PRIMARY)
+            continue;
+
+        while ((col1= col_it++))
+        {
+            found = 0;
+            field_node = LIST_GET_FIRST(table_info->field_lst);
+            while (field_node != NULL)
+            {
+                if (!strcasecmp(field_node->field_name, col1->field_name.str) && 
+                    !strcasecmp(field_node->field_name, column_name))
+                {
+                    /* 如果这个列，是新的主键列，并且不是新增的列，则这是新表的主键列,
+                     * 不过，只要找到了，主键中有一个列是新增的，则不能以新主键做为OSC新表
+                     * BInlog应用主键了，需要用原表的主键 */
+                    if (!field_node->cache_new)
+                        DBUG_RETURN(1);
+                    else
+                        DBUG_RETURN(2);
+                }
+
+                field_node = LIST_GET_NEXT(link, field_node);
+            }
+
+        }
+
+    }
+
+    DBUG_RETURN(0);
+}
+
 int mysql_select_insert_column(
     THD *thd,
     char*             column_name,
@@ -10836,66 +11111,61 @@ int mysql_select_insert_column(
     char*             insert_column_name
 )
 {
-    int err;
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
     Alter_info* alter_info_ptr = &alter_info;
-    char        tmp_buf[256];
     DBUG_ENTER("mysql_select_insert_column");
+    int tmp_flags;
 
-    while (alter_info_ptr->flags)
+    *insert_use = true;
+    *select_use = true;
+
+    /* 这里如果找到了指定的列，就结束循环，否则直到遍历完所有的改表类型 */
+    tmp_flags = alter_info_ptr->flags;
+    while (tmp_flags)
     {
-        if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
-            alter_info_ptr->flags & Alter_info::ALTER_COLUMN_ORDER)
+        if (tmp_flags & Alter_info::ALTER_ADD_COLUMN ||
+            tmp_flags & Alter_info::ALTER_COLUMN_ORDER)
         {
-            *insert_use = false;
-            *select_use = false;
+            tmp_flags &= ~Alter_info::ALTER_ADD_COLUMN;
+            tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
+        else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
         {
-            *insert_use = true;
-            *select_use = true;
+            tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
+        else if (tmp_flags & Alter_info::ALTER_DROP_COLUMN)
         {
             *insert_use = mysql_drop_column_select(thd, column_name);
             *select_use = *insert_use;
+            tmp_flags &= ~Alter_info::ALTER_DROP_COLUMN;
+            if (!*insert_use)
+                break;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN)
         {
-            strcpy(sql_cache_node->rename_db, thd->lex->select_lex.db);
-            strcpy(sql_cache_node->rename_table, thd->lex->name.str);
-            *select_use = *insert_use = true;
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+            if (mysql_change_column_select(thd, column_name, insert_column_name))
+                break;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
         {
-            *select_use = *insert_use = true;
-            mysql_change_column_select(thd, column_name, insert_column_name);
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
-            *insert_use = true;
-            *select_use = true;
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN_DEFAULT;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
+        else if (tmp_flags & Alter_info::ALTER_OPTIONS)
         {
-            *insert_use = true;
-            *select_use = true;
+            tmp_flags &= ~Alter_info::ALTER_OPTIONS;
         }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_OPTIONS)
+        else if (tmp_flags & Alter_info::ALTER_CONVERT)
         {
-            *insert_use = true;
-            *select_use = true;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_CONVERT)
-        {
-            *insert_use = true;
-            *select_use = true;
+            tmp_flags &= ~Alter_info::ALTER_CONVERT;
         }
         else
         {
-            my_error(ER_NOT_SUPPORTED_YET, MYF(0));
-            mysql_errmsg_append(thd);
             break;
         }
     }
@@ -10903,6 +11173,202 @@ int mysql_select_insert_column(
     DBUG_RETURN(FALSE);
 }
 
+int mysql_check_alter_option_execute_direct(THD *thd)
+{
+    DBUG_ENTER("mysql_check_alter_option_execute_direct");
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    while(create_info.used_fields)
+    {
+        if (create_info.used_fields & HA_CREATE_USED_ENGINE)
+        {
+            create_info.used_fields &= ~HA_CREATE_USED_ENGINE;
+            DBUG_RETURN(FALSE);
+        }
+        else if (create_info.used_fields & HA_CREATE_USED_COMMENT)
+        {
+            create_info.used_fields &= ~HA_CREATE_USED_COMMENT;
+        }
+        else if (create_info.used_fields & HA_CREATE_USED_AUTO)
+        {
+            create_info.used_fields &= ~HA_CREATE_USED_AUTO;
+            if (!mysql_check_version_56(thd))
+                DBUG_RETURN(FALSE);
+        }
+        else if (create_info.used_fields & HA_CREATE_USED_DEFAULT_CHARSET)
+        {
+            create_info.used_fields &= ~HA_CREATE_USED_DEFAULT_CHARSET;
+            if (!mysql_check_version_56(thd))
+                DBUG_RETURN(FALSE);
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    DBUG_RETURN(TRUE);
+}
+
+int mysql_check_alter_table_execute_direct(
+    THD *thd
+)
+{
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+    DBUG_ENTER("mysql_check_alter_table_execute_direct");
+    int tmp_flags;
+
+    /* 这里如果找到了指定的列，就结束循环，否则直到遍历完所有的改表类型 */
+    tmp_flags = alter_info_ptr->flags;
+    while (tmp_flags)
+    {
+        if (tmp_flags & Alter_info::ALTER_ADD_COLUMN ||
+            tmp_flags & Alter_info::ALTER_COLUMN_ORDER)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_COLUMN;
+            tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            tmp_flags &= ~Alter_info::ALTER_DROP_COLUMN;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            /* 5.5及以上都不会锁表 */
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
+        {
+            /* 5.5及以上都不会锁表 */
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN_DEFAULT;
+        }
+        else if (tmp_flags & Alter_info::ALTER_OPTIONS)
+        {
+            tmp_flags &= ~Alter_info::ALTER_OPTIONS;
+            if (!mysql_check_alter_option_execute_direct(thd))
+                DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_CONVERT)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CONVERT;
+            DBUG_RETURN(false);
+        }
+        else
+        {
+            DBUG_RETURN(false);
+        }
+    }
+
+    DBUG_RETURN(true);
+}
+
+int inception_get_table_primary_keys(
+    THD* thd,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    sql_table_t*  tables;
+    table_rt_t*   table_rt;
+    table_info_t* table_info;
+    field_info_t* field_info;
+    int           first = true;
+    int           pkcount = 0;
+
+    sql_cache_node->pk_string = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(sql_cache_node->pk_string);
+
+    tables = &sql_cache_node->tables;
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_info = table_rt->table_info;
+        field_info = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info)
+        {
+            if (field_info->primary_key)
+            {
+                if (!first)
+                    str_append(sql_cache_node->pk_string, ", ");
+                str_append(sql_cache_node->pk_string, field_info->field_name);
+                first = false;
+                pkcount++;
+            }
+
+            field_info = LIST_GET_NEXT(link, field_info);
+        }
+        
+        sql_cache_node->primary_keys = (char**)my_malloc(sizeof(char*) * pkcount, MY_ZEROFILL);
+        pkcount = 0;
+        field_info = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info)
+        {
+            if (field_info->primary_key)
+            {
+                sql_cache_node->primary_keys[pkcount] = (char*)my_malloc(NAME_LEN, MY_ZEROFILL);
+                strcpy(sql_cache_node->primary_keys[pkcount], field_info->field_name);
+                pkcount++;
+            }
+
+            field_info = LIST_GET_NEXT(link, field_info);
+        }
+
+        /* only one table to alter */
+        break;
+        table_rt = LIST_GET_NEXT(link, table_rt);
+    }
+
+    return false;
+}
+
+int mysql_get_alter_table_new_primary_key(
+    THD*            thd,
+    table_info_t*   table_info
+)
+{
+    field_info_t*     field_node;
+    sql_cache_node_t* sql_cache_node;
+    int pkcount = 0;
+
+    if (!thd->use_osc)
+        return false;
+
+    if (thd->variables.inception_alter_table_method == osc_method_pt_osc ||
+        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
+        return false;
+
+    sql_cache_node = thd->current_sql_cache_node;
+
+    sql_cache_node->new_primary_keys = (char**)my_malloc(sizeof(char*) * 
+        LIST_GET_LEN(table_info->field_lst), MY_ZEROFILL);
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        if (!field_node->is_deleted && field_node->primary_key && !field_node->cache_new)
+        {
+            sql_cache_node->new_primary_keys[pkcount] 
+              = (char*)my_malloc(NAME_LEN, MY_ZEROFILL);
+            strcpy(sql_cache_node->new_primary_keys[pkcount], field_node->field_name);
+            pkcount++; 
+        }
+
+        field_node = LIST_GET_NEXT(link, field_node);
+    }
+
+    return FALSE;
+}
 int mysql_check_alter_use_osc_type(
     THD*            thd,
     table_info_t*   table_info
@@ -10912,6 +11378,19 @@ int mysql_check_alter_use_osc_type(
     int               insert_use;
     int               select_use;
     char              insert_column_name[FN_LEN];
+    int               first = true;
+
+    if (!thd->use_osc)
+        return false;
+
+    if (thd->variables.inception_alter_table_method == osc_method_pt_osc ||
+        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
+        return false;
+
+    thd->osc_select_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    thd->osc_insert_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(thd->osc_select_columns);
+    str_init(thd->osc_insert_columns);
 
     field_node = LIST_GET_FIRST(table_info->field_lst);
     while (field_node != NULL)
@@ -10919,9 +11398,30 @@ int mysql_check_alter_use_osc_type(
         mysql_select_insert_column(thd, field_node->field_name, 
             &insert_use, &select_use, insert_column_name);
 
+        /* 这里，应该insert_use和select_use是一样的，不可能存在
+         * 插入列与值的个数不相同的情况 */
+        if (insert_use)
+        {
+            if (!first)
+            {
+                str_append(thd->osc_select_columns, ",");
+                str_append(thd->osc_insert_columns, ",");
+            }
+
+            if (insert_column_name[0] != '\0')
+                str_append(thd->osc_insert_columns, insert_column_name);
+            else
+                str_append(thd->osc_insert_columns, field_node->field_name);
+
+            first = false;
+            str_append(thd->osc_select_columns, field_node->field_name);
+        }
+
         field_node = LIST_GET_NEXT(link, field_node);
     }
-       
+
+    inception_get_table_primary_keys(thd, thd->current_sql_cache_node);
+
     return FALSE;
 }
 
@@ -10940,6 +11440,12 @@ int mysql_check_alter_use_osc(
     else
         thd->use_osc = FALSE; 
        
+    /* 如果改表操作中，涉及到的修改都可以直接改表而不需要锁表的话，则不做OSC */
+    if (mysql_check_alter_table_execute_direct(thd))
+        thd->use_osc = FALSE;
+
+    mysql_check_alter_use_osc_type(thd, table_info);
+
     return FALSE;
 }
 
@@ -11141,6 +11647,7 @@ int mysql_check_alter_table(THD *thd)
         }
     }
 
+    mysql_get_alter_table_new_primary_key(thd, table_info);
     DBUG_RETURN(FALSE);
 }
 
@@ -12967,7 +13474,7 @@ int mysql_extract_update_tables(
 
         if (table->updating)
         {
-            table_info = mysql_get_table_object_from_cache(thd, table->db, table->table_name);
+            table_info = mysql_get_table_object(thd, table->db, table->table_name, false);
             if (table_info == NULL) 
                 continue;
 
@@ -13070,10 +13577,21 @@ int mysql_check_command(THD *thd)
     LEX  *lex= thd->lex;
     SELECT_LEX *select_lex= &lex->select_lex;
     TABLE_LIST *first_table= select_lex->table_list.first;
+    sql_cache_node_t* sql_cache_node;
     
     thd->thread_state = INCEPTION_STATE_CHECKING;
     DBUG_ENTER("mysql_check_command");
 
+    sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
+    if (sql_cache_node == NULL)
+    {
+        my_error(ER_OUTOFMEMORY, MYF(0));
+        DBUG_RETURN(true);
+    }
+
+    mysql_extract_update_tables(thd, sql_cache_node);
+
+    thd->current_sql_cache_node = sql_cache_node;
     select_lex->context.resolve_in_table_list_only(select_lex->table_list.first);
     lex->first_lists_tables_same();
     thd->timestamp_count=0;
