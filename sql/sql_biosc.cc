@@ -702,14 +702,17 @@ int mysql_generate_biosc_increment_sql(
     int    field_index=0; 
     int   first = true; 
     table_info_t*   table_info; 
+    char   binlog_tmp_buf[256]; 
 
+    sprintf(binlog_tmp_buf, "/* %s:%d */", (char*)mi->get_master_log_name(), 
+        mi->get_master_log_pos());
     table_info = mysql_get_table_object_from_cache(query_thd, 
                 str_get(&sql_cache_node->tables.db_names), 
                 str_get(&sql_cache_node->tables.table_names));
     if (optype == SQLCOM_DELETE)
     {
-        sprintf(tmp_buf, "DELETE IGNORE FROM `%s`.`%s` WHERE ", 
-            str_get(&sql_cache_node->tables.db_names), 
+        sprintf(tmp_buf, "DELETE %s IGNORE FROM `%s`.`%s` WHERE ", 
+            binlog_tmp_buf, str_get(&sql_cache_node->tables.db_names), 
             sql_cache_node->biosc_new_tablename);
         first = true;
         str_append(backup_sql, tmp_buf);
@@ -720,8 +723,8 @@ int mysql_generate_biosc_increment_sql(
     else if (optype == SQLCOM_INSERT) 
     {
         first = true;
-        sprintf(tmp_buf, "INSERT IGNORE INTO `%s`.`%s` (", 
-            str_get(&sql_cache_node->tables.db_names), 
+        sprintf(tmp_buf, "INSERT %s IGNORE INTO `%s`.`%s` (", 
+            binlog_tmp_buf, str_get(&sql_cache_node->tables.db_names), 
             sql_cache_node->biosc_new_tablename);
 
         str_append(backup_sql, tmp_buf);
@@ -767,8 +770,8 @@ int mysql_generate_biosc_increment_sql(
     else if (optype == SQLCOM_UPDATE) 
     {
         first = true;
-        sprintf(tmp_buf, "UPDATE `%s`.`%s` SET ", 
-            str_get(&sql_cache_node->tables.db_names), 
+        sprintf(tmp_buf, "UPDATE %s `%s`.`%s` SET ", 
+            binlog_tmp_buf, str_get(&sql_cache_node->tables.db_names), 
             sql_cache_node->biosc_new_tablename);
         str_append(backup_sql, tmp_buf);
         field_node = LIST_GET_FIRST(table_info->field_lst);
