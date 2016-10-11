@@ -1431,6 +1431,7 @@ inception_event_dequeue(
         if (element->valid)
         {
             sql_buffer = &element->sql_buffer;
+            element->valid = false;
         }
         else
         {
@@ -1922,6 +1923,7 @@ int inception_finish_event_queue(
 
         sql_cache_node->mts_queue->dequeue_index = 
           (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
+
         execute_sql = inception_event_dequeue(thd, sql_cache_node);
 
         /* 如果锁表时间超了，则需要提前返回释放锁 */
