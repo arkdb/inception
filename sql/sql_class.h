@@ -418,6 +418,9 @@ struct mts_thread_struct
     void*               datacenter;
     volatile int        thread_stage;
     volatile longlong   event_count;
+    volatile longlong   delete_rows;
+    volatile longlong   insert_rows;
+    volatile longlong   update_rows;
 };
 
 typedef struct mts_struct mts_t;

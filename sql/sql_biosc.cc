@@ -34,7 +34,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg);
 int inception_get_master_status( THD* thd, sql_cache_node_t* sql_cache_node, int after);
 int inception_catch_binlog( THD*  thd, sql_cache_node_t* sql_cache_node);
 int inception_rename_table( THD*  thd, sql_cache_node_t* sql_cache_node);
-str_t* inception_get_sql_execute_element( THD*  thd, sql_cache_node_t* sql_cache_node);
+str_t* inception_get_sql_execute_element( THD*  thd, sql_cache_node_t* sql_cache_node, int optype);
 int inception_create_event_queue( THD*  thd, sql_cache_node_t* sql_cache_node);
 MYSQL* inception_get_connection_with_retry( THD*  thd);
 int inception_cleanup_biosc( THD*  thd, sql_cache_node_t* sql_cache_node);
@@ -874,7 +874,7 @@ int inception_biosc_write_row(
         
     do
     {
-        if (!(backup_sql = inception_get_sql_execute_element(thd, sql_cache_node)))
+        if (!(backup_sql = inception_get_sql_execute_element(thd, sql_cache_node, optype)))
             goto error;
 
         if (mysql_unpack_row(mi, write_ev->get_table_id(), write_ev->m_curr_row, 
@@ -1566,7 +1566,8 @@ error:
 str_t*
 inception_get_sql_execute_element(
     THD*  thd,
-    sql_cache_node_t* sql_cache_node
+    sql_cache_node_t* sql_cache_node,
+    int optype
 )
 {
     mts_thread_t* mts_thread;
@@ -1576,6 +1577,12 @@ inception_get_sql_execute_element(
 
     mts_thread = sql_cache_node->mts_queue;
     mts_thread->event_count += 1;
+    if (optype == SQLCOM_DELETE)
+        mts_thread->delete_rows += 1;
+    else if (optype == SQLCOM_INSERT)
+        mts_thread->insert_rows += 1;
+    else if (optype == SQLCOM_UPDATE)
+        mts_thread->update_rows += 1;
     
 retry:
     //queue is not full
@@ -1765,7 +1772,11 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
 
                 sprintf(osc_output, "[Master thread] Increament SQL(s) consume over, "
                     "exactly %lld rows, including %d insert(s), %d update(s), %d delete(s)", 
-                    sql_cache_node->mts_queue->event_count, 0, 0, 0);
+                    sql_cache_node->mts_queue->event_count, 
+                    sql_cache_node->mts_queue->insert_rows, 
+                    sql_cache_node->mts_queue->update_rows, 
+                    sql_cache_node->mts_queue->delete_rows);
+
                 mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
                 sprintf(osc_output, "[Rename thread] Locked table for %lld(ms)", 
