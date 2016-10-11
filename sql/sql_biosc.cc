@@ -1997,7 +1997,7 @@ int inception_cleanup_biosc(
     sprintf(new_tablename, "DROP TABLE IF exists `%s`.`%s`", 
         str_get(&sql_cache_node->tables.db_names), 
         sql_cache_node->biosc_new_tablename);
-    sprintf(new_tablename, "DROP TABLE IF exists `%s`.`%s`", 
+    sprintf(old_tablename, "DROP TABLE IF exists `%s`.`%s`", 
         str_get(&sql_cache_node->tables.db_names), 
         sql_cache_node->biosc_old_tablename);
 

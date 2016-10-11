@@ -11130,6 +11130,10 @@ int mysql_select_insert_column(
             tmp_flags &= ~Alter_info::ALTER_ADD_COLUMN;
             tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
         }
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
         else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
         {
             tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
@@ -11147,10 +11151,6 @@ int mysql_select_insert_column(
             tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
             if (mysql_change_column_select(thd, column_name, insert_column_name))
                 break;
-        }
-        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
-        {
-            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
         }
         else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
@@ -11230,6 +11230,11 @@ int mysql_check_alter_table_execute_direct(
             tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
             DBUG_RETURN(false);
         }
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            /* 5.5及以上都不会锁表 */
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
         else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
         {
             tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
@@ -11244,11 +11249,6 @@ int mysql_check_alter_table_execute_direct(
         {
             tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
             DBUG_RETURN(false);
-        }
-        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
-        {
-            /* 5.5及以上都不会锁表 */
-            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
         }
         else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
@@ -11577,6 +11577,13 @@ int mysql_check_alter_table(THD *thd)
             alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_COLUMN;
             alter_info_ptr->flags &= ~Alter_info::ALTER_COLUMN_ORDER;
         }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_INDEX);
+            if ((err = mysql_check_drop_index(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
         else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
         {
             thd_sql_statistic_increment(thd, Alter_info::ALTER_ADD_INDEX);
@@ -11604,13 +11611,6 @@ int mysql_check_alter_table(THD *thd)
             if ((err = mysql_check_change_column(thd)))
                 DBUG_RETURN(err);
             alter_info_ptr->flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_INDEX);
-            if ((err = mysql_check_drop_index(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_INDEX;
         }
         else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
