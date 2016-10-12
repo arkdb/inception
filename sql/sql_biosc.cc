@@ -258,10 +258,10 @@ int mysql_execute_alter_table_biosc(
         mysql_execute_sql_with_retry(thd, mysql, str_get(&old_create_sql), NULL, sql_cache_node))
         return true;
 
-    sprintf(timestamp, "Create new table: %s.%s completely", 
+    sprintf(timestamp, "[Master thread] Create new table: %s.%s completely", 
         str_get(&sql_cache_node->tables.db_names), new_tablename);
     mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
-    sprintf(timestamp, "Create magic/old table: %s.%s completely", 
+    sprintf(timestamp, "[Master thread] Create magic/old table: %s.%s completely", 
         str_get(&sql_cache_node->tables.db_names), old_tablename);
     mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
 
@@ -278,7 +278,7 @@ int mysql_execute_alter_table_biosc(
         inception_get_table_rows(thd, sql_cache_node)) 
         return true;
 
-    sprintf(timestamp, "Get the binary log position before copy rows: %s:%d", 
+    sprintf(timestamp, "[Master thread] Get the binary log position before copy rows: %s:%d", 
         sql_cache_node->start_binlog_file, sql_cache_node->start_binlog_pos);
     mysql_analyze_biosc_output(thd, timestamp, sql_cache_node);
 
@@ -292,9 +292,9 @@ int mysql_execute_alter_table_biosc(
     /* start to copy rows use one thread */
     /* start to catch binlog */
     mysql_analyze_biosc_output(thd, 
-        (char*)"Create copy rows thread completely", sql_cache_node);
+        (char*)"[Master thread] Create copy rows thread completely", sql_cache_node);
     mysql_analyze_biosc_output(thd, 
-        (char*)"Create binary logs catch thread completely", sql_cache_node);
+        (char*)"[Master thread] Create binary logs catch thread completely", sql_cache_node);
 
     if (mysql_thread_create(0, &threadid, &connection_attrib,
         inception_move_rows_thread, (void*)sql_cache_node) || 
@@ -1917,8 +1917,8 @@ int inception_finish_event_queue(
     {
         if (mysql_execute_sql_with_retry(thd, mysql, str_get(execute_sql), NULL, sql_cache_node))
         {
+            sql_cache_node->osc_abort = true;
             return true;
-            break;
         }
 
         sql_cache_node->mts_queue->dequeue_index = 
@@ -2146,6 +2146,12 @@ execute_continue:
 
         last_delay_time = delay_time;
         delay_time = strtoul(source_row[0], 0, 10);
+        if (first_delay == 0)
+        {
+            first_delay = delay_time;
+            sprintf(osc_output, "[Master thread] Binlog catch delay %d(s)", delay_time);
+            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+        }
         if (delay_time > thd->variables.inception_biosc_min_delay_time)
         {
             /* 每隔3秒才输出一次，不然有时候会太频繁，每
@@ -2162,8 +2168,6 @@ execute_continue:
 
             if (last_delay_time == 0)
                 last_delay_time = delay_time;
-            if (first_delay == 0)
-                first_delay = delay_time;
             last_report_time = my_getsystime();
             exec_count = 0;
             if (inception_check_biosc_abort(thd, sql_cache_node, 
@@ -2272,7 +2276,10 @@ reconnect:
             {
                 /* TODO: 判断有没有延迟，如果延迟比较长的话，还不能去锁表 */
                 if (inception_catch_binlog_delay(thd, mysql, sql_cache_node))
-                    goto reconnect;
+                {
+                    sql_cache_node->osc_abort = true;
+                    goto error;
+                }
 
                 /* 如果没有上锁成功，则需要重新再来 */
                 sprintf(osc_output, "[Master thread] Lock origin table, new table "

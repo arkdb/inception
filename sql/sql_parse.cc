@@ -17300,24 +17300,25 @@ int mysql_execute_statement(
     DBUG_ENTER("mysql_execute_statement");
     timer=start_timer();
 
-    if (thd->variables.inception_alter_table_method == osc_method_build_in_osc &&
-        sql_cache_node->optype == SQLCOM_ALTER_TABLE)
+    if (sql_cache_node->use_osc)
     {
-        if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
+        if (thd->variables.inception_alter_table_method == osc_method_build_in_osc)
         {
-            sprintf(sql_cache_node->execute_time, "%.3f",
-                (double)(start_timer() - timer) / CLOCKS_PER_SEC);
-            DBUG_RETURN(true);
+            if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
+            {
+                sprintf(sql_cache_node->execute_time, "%.3f",
+                    (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+                DBUG_RETURN(true);
+            }
         }
-    }
-    else if (thd->variables.inception_alter_table_method == osc_method_pt_osc &&
-         sql_cache_node->optype == SQLCOM_ALTER_TABLE)
-    {
-        if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+        else if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
         {
-            sprintf(sql_cache_node->execute_time, "%.3f",
-                (double)(start_timer() - timer) / CLOCKS_PER_SEC);
-            DBUG_RETURN(true);
+            if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+            {
+                sprintf(sql_cache_node->execute_time, "%.3f",
+                    (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+                DBUG_RETURN(true);
+            }
         }
     }
     else
