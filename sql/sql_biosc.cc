@@ -1414,6 +1414,21 @@ inception_event_get_next(
     return element;
 }
 
+void
+inception_event_dequeue_set(
+    THD*  thd,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    mts_thread_queue_t* element;
+    mts_thread_t* mts_thread;
+
+    mts_thread = sql_cache_node->mts_queue;
+    element = &mts_thread->thread_queue[mts_thread->dequeue_index];
+    element->valid = false;
+    mts_thread->dequeue_index = (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
+}
+
 str_t*
 inception_event_dequeue(
     THD*  thd,
@@ -1429,14 +1444,9 @@ inception_event_dequeue(
     {
         element = &mts_thread->thread_queue[mts_thread->dequeue_index];
         if (element->valid)
-        {
             sql_buffer = &element->sql_buffer;
-            element->valid = false;
-        }
         else
-        {
             return NULL;
-        }
     }
 
     return sql_buffer;
@@ -1921,10 +1931,7 @@ int inception_finish_event_queue(
             return true;
         }
 
-        sql_cache_node->mts_queue->dequeue_index = 
-          (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
-
-        execute_sql = inception_event_dequeue(thd, sql_cache_node);
+        inception_event_dequeue_set(thd, sql_cache_node);
 
         /* 如果锁表时间超了，则需要提前返回释放锁 */
         if (my_getsystime() - start_lock_time > 
@@ -1932,6 +1939,8 @@ int inception_finish_event_queue(
         {
             return false;
         }
+
+        execute_sql = inception_event_dequeue(thd, sql_cache_node);
     }
 
     return false;
@@ -2113,12 +2122,12 @@ execute_continue:
     {
         if (mysql_execute_sql_with_retry(thd, mysql, str_get(to_execute), NULL, sql_cache_node))
             return true;
-        sql_cache_node->mts_queue->dequeue_index = 
-          (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
-        to_execute = inception_event_dequeue(thd, sql_cache_node);
-        exec_count++;
-        if (exec_count > thd->variables.inception_biosc_check_delay_period)
+        inception_event_dequeue_set(thd, sql_cache_node);
+
+        if (++exec_count > thd->variables.inception_biosc_check_delay_period)
             break;
+        
+        to_execute = inception_event_dequeue(thd, sql_cache_node);
     }
 
     if (!to_execute)
@@ -2261,8 +2270,7 @@ reconnect:
                     goto error;
                 }
 
-                sql_cache_node->mts_queue->dequeue_index = 
-                  (sql_cache_node->mts_queue->dequeue_index+1) % 1000;
+                inception_event_dequeue_set(thd, sql_cache_node);
             }
         }
         else if (sql_cache_node->biosc_copy_complete == true)
