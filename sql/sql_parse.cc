@@ -704,11 +704,6 @@ int mysql_cache_one_sql(THD* thd)
         strcat(sql_cache_node->sql_statement, str_get(thd->show_result));
     }
 
-    sql_cache_node->osc_select_columns = thd->osc_select_columns;
-    sql_cache_node->osc_insert_columns = thd->osc_insert_columns;
-    thd->osc_select_columns = NULL;
-    thd->osc_insert_columns = NULL;
-
     sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->thd = thd;
     sql_cache_node->optype = thd->lex->sql_command;
@@ -1958,7 +1953,6 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_IDENT_USE_KEYWORD:
     case ER_TABLE_CHARSET_MUST_UTF8:
     case ER_AUTO_INCR_ID_WARNING:
-    case ER_ALTER_TABLE_ONCE:
     case ER_BLOB_CANT_HAVE_DEFAULT:
     case ER_WITH_DEFAULT_ADD_COLUMN:
     case ER_NOT_SUPPORTED_YET:
@@ -2026,6 +2020,8 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_COLLATION_CHARSET_MISMATCH:
     case ER_VIEW_SELECT_CLAUSE:
     case ER_NOT_SUPPORTED_ITEM_TYPE:
+    case ER_BUILD_IN_OSC_NOT_SUPPORT:
+    case ER_ALTER_TABLE_ONCE:
         return INCEPTION_PARSE;
 
     default:
@@ -2195,13 +2191,13 @@ mysql_check_inception_variables(
             return false;
         break;
 
-    case ER_ALTER_TABLE_ONCE:
-        if (inception_merge_alter_table)
-            return true;
-        else 
-            return false;
-        break;
-
+    // case ER_ALTER_TABLE_ONCE:
+    //     if (inception_merge_alter_table)
+    //         return true;
+    //     else 
+    //         return false;
+    //     break;
+    //
     case ER_WITH_DEFAULT_ADD_COLUMN:
         if (inception_check_column_default_value)
             return true;
@@ -9809,6 +9805,12 @@ mysql_check_index_attribute(
         {
             my_error(ER_FOREIGN_KEY, MYF(0), table_name);
             mysql_errmsg_append(thd);
+            if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+                thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+            {
+                my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+                mysql_errmsg_append(thd);
+            }
         }
         else if (key->type == Key::UNIQUE)
         {
@@ -9922,7 +9924,8 @@ int mysql_check_create_index(THD *thd)
             field_node = LIST_GET_FIRST(table_info->field_lst);
             while (field_node != NULL)
             {
-                if (!strcasecmp(field_node->field_name, col1->field_name.str))
+                if (!field_node->is_deleted && 
+                    !strcasecmp(field_node->field_name, col1->field_name.str))
                 {
                     if (field_node->charset && col1->length)
                     {
@@ -10320,7 +10323,8 @@ int mysql_check_add_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->field_name) == 0)
+            if (!field_info->is_deleted &&
+                strcasecmp(field_info->field_name, field->field_name) == 0)
             {
                 my_error(ER_COLUMN_EXISTED, MYF(0), field->field_name);
                 mysql_errmsg_append(thd);
@@ -10502,7 +10506,8 @@ int mysql_check_drop_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->name) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->name) == 0)
             {
                 found = TRUE;
                 break;
@@ -10631,7 +10636,8 @@ int mysql_check_change_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->change) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->change) == 0)
             {
                 found = TRUE;
                 break;
@@ -10851,7 +10857,8 @@ int mysql_check_change_column_default(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->name) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->name) == 0)
             {
                 found = TRUE;
                 break;
@@ -11268,7 +11275,8 @@ int mysql_check_alter_table_execute_direct(
         }
         else
         {
-            DBUG_RETURN(false);
+            /* 目前不支持的改表操作 */
+            DBUG_RETURN(2);
         }
     }
 
@@ -11379,6 +11387,7 @@ int mysql_check_alter_use_osc_type(
     int               select_use;
     char              insert_column_name[FN_LEN];
     int               first = true;
+    sql_cache_node_t* sql_cache_node;
 
     if (!thd->use_osc)
         return false;
@@ -11387,10 +11396,11 @@ int mysql_check_alter_use_osc_type(
         inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
         return false;
 
-    thd->osc_select_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    thd->osc_insert_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-    str_init(thd->osc_select_columns);
-    str_init(thd->osc_insert_columns);
+    sql_cache_node = thd->current_sql_cache_node;
+    sql_cache_node->osc_select_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    sql_cache_node->osc_insert_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(sql_cache_node->osc_select_columns);
+    str_init(sql_cache_node->osc_insert_columns);
 
     field_node = LIST_GET_FIRST(table_info->field_lst);
     while (field_node != NULL)
@@ -11404,17 +11414,17 @@ int mysql_check_alter_use_osc_type(
         {
             if (!first)
             {
-                str_append(thd->osc_select_columns, ",");
-                str_append(thd->osc_insert_columns, ",");
+                str_append(sql_cache_node->osc_select_columns, ",");
+                str_append(sql_cache_node->osc_insert_columns, ",");
             }
 
             if (insert_column_name[0] != '\0')
-                str_append(thd->osc_insert_columns, insert_column_name);
+                str_append(sql_cache_node->osc_insert_columns, insert_column_name);
             else
-                str_append(thd->osc_insert_columns, field_node->field_name);
+                str_append(sql_cache_node->osc_insert_columns, field_node->field_name);
 
             first = false;
-            str_append(thd->osc_select_columns, field_node->field_name);
+            str_append(sql_cache_node->osc_select_columns, field_node->field_name);
         }
 
         field_node = LIST_GET_NEXT(link, field_node);
@@ -11430,6 +11440,7 @@ int mysql_check_alter_use_osc(
     table_info_t*   table_info
 )
 {
+    int ret;
     //如果inception_osc_min_table_size设置为0，或者表大小大于
     //这个参数，就用OSC，如果直接设置为0的话，下面2个参数都满足，但为了
     //代码上看起来清楚，还是写了第二个条件
@@ -11441,8 +11452,14 @@ int mysql_check_alter_use_osc(
         thd->use_osc = FALSE; 
        
     /* 如果改表操作中，涉及到的修改都可以直接改表而不需要锁表的话，则不做OSC */
-    if (mysql_check_alter_table_execute_direct(thd))
+    if ((ret = mysql_check_alter_table_execute_direct(thd)) == true)
         thd->use_osc = FALSE;
+    if (ret == 2 && inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+        thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+    {
+        my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+        mysql_errmsg_append(thd);
+    }
 
     mysql_check_alter_use_osc_type(thd, table_info);
 
@@ -11568,7 +11585,14 @@ int mysql_check_alter_table(THD *thd)
     mysql_check_alter_use_osc(thd, table_info);
     while (alter_info_ptr->flags)
     {
-        if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
+        if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_COLUMN);
+            if((err = mysql_check_drop_column(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_COLUMN;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
             alter_info_ptr->flags & Alter_info::ALTER_COLUMN_ORDER)
         {
             thd_sql_statistic_increment(thd, Alter_info::ALTER_ADD_COLUMN);
@@ -11590,13 +11614,6 @@ int mysql_check_alter_table(THD *thd)
             if ((err = mysql_check_create_index(thd)))
                 DBUG_RETURN(err);
             alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_INDEX;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_COLUMN);
-            if((err = mysql_check_drop_column(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_COLUMN;
         }
         else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
         {
@@ -18097,8 +18114,6 @@ int mysql_init_sql_cache(THD* thd)
     LIST_INIT(thd->tablecache.tablecache_lst);
     LIST_INIT(thd->dbcache.dbcache_lst);
     thd->rt_lst = NULL;
-    thd->osc_select_columns = NULL;
-    thd->osc_insert_columns = NULL;
 
     if (inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache = (split_cache_t*)my_malloc(sizeof(split_cache_t), MY_ZEROFILL);
@@ -18305,6 +18320,7 @@ int mysql_deinit_sql_cache_low(THD* thd)
     table_rt_t*                 table_rt;
     table_rt_t*                 table_rt_next;
     sql_table_t*                tables;
+    int j;
 
     DBUG_ENTER("mysql_deinit_sql_cache_low");
 
@@ -18377,6 +18393,28 @@ int mysql_deinit_sql_cache_low(THD* thd)
             my_free(table_rt);
             table_rt = table_rt_next;
         }
+
+        str_deinit(sql_cache_node->osc_select_columns);
+        str_deinit(sql_cache_node->osc_insert_columns);
+        j = 0;
+        while (sql_cache_node->primary_keys && 
+            sql_cache_node->primary_keys[j])
+        {
+            my_free(sql_cache_node->primary_keys[j]);
+            j++;
+        }
+
+        j = 0;
+        while (sql_cache_node->new_primary_keys && 
+            sql_cache_node->new_primary_keys[j])
+        {
+            my_free(sql_cache_node->new_primary_keys[j]);
+            j++;
+        }
+        if (sql_cache_node->primary_keys)
+            my_free(sql_cache_node->new_primary_keys);
+        if (sql_cache_node->new_primary_keys)
+            my_free(sql_cache_node->primary_keys);
 
         my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);

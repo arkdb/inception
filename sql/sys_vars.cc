@@ -816,11 +816,11 @@ static Sys_var_mybool Sys_inception_check_autoincrement_name(
     GLOBAL_VAR(inception_check_autoincrement_name),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
-static Sys_var_mybool Sys_inception_merge_alter_table(
-    "inception_merge_alter_table",
-    "merge multi alter table statement for same table to only one",
-    GLOBAL_VAR(inception_merge_alter_table),
-    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+// static Sys_var_mybool Sys_inception_merge_alter_table(
+//     "inception_merge_alter_table",
+//     "merge multi alter table statement for same table to only one",
+//     GLOBAL_VAR(inception_merge_alter_table),
+//     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_enable_subselect(
     "inception_enable_subselect",

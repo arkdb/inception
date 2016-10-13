@@ -1012,6 +1012,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_DERIVED_MUST_HAVE_ALIAS, "Every derived table must have its own alias.");
     SERVER_SETMSG(ER_SET_OPTIONS_ERROR, "Set transfer options error: \'%s\'.");
     SERVER_SETMSG(ER_CREATE_THREAD_ERROR, "Create thread error: \'%s\'.");
+    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type using build-in-osc, please switch to other method.");
 
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

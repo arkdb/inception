@@ -502,7 +502,6 @@ struct sql_cache_node_struct
     char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
     char**      primary_keys;
     char**      new_primary_keys;
-    int         new_primary_keys_count;
     str_t*      pk_string;
     /* 0表示没有完成，1表示已经完成，2表示出错中止了 */
     volatile    int         biosc_copy_complete;
@@ -515,14 +514,10 @@ struct sql_cache_node_struct
     volatile int  dump_on;
     mysql_cond_t stop_cond;
     volatile int rename_connectionid;
-    mysql_cond_t connectionid_ready_cond;
-    mysql_cond_t copy_rows_complete;
     mysql_cond_t rename_ready_cond;
     mysql_cond_t alter_status;
     mts_thread_t* mts_queue;
     mts_thread_queue_t* current_element;
-    mysql_cond_t        mts_cond;
-    mysql_mutex_t       mts_lock;
     ulonglong start_lock_time ;
     pthread_t binlog_catch_threadid;
     THD*        binlog_catch_thread;
