@@ -1221,8 +1221,8 @@ mysql_check_current_load(
     char        status_sql[128];
     MYSQL_RES   *source_res1;
     MYSQL_ROW   source_row;
-    int         Threads_connected;
-    int         Threads_running;
+    ulong       Threads_connected;
+    ulong       Threads_running;
     char        osc_output[1024];
     int         first = true;
 
@@ -1253,8 +1253,8 @@ retry:
 
     if (Threads_connected > thd->variables.inception_osc_critical_connected)
     {
-        sprintf(osc_output, "[Copy thread] Threads_connected is %d, greater than "
-            "inception_osc_critical_connected: %d, Alter table abort...", 
+        sprintf(osc_output, "[Copy thread] Threads_connected is %lu, greater than "
+            "inception_osc_critical_connected: %lu, Alter table abort...", 
             Threads_connected, thd->variables.inception_osc_critical_connected);
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         sql_cache_node->osc_abort = true;
@@ -1263,8 +1263,8 @@ retry:
 
     if (Threads_running > thd->variables.inception_osc_critical_running)
     {
-        sprintf(osc_output, "[Copy thread] Threads_running is %d, greater than "
-            "inception_osc_critical_running: %d, Alter table abort...", 
+        sprintf(osc_output, "[Copy thread] Threads_running is %lu, greater than "
+            "inception_osc_critical_running: %lu, Alter table abort...", 
             Threads_connected, thd->variables.inception_osc_critical_connected);
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         sql_cache_node->osc_abort = true;
@@ -1285,8 +1285,11 @@ retry:
         goto retry;
     }
 
-    sprintf(osc_output, "[Copy thread] Load is OK, copy rows continue...");
-    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+    if (!first)
+    {
+        sprintf(osc_output, "[Copy thread] Load is OK, copy rows continue...");
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+    }
     return false;
 }
 
