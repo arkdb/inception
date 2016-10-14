@@ -1218,12 +1218,12 @@ mysql_check_current_load(
 )
 {
 
-    char status_sql[128];
-    MYSQL_RES *source_res1;
-    MYSQL_ROW  source_row;
+    char        status_sql[128];
+    MYSQL_RES   *source_res1;
+    MYSQL_ROW   source_row;
     int         Threads_connected;
     int         Threads_running;
-    char  osc_output[1024];
+    char        osc_output[1024];
     int         first = true;
 
 retry:
@@ -1245,9 +1245,9 @@ retry:
         return true;
     }
 
-    Threads_connected = strtoul(source_row[0], 0, 10);
+    Threads_connected = strtoul(source_row[1], 0, 10);
     source_row = mysql_fetch_row(source_res1);
-    Threads_running = strtoul(source_row[0], 0, 10);
+    Threads_running = strtoul(source_row[1], 0, 10);
 
     mysql_free_result(source_res1);
 
@@ -1285,6 +1285,8 @@ retry:
         goto retry;
     }
 
+    sprintf(osc_output, "[Copy thread] Load is OK, copy rows continue...");
+    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     return false;
 }
 
