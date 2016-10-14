@@ -1210,6 +1210,84 @@ int inception_swap_str(
     return false;
 }
 
+int
+mysql_check_current_load(
+    THD* thd,
+    MYSQL* mysql,
+    sql_cache_node_t* sql_cache_node
+)
+{
+
+    char status_sql[128];
+    MYSQL_RES *source_res1;
+    MYSQL_ROW  source_row;
+    int         Threads_connected;
+    int         Threads_running;
+    char  osc_output[1024];
+    int         first = true;
+
+retry:
+    if (inception_biosc_abort(thd, sql_cache_node))
+        return true;
+
+    sprintf(status_sql, "show status where Variable_name "
+        "in( 'Threads_connected','Threads_running') ;");
+    if (mysql_real_query(mysql, status_sql, strlen(status_sql)) ||
+       (source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        return true;
+    }
+
+    source_row = mysql_fetch_row(source_res1);
+    if (source_row == NULL)
+    {
+        mysql_free_result(source_res1);
+        return true;
+    }
+
+    Threads_connected = strtoul(source_row[0], 0, 10);
+    source_row = mysql_fetch_row(source_res1);
+    Threads_running = strtoul(source_row[0], 0, 10);
+
+    mysql_free_result(source_res1);
+
+    if (Threads_connected > thd->variables.inception_osc_critical_connected)
+    {
+        sprintf(osc_output, "[Copy thread] Threads_connected is %d, greater than "
+            "inception_osc_critical_connected: %d, Alter table abort...", 
+            Threads_connected, thd->variables.inception_osc_critical_connected);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+        sql_cache_node->osc_abort = true;
+        return true;
+    }
+
+    if (Threads_running > thd->variables.inception_osc_critical_running)
+    {
+        sprintf(osc_output, "[Copy thread] Threads_running is %d, greater than "
+            "inception_osc_critical_running: %d, Alter table abort...", 
+            Threads_connected, thd->variables.inception_osc_critical_connected);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+        sql_cache_node->osc_abort = true;
+        return true;
+    }
+
+    if (Threads_connected > thd->variables.inception_osc_max_connected ||
+        Threads_running > thd->variables.inception_osc_max_running)
+    {
+        if (first)
+        {
+            sprintf(osc_output, "[Copy thread] Load is too high, "
+                "copy rows paused and wait the load lesser...");
+            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+        }
+        first = false;
+        sleep (10);
+        goto retry;
+    }
+
+    return false;
+}
+
 pthread_handler_t inception_move_rows_thread(void* arg)
 {
     THD *thd= NULL;
@@ -1365,6 +1443,9 @@ pthread_handler_t inception_move_rows_thread(void* arg)
             sum_affected_rows += affected_rows;
             mysql_update_biosc_progress(thd, sql_cache_node, start_lock_time, sum_affected_rows);
         }
+
+        if (mysql_check_current_load(query_thd, mysql, sql_cache_node))
+            goto error;
     }
 
     sql_cache_node->biosc_copy_complete = true;
