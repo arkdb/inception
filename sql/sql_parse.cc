@@ -11318,7 +11318,8 @@ int inception_get_table_primary_keys(
             field_info = LIST_GET_NEXT(link, field_info);
         }
         
-        sql_cache_node->primary_keys = (char**)my_malloc(sizeof(char*) * pkcount, MY_ZEROFILL);
+        sql_cache_node->primary_keys = (char**)my_malloc(sizeof(char*) * 
+            (pkcount + 1), MY_ZEROFILL);
         pkcount = 0;
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
@@ -11360,7 +11361,7 @@ int mysql_get_alter_table_new_primary_key(
     sql_cache_node = thd->current_sql_cache_node;
 
     sql_cache_node->new_primary_keys = (char**)my_malloc(sizeof(char*) * 
-        LIST_GET_LEN(table_info->field_lst), MY_ZEROFILL);
+        (1 + LIST_GET_LEN(table_info->field_lst)), MY_ZEROFILL);
     field_node = LIST_GET_FIRST(table_info->field_lst);
     while (field_node != NULL)
     {
@@ -11601,6 +11602,13 @@ int mysql_check_alter_table(THD *thd)
             alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_COLUMN;
             alter_info_ptr->flags &= ~Alter_info::ALTER_COLUMN_ORDER;
         }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_CHANGE_COLUMN);
+            if ((err = mysql_check_change_column(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+        }
         else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_INDEX)
         {
             thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_INDEX);
@@ -11621,13 +11629,6 @@ int mysql_check_alter_table(THD *thd)
             if((err = mysql_check_rename_table(thd)))
                 DBUG_RETURN(err);
             alter_info_ptr->flags &= ~Alter_info::ALTER_RENAME;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_CHANGE_COLUMN);
-            if ((err = mysql_check_change_column(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
         }
         else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
