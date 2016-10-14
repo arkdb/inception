@@ -211,6 +211,14 @@ ADD_LIBRARY(sqlgunitlib
   )
 ADD_DEPENDENCIES(sqlgunitlib GenError)
 
+# collector
+IF(WIN32)
+  SET(COLLECTOR_SOURCE main_collector.cc nt_servc.cc nt_servc.h message.rc)
+ELSE()
+  SET(COLLECTOR_SOURCE main_collector.cc ${DTRACE_PROBES_ALL})
+ENDIF()
+MYSQL_ADD_EXECUTABLE(inception_collector ${COLLECTOR_SOURCE} DESTINATION ${INSTALL_SBINDIR} COMPONENT Server)
+
 
 IF(WIN32)
   SET(MYSQLD_SOURCE main.cc nt_servc.cc nt_servc.h message.rc)
@@ -225,6 +233,7 @@ MARK_AS_ADVANCED(DEBUG_EXTNAME)
 
 IF(DEBUG_EXTNAME)
   SET_TARGET_PROPERTIES(Inception PROPERTIES DEBUG_OUTPUT_NAME "mysqld-debug")
+  SET_TARGET_PROPERTIES(inception_collector PROPERTIES DEBUG_OUTPUT_NAME "mysqld-debug")
 ENDIF()
 
 IF(APPLE) 
@@ -232,22 +241,27 @@ IF(APPLE)
   FIND_LIBRARY(CORESERVICES NAMES CoreServices) 
   IF(CORESERVICES) 
     TARGET_LINK_LIBRARIES(Inception ${CORESERVICES}) 
+    TARGET_LINK_LIBRARIES(inception_collector ${CORESERVICES}) 
   ENDIF() 
 ENDIF() 
 
 IF(NOT WITHOUT_DYNAMIC_PLUGINS)
   SET_TARGET_PROPERTIES(Inception PROPERTIES ENABLE_EXPORTS TRUE)
   GET_TARGET_PROPERTY(mysqld_link_flags Inception LINK_FLAGS)
+  SET_TARGET_PROPERTIES(inception_collector PROPERTIES ENABLE_EXPORTS TRUE)
+  GET_TARGET_PROPERTY(mysqld_link_flags inception_collector LINK_FLAGS)
   IF(NOT mysqld_link_flags)
     SET(mysqld_link_flags)
   ENDIF()
   IF (MINGW OR CYGWIN)
     SET_TARGET_PROPERTIES(Inception PROPERTIES LINK_FLAGS "${mysqld_link_flags} -Wl,--export-all-symbols")
+    SET_TARGET_PROPERTIES(inception_collector PROPERTIES LINK_FLAGS "${mysqld_link_flags} -Wl,--export-all-symbols")
   ENDIF()
   IF(MSVC)
     # Set module definition file. Also use non-incremental linker, 
     # incremental appears to crash from time to time,if used with /DEF option
     SET_TARGET_PROPERTIES(Inception PROPERTIES LINK_FLAGS "${mysqld_link_flags} /DEF:mysqld.def /INCREMENTAL:NO")
+    SET_TARGET_PROPERTIES(inception_collector PROPERTIES LINK_FLAGS "${mysqld_link_flags} /DEF:mysqld.def /INCREMENTAL:NO")
 
     FOREACH (CORELIB sql mysys mysys_ssl dbug strings)
       GET_TARGET_PROPERTY(LOC ${CORELIB} LOCATION)
@@ -262,6 +276,10 @@ IF(NOT WITHOUT_DYNAMIC_PLUGINS)
       COMMAND echo ${_PLATFORM} && cscript ARGS //nologo ${PROJECT_SOURCE_DIR}/win/create_def_file.js
                   ${_PLATFORM}  ${LIB_LOCATIONS} > mysqld.def 
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    ADD_CUSTOM_COMMAND(TARGET inception_collector PRE_LINK
+      COMMAND echo ${_PLATFORM} && cscript ARGS //nologo ${PROJECT_SOURCE_DIR}/win/create_def_file.js
+                  ${_PLATFORM}  ${LIB_LOCATIONS} > mysqld.def 
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     ADD_DEPENDENCIES(sql GenError)
   ENDIF()
 ENDIF()
@@ -269,10 +287,15 @@ ENDIF()
 SET_TARGET_PROPERTIES(Inception PROPERTIES ENABLE_EXPORTS TRUE) 
 TARGET_LINK_LIBRARIES(Inception sql binlog rpl master slave sql mysys mysys_ssl)
 
+SET_TARGET_PROPERTIES(inception_collector PROPERTIES ENABLE_EXPORTS TRUE) 
+TARGET_LINK_LIBRARIES(inception_collector sql binlog rpl master slave sql mysys mysys_ssl)
+
 # Provide plugins with minimal set of libraries
 SET(INTERFACE_LIBS ${LIBRT})
 IF(INTERFACE_LIBS)
  SET_TARGET_PROPERTIES(Inception PROPERTIES LINK_INTERFACE_LIBRARIES 
+  "${INTERFACE_LIBS}")
+ SET_TARGET_PROPERTIES(inception_collector PROPERTIES LINK_INTERFACE_LIBRARIES 
   "${INTERFACE_LIBS}")
 ENDIF()
 
@@ -280,16 +303,22 @@ ENDIF()
 # from static libraries
 DTRACE_INSTRUMENT_STATIC_LIBS(Inception 
  "sql;mysys;mysys_ssl;${MYSQLD_STATIC_PLUGIN_LIBS}")
+DTRACE_INSTRUMENT_STATIC_LIBS(inception_collector 
+ "sql;mysys;mysys_ssl;${MYSQLD_STATIC_PLUGIN_LIBS}")
  
 
 SET(WITH_MYSQLD_LDFLAGS "" CACHE STRING "Additional linker flags for Inception")
+SET(WITH_MYSQLD_LDFLAGS "" CACHE STRING "Additional linker flags for inception_collector")
 MARK_AS_ADVANCED(WITH_MYSQLD_LDFLAGS)
 IF(WITH_MYSQLD_LDFLAGS)
   GET_TARGET_PROPERTY(Inception LINK_FLAGS MYSQLD_LINK_FLAGS)
+  GET_TARGET_PROPERTY(inception_collector LINK_FLAGS MYSQLD_LINK_FLAGS)
   IF(NOT MYSQLD_LINK_FLAGS)
     SET(MYSQLD_LINK_FLAGS) 
   ENDIF() 
   SET_TARGET_PROPERTIES(Inception PROPERTIES LINK_FLAGS 
+     "${MYSQLD_LINK_FLAGS} ${WITH_MYSQLD_LDFLAGS}")
+  SET_TARGET_PROPERTIES(inception_collector PROPERTIES LINK_FLAGS 
      "${MYSQLD_LINK_FLAGS} ${WITH_MYSQLD_LDFLAGS}")
 ENDIF()
 
@@ -298,8 +327,17 @@ IF(DEBUG_EXTNAME)
     DESTINATION ${INSTALL_SBINDIR} 
     PDB_DESTINATION ${INSTALL_SBINDIR}
     SUFFIX "-debug")
+
+  INSTALL_DEBUG_TARGET(inception_collector 
+    DESTINATION ${INSTALL_SBINDIR} 
+    PDB_DESTINATION ${INSTALL_SBINDIR}
+    SUFFIX "-debug")
 ELSE()
   INSTALL_DEBUG_TARGET(Inception 
+    DESTINATION ${INSTALL_SBINDIR} 
+    PDB_DESTINATION ${INSTALL_SBINDIR}/debug
+    RENAME mysqld-debug)
+  INSTALL_DEBUG_TARGET(inception_collector 
     DESTINATION ${INSTALL_SBINDIR} 
     PDB_DESTINATION ${INSTALL_SBINDIR}/debug
     RENAME mysqld-debug)
@@ -377,8 +415,10 @@ INSTALL(FILES ${DUMMY_FILE} DESTINATION data/test COMPONENT DataFiles)
 IF(NOT CMAKE_CROSSCOMPILING)
   IF(DEBUG_EXTNAME)
     GET_TARGET_PROPERTY(MYSQLD_EXECUTABLE Inception LOCATION_DEBUG)
+    GET_TARGET_PROPERTY(MYSQLD_EXECUTABLE inception_collector LOCATION_DEBUG)
   ELSE()
     GET_TARGET_PROPERTY(MYSQLD_EXECUTABLE Inception LOCATION)
+    GET_TARGET_PROPERTY(MYSQLD_EXECUTABLE inception_collector LOCATION)
   ENDIF()
 ENDIF()
 ENDIF()
