@@ -200,7 +200,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_BLOB_KEY_WITHOUT_LENGTH, "BLOB/TEXT column \'%-.192s\' used in key specification without a key length");
     SERVER_SETMSG(ER_PRIMARY_CANT_HAVE_NULL, "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead");
     SERVER_SETMSG(ER_TOO_MANY_ROWS, "Result consisted of more than one row");
-    SERVER_SETMSG(ER_REQUIRES_PRIMARY_KEY, "This table type requires a primary key");
+    SERVER_SETMSG(ER_REQUIRES_PRIMARY_KEY, "Table \'%-.192s\'.\'%-.192s\' requires a primary key");
     SERVER_SETMSG(ER_NO_RAID_COMPILED, "This version of MySQL is not compiled with RAID support");
     SERVER_SETMSG(ER_UPDATE_WITHOUT_KEY_IN_SAFE_MODE, "You are using safe update mode and you tried to update a table without a WHERE that uses a KEY column");
     SERVER_SETMSG(ER_KEY_DOES_NOT_EXITS, "Key \'%-.192s\' doesn\'t exist in table \'%-.192s\'");
@@ -1012,7 +1012,12 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_DERIVED_MUST_HAVE_ALIAS, "Every derived table must have its own alias.");
     SERVER_SETMSG(ER_SET_OPTIONS_ERROR, "Set transfer options error: \'%s\'.");
     SERVER_SETMSG(ER_CREATE_THREAD_ERROR, "Create thread error: \'%s\'.");
-    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type using build-in-osc, please switch to other method.");
+    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type "
+        "using build-in-osc, please switch to other method.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_MODIFY, "Primary keys changed in table \'%s\'.\'%s\', "
+        "the data will been lost possibly after altered.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_LOST, "After the table \'%s\'.\'%s\' altered, "
+        "there is no primary keys, it can not been altered.");
 
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

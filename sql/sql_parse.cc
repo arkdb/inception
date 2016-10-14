@@ -1970,6 +1970,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_NAMES_MUST_UTF8:
     case ER_TEXT_NOT_NULLABLE_ERROR:
     case ER_INVALID_IDENT:
+    case ER_PRIMARY_KEY_MODIFY:
     case ER_SUBSELECT_IN_DML:
         return INCEPTION_RULES;
 
@@ -2022,6 +2023,8 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_NOT_SUPPORTED_ITEM_TYPE:
     case ER_BUILD_IN_OSC_NOT_SUPPORT:
     case ER_ALTER_TABLE_ONCE:
+    case ER_PRIMARY_KEY_LOST:
+    case ER_REQUIRES_PRIMARY_KEY:
         return INCEPTION_PARSE;
 
     default:
@@ -11354,8 +11357,7 @@ int mysql_get_alter_table_new_primary_key(
     if (!thd->use_osc)
         return false;
 
-    if (thd->variables.inception_alter_table_method == osc_method_pt_osc ||
-        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
+    if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
         return false;
 
     sql_cache_node = thd->current_sql_cache_node;
@@ -11376,8 +11378,50 @@ int mysql_get_alter_table_new_primary_key(
         field_node = LIST_GET_NEXT(link, field_node);
     }
 
+    pkcount = 0;
+    while (sql_cache_node->new_primary_keys[pkcount] &&
+        sql_cache_node->primary_keys[pkcount])
+    {
+        if (strcasecmp(sql_cache_node->primary_keys[pkcount], 
+              sql_cache_node->new_primary_keys[pkcount]))
+        {
+            my_error(ER_PRIMARY_KEY_MODIFY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+                str_get(&sql_cache_node->tables.table_names));
+            mysql_errmsg_append(thd);
+            break;
+        }
+
+        pkcount++;
+    }
+
+    /* 改前改后主键不相同了，则报警 */
+    if (sql_cache_node->new_primary_keys[pkcount] ||
+        sql_cache_node->primary_keys[pkcount])
+    {
+        my_error(ER_PRIMARY_KEY_MODIFY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
+    /* 新表必须要有主键，不然没法做delete */
+    if (pkcount == 0 && !sql_cache_node->new_primary_keys[pkcount])
+    {
+        my_error(ER_PRIMARY_KEY_LOST, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
+    /* 要改的表，必须要有主键，不然没法改 */
+    if (pkcount == 0 && !sql_cache_node->primary_keys[pkcount])
+    {
+        my_error(ER_REQUIRES_PRIMARY_KEY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
     return FALSE;
 }
+
 int mysql_check_alter_use_osc_type(
     THD*            thd,
     table_info_t*   table_info
@@ -11431,7 +11475,6 @@ int mysql_check_alter_use_osc_type(
         field_node = LIST_GET_NEXT(link, field_node);
     }
 
-    inception_get_table_primary_keys(thd, thd->current_sql_cache_node);
 
     return FALSE;
 }
@@ -11462,6 +11505,7 @@ int mysql_check_alter_use_osc(
         mysql_errmsg_append(thd);
     }
 
+    inception_get_table_primary_keys(thd, thd->current_sql_cache_node);
     mysql_check_alter_use_osc_type(thd, table_info);
 
     return FALSE;
@@ -18416,6 +18460,8 @@ int mysql_deinit_sql_cache_low(THD* thd)
             my_free(sql_cache_node->new_primary_keys);
         if (sql_cache_node->new_primary_keys)
             my_free(sql_cache_node->primary_keys);
+        str_deinit(sql_cache_node->pk_string);
+        my_free(sql_cache_node->pk_string);
 
         my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
