@@ -300,13 +300,11 @@ retry:
         {
             /* 如果改的过程中，复制断了，改表停止 */
             mysql_free_result(source_res1);
-            sprintf(hosts_sql, "[Master thread] Slave (%s:%d), replication stopped"
-                " alter table abort...", 
+            sprintf(hosts_sql, "[Master thread] Slave (%s:%d), "
+                "replication stopped alter table abort...", 
                 slave_addr->hostname, slave_addr->port);
             mysql_analyze_biosc_output(query_thd, hosts_sql, sql_cache_node);
             sql_cache_node->osc_abort = true;
-            my_error(ER_OSC_ABORT, MYF(0), hosts_sql);
-            mysql_sqlcachenode_errmsg_append(thread_thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
             return true;
         }
 
@@ -357,7 +355,7 @@ int mysql_find_all_slaves_from_one_host(
     uint          master_port;
     uint          min_port = 0;
     uint          max_port = 0;
-    int           master_behind;
+    int           master_behind = 0;
     uint          i;
     slave_addr_t* slave_addr;
     char*         master_host;
@@ -390,7 +388,8 @@ int mysql_find_all_slaves_from_one_host(
 
         master_host = source_row[1];
         master_port = strtoul(source_row[3], 0, 10);
-        master_behind = strtoul(source_row[32], 0, 10);
+        if (source_row[32] != NULL)
+            master_behind = strtoul(source_row[32], 0, 10);
         if (gethostname(master_host, hostip))
         {
             mysql_free_result(source_res1);
