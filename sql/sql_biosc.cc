@@ -209,30 +209,36 @@ int mysql_check_slaves_delay(
     char hosts_sql[128];
     MYSQL_RES   *source_res1;
     MYSQL_ROW   source_row;
-    MYSQL*      mysql;
+    MYSQL*      mysql=NULL;
     uint         master_behind;
     slave_addr_t* slave_addr;
     int         first = true;
+    int         retry_count = 0;
 
     slave_addr = LIST_GET_FIRST(sql_cache_node->slave_lst);
     while (slave_addr)
     {
         first = true;
+
+reconnect:
+        mysql_close(mysql);
+        if (retry_count++ > 3)
+            goto error;
         if (!(mysql = inception_init_binlog_connection(slave_addr->hostname, 
                 slave_addr->port, thd->thd_sinfo->user, thd->thd_sinfo->password)))
-            goto error;
+            goto reconnect;
 
 retry:
         if (inception_biosc_abort(thd, sql_cache_node))
             return false;
         if (mysql_real_query(mysql, SHOW_SLAVE_HOST, strlen(SHOW_SLAVE_HOST)) ||
            (source_res1 = mysql_store_result(mysql)) == NULL)
-            goto error;
+            goto reconnect;
 
         if ((source_row = mysql_fetch_row(source_res1)) == NULL)
         {
             mysql_free_result(source_res1);
-            goto error;
+            goto reconnect;
         }
 
         master_behind = strtoul(source_row[32], 0, 10);
@@ -264,6 +270,7 @@ retry:
             mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
         }
 
+        mysql_close(mysql);
         slave_addr = LIST_GET_NEXT(link, slave_addr);
     }
 
@@ -273,6 +280,7 @@ error:
         slave_addr->hostname, slave_addr->port);
     mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
     mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+    sql_cache_node->osc_abort = true;
     return true;
 }
 
@@ -292,42 +300,52 @@ int mysql_find_all_slaves_from_one_host(
     int           master_behind;
     uint          i;
     slave_addr_t* slave_addr;
+    char*         master_host;
 
     sscanf(inception_slave_ports_range, "%u:%u", &min_port, &max_port);
     for (i = min_port; i <= max_port; i++)
     {
+        sql_print_information("PORT:%d", i);
         if (!(mysql = inception_init_binlog_connection(hostname, 
                 i, thd->thd_sinfo->user, thd->thd_sinfo->password)))
             continue;
 
         if (mysql_real_query(mysql, SHOW_SLAVE_HOST, strlen(SHOW_SLAVE_HOST)) ||
            (source_res1 = mysql_store_result(mysql)) == NULL)
+        {
+            mysql_close(mysql);
             continue;
+        }
 
         source_row = mysql_fetch_row(source_res1);
         if (source_row == NULL)
         {
             mysql_free_result(source_res1);
+            mysql_close(mysql);
             continue;
         }
 
-        hostname = source_row[1];
+        master_host = source_row[1];
         master_port = strtoul(source_row[3], 0, 10);
         master_behind = strtoul(source_row[32], 0, 10);
-        if (!strcasecmp(hostname, thd->thd_sinfo->host) &&
+
+        sql_print_information("master_host:%s, ip: %s", master_host, gethostbyname(master_host));
+        sql_print_information("master_port:%d", master_port);
+        if (!strcasecmp(master_host, thd->thd_sinfo->host) &&
             master_port == thd->thd_sinfo->port)
         {
             /* add to slave list */
             slave_addr = (slave_addr_t*)my_malloc(sizeof(slave_addr_t), MY_ZEROFILL);
             strcpy(slave_addr->hostname, hostname);
-            slave_addr->port = master_port;
+            slave_addr->port = i;
             LIST_ADD_LAST(link, sql_cache_node->slave_lst, slave_addr);
             sprintf(hosts_sql, "[Master thread] Slave found: (%s:%d), Seconds_Behind_Master: %d", 
-                hostname, master_port, master_behind);
+                hostname, i, master_behind);
             mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
         }
 
         mysql_free_result(source_res1);
+        mysql_close(mysql);
     }
 
     return false;
@@ -352,14 +370,8 @@ int mysql_find_all_slaves(
         return true;
     }
 
-    source_row = mysql_fetch_row(source_res1);
-    if (source_row == NULL)
-    {
-        mysql_free_result(source_res1);
-        return true;
-    }
-
     LIST_INIT(sql_cache_node->slave_lst);
+    source_row = mysql_fetch_row(source_res1);
     while (source_row)
     {
         hostname = source_row[0];
@@ -516,6 +528,11 @@ int mysql_execute_alter_table_biosc(
     /* 如果出错了，就把详细信息打印出来 */
     if (sql_cache_node->osc_abort || !inception_osc_print_none)
     {
+        if (!sql_cache_node->errmsg)
+        {
+            sql_cache_node->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+            str_init(sql_cache_node->errmsg);
+        }
         str_append(sql_cache_node->errmsg, str_get(sql_cache_node->oscoutput));
         if (sql_cache_node->osc_abort)
             ret = true;
