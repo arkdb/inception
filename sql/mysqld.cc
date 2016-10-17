@@ -570,6 +570,7 @@ ulong inception_max_update_rows=0;
 ulong inception_max_keys=0;
 bool inception_enable_not_innodb=0;
 char* inception_support_charset=0;
+char* inception_slave_ports_range=0;
 bool inception_check_table_comment=0;
 bool inception_check_column_comment=0;
 bool inception_check_primary_key=0;

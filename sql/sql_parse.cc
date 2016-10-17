@@ -11260,6 +11260,16 @@ int mysql_check_alter_table_execute_direct(
             tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
             DBUG_RETURN(false);
         }
+        else if (tmp_flags & Alter_info::ALTER_RENAME)
+        {
+            /* 不能通过 osc来改表名 */
+            tmp_flags &= ~Alter_info::ALTER_RENAME;
+            if (thd->use_osc)
+            {
+                my_error(ER_OSC_RENAME_TABLE, MYF(0));
+                mysql_errmsg_append(thd);
+            }
+        }
         else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
             /* 5.5及以上都不会锁表 */

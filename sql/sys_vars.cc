@@ -732,6 +732,34 @@ static Sys_var_charptr Sys_inception_support_charset(
     NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(check_charset));
 
+static bool check_port_range(sys_var *self, THD *thd, set_var *var)
+{
+    int     min_port;
+    int     max_port;
+
+    if (!var->value)
+        return false; 
+
+    if (var->save_result.string_value.length > 256)
+        return true;
+
+    sscanf(var->save_result.string_value.str, "%d:%d", &min_port, &max_port);
+    if (min_port > 0 && min_port > 0)
+        return false;
+    if (min_port > 32768 && min_port > 32768)
+        return true;
+
+    return true;
+}
+
+static Sys_var_charptr Sys_inception_slave_ports_range(
+    "inception_slave_ports_range",
+    "osc check slaves ports",
+    GLOBAL_VAR(inception_slave_ports_range),
+    CMD_LINE(REQUIRED_ARG), IN_FS_CHARSET, DEFAULT("3306:3321"),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(check_port_range));
+
 static Sys_var_mybool Sys_inception_check_table_comment(
     "inception_check_table_comment",
     "check comment when create table",

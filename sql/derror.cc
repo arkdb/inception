@@ -1018,6 +1018,8 @@ bool init_errmessage(void)
         "the data will been lost possibly after altered.");
     SERVER_SETMSG(ER_PRIMARY_KEY_LOST, "After the table \'%s\'.\'%s\' altered, "
         "there is no primary keys, it can not been altered.");
+    SERVER_SETMSG(ER_OSC_RENAME_TABLE, "Alter table Rename to can not use "
+        "osc(build-in-osc, pt-osc), please use rename table statement directly");
 
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

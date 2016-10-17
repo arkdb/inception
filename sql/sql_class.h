@@ -453,6 +453,13 @@ struct check_rt_struct
     LIST_NODE_T(check_rt_t)                 link;
 };
 
+typedef struct slave_addr_struct slave_addr_t;
+struct slave_addr_struct
+{
+    int         port;
+    char        hostname[FN_REFLEN];
+    LIST_NODE_T(slave_addr_t)                 link;
+};
 
 typedef struct sql_table_struct sql_table_t;
 struct sql_table_struct
@@ -526,6 +533,7 @@ struct sql_cache_node_struct
     char        rename_db[NAME_CHAR_LEN]; //执行所用时间 
     str_t*        osc_select_columns;
     str_t*        osc_insert_columns;
+    LIST_BASE_NODE_T(slave_addr_t)  slave_lst;
     /* FOR ALTER TABLE SQL END... */
 
     LIST_NODE_T(sql_cache_node_t) link;
