@@ -27,6 +27,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "errmsg.h"
 #include <stdio.h>
 #include <string.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 int inception_get_table_rows(THD* thd, sql_cache_node_t* sql_cache_node);
 int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows, sql_cache_node_t* sql_cache_node);
@@ -43,6 +49,28 @@ int inception_cleanup_biosc( THD*  thd, sql_cache_node_t* sql_cache_node);
 int inception_biosc_abort(THD* thd, sql_cache_node_t* sql_cache_node);
 
 #define SHOW_SLAVE_HOST "show slave status"
+
+const char* gethostname(char *hostname)
+{
+    struct hostent *hptr;
+    char   str[32];
+
+    if((hptr = gethostbyname(hostname)) == NULL)
+        return NULL;
+
+    switch(hptr->h_addrtype)
+    {
+        case AF_INET:
+        case AF_INET6:
+            return inet_ntop(hptr->h_addrtype, hptr->h_addr, str, sizeof(str));
+        break;
+        default:
+            return NULL;
+        break;
+    }
+
+    return NULL;
+}
 
 int inception_stop_dump(
     sql_cache_node_t* sql_cache_node
@@ -219,9 +247,11 @@ int mysql_check_slaves_delay(
     while (slave_addr)
     {
         first = true;
+        retry_count = 0;
 
 reconnect:
         mysql_close(mysql);
+        mysql = NULL;
         if (retry_count++ > 3)
             goto error;
         if (!(mysql = inception_init_binlog_connection(slave_addr->hostname, 
@@ -251,7 +281,7 @@ retry:
             if (first)
             {
                 sprintf(hosts_sql, "[Master thread] Slave (%s:%d), replication "
-                    "delay: %d, inception_osc_max_lag: %f, so waiting to catch up...", 
+                    "delay: %d, inception_osc_max_lag: %.3f, so waiting to catch up...", 
                     slave_addr->hostname, slave_addr->port, master_behind, 
                     thd->variables.inception_osc_max_lag);
                 mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
@@ -271,6 +301,7 @@ retry:
         }
 
         mysql_close(mysql);
+        mysql = NULL;
         slave_addr = LIST_GET_NEXT(link, slave_addr);
     }
 
@@ -301,11 +332,11 @@ int mysql_find_all_slaves_from_one_host(
     uint          i;
     slave_addr_t* slave_addr;
     char*         master_host;
+    const char*         hostip;
 
     sscanf(inception_slave_ports_range, "%u:%u", &min_port, &max_port);
     for (i = min_port; i <= max_port; i++)
     {
-        sql_print_information("PORT:%d", i);
         if (!(mysql = inception_init_binlog_connection(hostname, 
                 i, thd->thd_sinfo->user, thd->thd_sinfo->password)))
             continue;
@@ -314,6 +345,7 @@ int mysql_find_all_slaves_from_one_host(
            (source_res1 = mysql_store_result(mysql)) == NULL)
         {
             mysql_close(mysql);
+            mysql = NULL;
             continue;
         }
 
@@ -322,14 +354,23 @@ int mysql_find_all_slaves_from_one_host(
         {
             mysql_free_result(source_res1);
             mysql_close(mysql);
+            mysql = NULL;
             continue;
         }
 
         master_host = source_row[1];
         master_port = strtoul(source_row[3], 0, 10);
         master_behind = strtoul(source_row[32], 0, 10);
+        hostip = gethostname(master_host);
+        if ((hostip = gethostname(master_host)) == NULL)
+        {
+            mysql_free_result(source_res1);
+            mysql_close(mysql);
+            mysql = NULL;
+            continue;
+        }
 
-        sql_print_information("master_host:%s, ip: %s", master_host, gethostbyname(master_host));
+        sql_print_information("master_host:%s, ip: %s", master_host, hostip);
         sql_print_information("master_port:%d", master_port);
         if (!strcasecmp(master_host, thd->thd_sinfo->host) &&
             master_port == thd->thd_sinfo->port)
@@ -346,6 +387,7 @@ int mysql_find_all_slaves_from_one_host(
 
         mysql_free_result(source_res1);
         mysql_close(mysql);
+        mysql = NULL;
     }
 
     return false;
