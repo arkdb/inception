@@ -50,26 +50,27 @@ int inception_biosc_abort(THD* thd, sql_cache_node_t* sql_cache_node);
 
 #define SHOW_SLAVE_HOST "show slave status"
 
-const char* gethostname(char *hostname)
+int gethostname(char *hostname, char* dest)
 {
     struct hostent *hptr;
     char   str[32];
 
     if((hptr = gethostbyname(hostname)) == NULL)
-        return NULL;
+        return true;
 
     switch(hptr->h_addrtype)
     {
         case AF_INET:
         case AF_INET6:
-            return inet_ntop(hptr->h_addrtype, hptr->h_addr, str, sizeof(str));
+            strcpy(dest, inet_ntop(hptr->h_addrtype, hptr->h_addr, str, sizeof(str)));
+            return false;
         break;
         default:
-            return NULL;
+            return true;
         break;
     }
 
-    return NULL;
+    return true;
 }
 
 int inception_stop_dump(
@@ -207,6 +208,8 @@ int mysql_free_biosc(
     mts_thread_t*               mts_thread;
     mts_thread_queue_t*         element;
     int j;
+    slave_addr_t* slave_addr;
+    slave_addr_t* slave_addr_next;
 
     /* for build-in-osc */
     mts_thread = sql_cache_node->mts_queue;
@@ -224,13 +227,25 @@ int mysql_free_biosc(
             my_free(mts_thread->thread_queue);
         my_free(mts_thread);
     }
+
+    slave_addr = LIST_GET_FIRST(sql_cache_node->slave_lst);
+    while (slave_addr)
+    {
+        slave_addr_next = LIST_GET_NEXT(link, slave_addr);
+        LIST_REMOVE(link, sql_cache_node->slave_lst, slave_addr);
+
+        my_free(slave_addr);
+        slave_addr = slave_addr_next;
+    }
+
     /* for build-in-osc end */
 
     return false;
 }
 
 int mysql_check_slaves_delay(
-    THD* thd,
+    THD* thread_thd,
+    THD* query_thd,
     sql_cache_node_t* sql_cache_node
 )
 {
@@ -253,13 +268,21 @@ reconnect:
         mysql_close(mysql);
         mysql = NULL;
         if (retry_count++ > 3)
-            goto error;
+        {
+            sprintf(hosts_sql, "[Master thread] Slave (%s:%d) connection "
+                "error, alter table abort...", slave_addr->hostname, slave_addr->port);
+            mysql_analyze_biosc_output(query_thd, hosts_sql, sql_cache_node);
+            mysql_sqlcachenode_errmsg_append(thread_thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+            sql_cache_node->osc_abort = true;
+            return true;
+        }
+
         if (!(mysql = inception_init_binlog_connection(slave_addr->hostname, 
-                slave_addr->port, thd->thd_sinfo->user, thd->thd_sinfo->password)))
+                slave_addr->port, query_thd->thd_sinfo->user, query_thd->thd_sinfo->password)))
             goto reconnect;
 
 retry:
-        if (inception_biosc_abort(thd, sql_cache_node))
+        if (inception_biosc_abort(query_thd, sql_cache_node))
             return false;
         if (mysql_real_query(mysql, SHOW_SLAVE_HOST, strlen(SHOW_SLAVE_HOST)) ||
            (source_res1 = mysql_store_result(mysql)) == NULL)
@@ -271,11 +294,24 @@ retry:
             goto reconnect;
         }
 
-        master_behind = strtoul(source_row[32], 0, 10);
-        mysql_free_result(source_res1);
+        if (source_row[32] != NULL)
+            master_behind = strtoul(source_row[32], 0, 10);
+        else
+        {
+            /* 如果改的过程中，复制断了，改表停止 */
+            mysql_free_result(source_res1);
+            sprintf(hosts_sql, "[Master thread] Slave (%s:%d), replication stopped"
+                " alter table abort...", 
+                slave_addr->hostname, slave_addr->port);
+            mysql_analyze_biosc_output(query_thd, hosts_sql, sql_cache_node);
+            sql_cache_node->osc_abort = true;
+            my_error(ER_OSC_ABORT, MYF(0), hosts_sql);
+            mysql_sqlcachenode_errmsg_append(thread_thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
+            return true;
+        }
 
         /* 如果延迟时间大于设置的一个限度，则需要等待 */
-        if (master_behind > thd->variables.inception_osc_max_lag)
+        if (master_behind > query_thd->variables.inception_osc_max_lag)
         {
             /* add to slave list */
             if (first)
@@ -283,8 +319,8 @@ retry:
                 sprintf(hosts_sql, "[Master thread] Slave (%s:%d), replication "
                     "delay: %d, inception_osc_max_lag: %.3f, so waiting to catch up...", 
                     slave_addr->hostname, slave_addr->port, master_behind, 
-                    thd->variables.inception_osc_max_lag);
-                mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
+                    query_thd->variables.inception_osc_max_lag);
+                mysql_analyze_biosc_output(query_thd, hosts_sql, sql_cache_node);
                 first = false;
             }
 
@@ -297,7 +333,7 @@ retry:
             sprintf(hosts_sql, "[Master thread] Slave (%s:%d), replication "
                 "delay OK, copy rows continue...", 
                 slave_addr->hostname, slave_addr->port);
-            mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
+            mysql_analyze_biosc_output(query_thd, hosts_sql, sql_cache_node);
         }
 
         mysql_close(mysql);
@@ -306,13 +342,6 @@ retry:
     }
 
     return false;
-error:
-    sprintf(hosts_sql, "[Master thread] Slave (%s:%d) connection error, alter table abort...",
-        slave_addr->hostname, slave_addr->port);
-    mysql_analyze_biosc_output(thd, hosts_sql, sql_cache_node);
-    mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
-    sql_cache_node->osc_abort = true;
-    return true;
 }
 
 int mysql_find_all_slaves_from_one_host(
@@ -326,13 +355,14 @@ int mysql_find_all_slaves_from_one_host(
     MYSQL_ROW     source_row;
     MYSQL*        mysql;
     uint          master_port;
-    uint          min_port;
-    uint          max_port;
+    uint          min_port = 0;
+    uint          max_port = 0;
     int           master_behind;
     uint          i;
     slave_addr_t* slave_addr;
     char*         master_host;
-    const char*         hostip;
+    char         hostip[100];
+    char         master_hostip[100];
 
     sscanf(inception_slave_ports_range, "%u:%u", &min_port, &max_port);
     for (i = min_port; i <= max_port; i++)
@@ -361,8 +391,7 @@ int mysql_find_all_slaves_from_one_host(
         master_host = source_row[1];
         master_port = strtoul(source_row[3], 0, 10);
         master_behind = strtoul(source_row[32], 0, 10);
-        hostip = gethostname(master_host);
-        if ((hostip = gethostname(master_host)) == NULL)
+        if (gethostname(master_host, hostip))
         {
             mysql_free_result(source_res1);
             mysql_close(mysql);
@@ -370,9 +399,15 @@ int mysql_find_all_slaves_from_one_host(
             continue;
         }
 
-        sql_print_information("master_host:%s, ip: %s", master_host, hostip);
-        sql_print_information("master_port:%d", master_port);
-        if (!strcasecmp(master_host, thd->thd_sinfo->host) &&
+        if (gethostname(thd->thd_sinfo->host, master_hostip))
+        {
+            mysql_free_result(source_res1);
+            mysql_close(mysql);
+            mysql = NULL;
+            continue;
+        }
+
+        if (!strcasecmp(master_hostip, hostip) &&
             master_port == thd->thd_sinfo->port)
         {
             /* add to slave list */
@@ -390,6 +425,7 @@ int mysql_find_all_slaves_from_one_host(
         mysql = NULL;
     }
 
+    thd->clear_error();
     return false;
 }
 
@@ -408,9 +444,7 @@ int mysql_find_all_slaves(
         "from information_schema.PROCESSLIST where COMMAND='Binlog Dump';");
     if (mysql_real_query(mysql, hosts_sql, strlen(hosts_sql)) ||
        (source_res1 = mysql_store_result(mysql)) == NULL)
-    {
         return true;
-    }
 
     LIST_INIT(sql_cache_node->slave_lst);
     source_row = mysql_fetch_row(source_res1);
@@ -1693,7 +1727,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
 
         if (mysql_check_current_load(query_thd, mysql, sql_cache_node))
             goto error;
-        if (mysql_check_slaves_delay(query_thd, sql_cache_node))
+        if (mysql_check_slaves_delay(thd, query_thd, sql_cache_node))
             goto error;
     }
 

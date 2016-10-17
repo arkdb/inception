@@ -948,4 +948,5 @@
 #define  ER_PRIMARY_KEY_MODIFY                                                1947
 #define  ER_PRIMARY_KEY_LOST                                                  1948
 #define  ER_OSC_RENAME_TABLE                                                  1949
-#define  ER_ERROR_LAST                                                        1950
+#define  ER_OSC_ABORT                                                         1950
+#define  ER_ERROR_LAST                                                        1951
