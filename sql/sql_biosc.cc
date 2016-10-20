@@ -1446,6 +1446,7 @@ int inception_get_copy_rows_batch_sql_prefix(
 }
 
 int inception_get_copy_rows_batch_sql(
+    THD* thd,
     str_t* select_prefix,
     str_t* greater_cond_sql,
     str_t* select_sql,
@@ -1454,6 +1455,9 @@ int inception_get_copy_rows_batch_sql(
 )
 {
     /* first batch start */
+    char chunk_size[100];
+
+    sprintf(chunk_size, "%lu", thd->variables.inception_osc_chunk_size);
     str_append(select_sql, str_get(select_prefix));
     if (first_time)
     {
@@ -1466,7 +1470,9 @@ int inception_get_copy_rows_batch_sql(
         str_append(select_sql, " ORDER BY ");
         str_append(select_sql, str_get(sql_cache_node->pk_string));
         /* TODO: 将分片大小参数化，这里先认定2000 */
-        str_append(select_sql, " LIMIT 200, 2");
+        str_append(select_sql, " LIMIT ");
+        str_append(select_sql, chunk_size);
+        str_append(select_sql, ", 2");
     }
 
     return false;
@@ -1644,7 +1650,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
 
     start_lock_time = my_getsystime();
     /* 获取找到第一条记录的SQL语句 */
-    inception_get_copy_rows_batch_sql(&select_prefix, NULL,
+    inception_get_copy_rows_batch_sql(query_thd, &select_prefix, NULL,
         &execute_sql, sql_cache_node, first_time);
     while(!complete && !inception_biosc_abort(query_thd, sql_cache_node))
     {
@@ -1670,7 +1676,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
                 &insert_select_prefix, change_cond_sql, lesser_cond_sql);
 
             /* 得到用来取得下一个分片的边界 */
-            inception_get_copy_rows_batch_sql(&select_prefix, greater_cond_sql, 
+            inception_get_copy_rows_batch_sql(query_thd, &select_prefix, greater_cond_sql, 
                 &execute_sql, sql_cache_node, first_time);
             str_truncate_0(lesser_cond_sql);
             str_truncate_0(change_cond_sql);
@@ -1683,7 +1689,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
             str_truncate_0(lesser_cond_sql);
             first_time = false;
 
-            inception_get_copy_rows_batch_sql(&select_prefix, change_cond_sql, 
+            inception_get_copy_rows_batch_sql(query_thd, &select_prefix, change_cond_sql, 
                 &execute_sql, sql_cache_node, first_time);
         }
         else if (!first_time)

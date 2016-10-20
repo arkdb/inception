@@ -11187,26 +11187,27 @@ int mysql_check_alter_option_execute_direct(THD *thd)
 {
     DBUG_ENTER("mysql_check_alter_option_execute_direct");
     HA_CREATE_INFO create_info(thd->lex->create_info);
-    while(create_info.used_fields)
+    int used_fields = create_info.used_fields;
+    while(used_fields)
     {
-        if (create_info.used_fields & HA_CREATE_USED_ENGINE)
+        if (used_fields & HA_CREATE_USED_ENGINE)
         {
-            create_info.used_fields &= ~HA_CREATE_USED_ENGINE;
+            used_fields &= ~HA_CREATE_USED_ENGINE;
             DBUG_RETURN(FALSE);
         }
-        else if (create_info.used_fields & HA_CREATE_USED_COMMENT)
+        else if (used_fields & HA_CREATE_USED_COMMENT)
         {
-            create_info.used_fields &= ~HA_CREATE_USED_COMMENT;
+            used_fields &= ~HA_CREATE_USED_COMMENT;
         }
-        else if (create_info.used_fields & HA_CREATE_USED_AUTO)
+        else if (used_fields & HA_CREATE_USED_AUTO)
         {
-            create_info.used_fields &= ~HA_CREATE_USED_AUTO;
+            used_fields &= ~HA_CREATE_USED_AUTO;
             if (!mysql_check_version_56(thd))
                 DBUG_RETURN(FALSE);
         }
-        else if (create_info.used_fields & HA_CREATE_USED_DEFAULT_CHARSET)
+        else if (used_fields & HA_CREATE_USED_DEFAULT_CHARSET)
         {
-            create_info.used_fields &= ~HA_CREATE_USED_DEFAULT_CHARSET;
+            used_fields &= ~HA_CREATE_USED_DEFAULT_CHARSET;
             if (!mysql_check_version_56(thd))
                 DBUG_RETURN(FALSE);
         }
@@ -11216,7 +11217,7 @@ int mysql_check_alter_option_execute_direct(THD *thd)
         }
     }
 
-    DBUG_RETURN(TRUE);
+    DBUG_RETURN(FALSE);
 }
 
 int mysql_check_alter_table_execute_direct(
@@ -11499,6 +11500,7 @@ int mysql_check_alter_use_osc(
     //这个参数，就用OSC，如果直接设置为0的话，下面2个参数都满足，但为了
     //代码上看起来清楚，还是写了第二个条件
     if (inception_osc_on && 
+        thd->variables.inception_alter_table_method != osc_method_direct_alter &&
         (table_info->table_size >= (int)thd->variables.inception_osc_min_table_size ||
         !thd->variables.inception_osc_min_table_size))
         thd->use_osc = TRUE;
