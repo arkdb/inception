@@ -1881,6 +1881,8 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_TOO_MANY_KEY_PARTS:
     case ER_UDPATE_TOO_MUCH_ROWS:
     case ER_TOO_MANY_KEYS:
+    case ER_PK_TOO_MANY_PARTS:
+    case ER_PK_COLS_NOT_INT:
     case ER_TIMESTAMP_DEFAULT:
     case ER_CANT_DROP_FIELD_OR_KEY:
     case ER_CHAR_TO_VARCHAR_LEN:
@@ -2030,6 +2032,12 @@ mysql_check_inception_variables(
             return false;
         break;
 
+    case ER_PK_COLS_NOT_INT:
+        if (inception_enable_pk_columns_only_int)
+            return true;
+        else 
+            return false;
+        break;
 
     case ER_TABLE_MUST_HAVE_COMMENT:
         if (inception_check_table_comment)
@@ -4964,6 +4972,14 @@ int mysql_check_create_index(THD *thd)
 
         uint keymaxlen=0;
         mysql_check_index_attribute(thd, key, table_info->table_name);
+        if (key->type == Key::PRIMARY && 
+            key->columns.elements > inception_max_primary_key_parts)
+        {
+            my_error(ER_PK_TOO_MANY_PARTS, MYF(0), 
+                table_info->db_name, table_info->table_name, 
+                inception_max_primary_key_parts);
+                mysql_errmsg_append(thd);
+        }
 
         key_count++;
 
@@ -4989,6 +5005,15 @@ int mysql_check_create_index(THD *thd)
                         keymaxlen += field_node->max_length;
                     }
 
+                    if (field_node->real_type != MYSQL_TYPE_INT24 &&
+                        field_node->real_type != MYSQL_TYPE_LONGLONG &&
+                        field_node->real_type != MYSQL_TYPE_LONG &&
+                        inception_enable_pk_columns_only_int)
+                    {
+                        my_error(ER_PK_COLS_NOT_INT, MYF(0), col1->field_name.str, 
+                            table_info->db_name, table_info->table_name);
+                              mysql_errmsg_append(thd);
+                    }
                     found = TRUE;
                     break;
                 }

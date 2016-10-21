@@ -2052,10 +2052,19 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
 	while ((key=key_iterator++))
 	{
-        mysql_check_index_attribute(thd, key, tablename);
+    mysql_check_index_attribute(thd, key, tablename);
 
 		if (key->type == Key::PRIMARY)
-			pk_count = TRUE;
+    {
+      if (key->columns.elements > inception_max_primary_key_parts)
+      {
+          my_error(ER_PK_TOO_MANY_PARTS, MYF(0), 
+              thd->lex->select_lex.table_list.first->db, tablename, 
+              inception_max_primary_key_parts);
+                mysql_errmsg_append(thd);
+      }
+			pk_count++;
+    }
 		
 		(*key_count)++;
 
@@ -2073,7 +2082,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
 	}
 
-	if (pk_count == FALSE)
+	if (pk_count == 0)
 	{
 		my_error(ER_TABLE_MUST_HAVE_PK,MYF(0), tablename);
         mysql_errmsg_append(thd);
@@ -2136,6 +2145,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 		if (key_info->block_size)
 			key_info->flags|= HA_USES_BLOCK_SIZE;
 
+
 		List_iterator<Key_part_spec> cols(key->columns), cols2(key->columns);
 		for (uint column_nr=0 ; (column=cols++) ; column_nr++)
 		{
@@ -2155,6 +2165,19 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
                 mysql_errmsg_append(thd);
                 continue;
 			}
+      if (key->type == Key::PRIMARY)
+      {
+          if (sql_field->sql_type != MYSQL_TYPE_INT24 &&
+              sql_field->sql_type != MYSQL_TYPE_LONGLONG &&
+              sql_field->sql_type != MYSQL_TYPE_LONG &&
+              inception_enable_pk_columns_only_int)
+          {
+              my_error(ER_PK_COLS_NOT_INT, MYF(0), column->field_name.str, 
+                  thd->lex->select_lex.table_list.first->db, tablename);
+                    mysql_errmsg_append(thd);
+          }
+      }
+
 			while ((dup_column= cols2++) != column)
 			{
 				if (!my_strcasecmp(system_charset_info,
