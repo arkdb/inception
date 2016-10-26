@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <arpa/inet.h>
 
 int inception_get_table_rows(THD* thd, sql_cache_node_t* sql_cache_node);
-int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows, sql_cache_node_t* sql_cache_node);
+int mysql_execute_sql_with_retry( THD* thd, MYSQL** mysql, char* tmp, my_ulonglong* affected_rows, sql_cache_node_t* sql_cache_node);
 int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node, time_t timestamp);
 pthread_handler_t inception_move_rows_thread(void* arg);
 pthread_handler_t inception_catch_binlog_thread(void* arg);
@@ -534,9 +534,9 @@ int mysql_execute_alter_table_biosc(
     str_append(&old_create_sql, str_get(&sql_cache_node->tables.table_names));
 
     /* create new table and then alter it */
-    if (mysql_execute_sql_with_retry(thd, mysql, str_get(&new_create_sql), NULL, sql_cache_node) ||
-        mysql_execute_sql_with_retry(thd, mysql, str_get(&new_sql), NULL, sql_cache_node) ||
-        mysql_execute_sql_with_retry(thd, mysql, str_get(&old_create_sql), NULL, sql_cache_node))
+    if (mysql_execute_sql_with_retry(thd, &mysql, str_get(&new_create_sql), NULL, sql_cache_node) ||
+        mysql_execute_sql_with_retry(thd, &mysql, str_get(&new_sql), NULL, sql_cache_node) ||
+        mysql_execute_sql_with_retry(thd, &mysql, str_get(&old_create_sql), NULL, sql_cache_node))
     {
         ret = true;
         goto error;
@@ -1122,23 +1122,24 @@ int mysql_generate_biosc_increment_sql(
 
 int mysql_execute_sql_with_retry(
     THD* thd,
-    MYSQL* mysql,
+    MYSQL** mysql,
     char* tmp,
     my_ulonglong* affected_rows,
     sql_cache_node_t* sql_cache_node
 )
 {
     int retry_count=0;
+    MYSQL*    mysql_tmp = NULL;
 
 retry:
     retry_count++;
-    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    if (mysql_real_query(*mysql, tmp, strlen(tmp)))
         goto error;
 
     if (affected_rows)
-        *affected_rows = mysql_affected_rows(mysql);
+        *affected_rows = mysql_affected_rows(*mysql);
 
-    if (mysql_real_query(mysql, "COMMIT", strlen("COMMIT")))
+    if (mysql_real_query(*mysql, "COMMIT", strlen("COMMIT")))
         goto error;
 
     return false;
@@ -1146,7 +1147,20 @@ error:
     if (retry_count < 3)
         goto retry;
 
-    my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+    /* 如果连接中断，则重建连接 */
+    if (mysql_tmp ==  NULL && mysql_errno(*mysql) == 1158 /* ER_NET_READ_ERROR */)
+    {
+        if ((mysql_tmp = inception_init_binlog_connection(thd->thd_sinfo->host, 
+                thd->thd_sinfo->port, thd->thd_sinfo->user, 
+                thd->thd_sinfo->password)) != NULL)
+        {
+            retry_count = 0;
+            *mysql = mysql_tmp;
+            goto retry;
+        }
+    }
+
+    my_message(mysql_errno(*mysql), mysql_error(*mysql), MYF(0));
     mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
 
     return true;
@@ -1718,7 +1732,7 @@ pthread_handler_t inception_move_rows_thread(void* arg)
         /*execute the copy_rows_sql to copy rows from old to new table*/
         if (str_get_len(&copy_rows_sql) > 0)
         {
-            if (mysql_execute_sql_with_retry(thd, mysql, 
+            if (mysql_execute_sql_with_retry(thd, &mysql, 
                   str_get(&copy_rows_sql), &affected_rows, sql_cache_node))
             {
                 sprintf(osc_output, "[Copy thread] Alter table abort");
@@ -1751,6 +1765,7 @@ error:
     str_deinit(&behind_sql);
     str_deinit(&insert_select_prefix);
 
+    mysql_close(mysql);
     delete thd;
     my_thread_end();
     pthread_exit(0);
@@ -1958,6 +1973,7 @@ error:
     delete mi;
     delete thd;
     my_thread_end();
+    mysql_close(mysql);
     pthread_exit(0);
     return false;
 }
@@ -2079,7 +2095,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
     char      rename_sql[1024];
     char      set_var_sql[1024];
     char      osc_output[1024];
-    MYSQL*    mysql;
+    MYSQL*    mysql = NULL;
     int       ret;
 
     my_thread_init();
@@ -2129,7 +2145,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
                 query_thd->thd_sinfo->password)) != NULL)
         {
             if (inception_get_connection_id(query_thd, mysql, sql_cache_node) ||
-                mysql_execute_sql_with_retry(query_thd, mysql, set_var_sql, NULL, sql_cache_node))
+                mysql_execute_sql_with_retry(query_thd, &mysql, set_var_sql, NULL, sql_cache_node))
             {
                 sprintf(osc_output, "[Rename thread] Alter table abort");
                 mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
@@ -2140,7 +2156,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
             sprintf(osc_output, "[Rename thread] Rename table start "
                 "to blocking, timout: %d", query_thd->variables.inception_biosc_lock_wait_timeout);
             mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
-            if ((ret = mysql_execute_sql_with_retry(query_thd, mysql, 
+            if ((ret = mysql_execute_sql_with_retry(query_thd, &mysql, 
                     rename_sql, NULL, sql_cache_node)) > 0)
             {
                 if (ret == 1205/* ER_LOCK_WAIT_TIMEOUT */)
@@ -2187,6 +2203,7 @@ pthread_handler_t inception_rename_to_block_request_thread(void* arg)
 
     sprintf(osc_output, "[Rename thread] Rename thread exit");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
+    mysql_close(mysql);
     delete thd;
     my_thread_end();
     pthread_exit(0);
@@ -2308,7 +2325,7 @@ int inception_finish_event_queue(
     execute_sql = inception_event_dequeue(thd, sql_cache_node);
     while (execute_sql)
     {
-        if (mysql_execute_sql_with_retry(thd, mysql, str_get(execute_sql), NULL, sql_cache_node))
+        if (mysql_execute_sql_with_retry(thd, &mysql, str_get(execute_sql), NULL, sql_cache_node))
         {
             sql_cache_node->osc_abort = true;
             return true;
@@ -2418,7 +2435,7 @@ int inception_cleanup_biosc(
     }
 
     if (!thd->variables.inception_osc_drop_old_table || 
-        mysql_execute_sql_with_retry(thd, mysql, old_tablename, NULL, sql_cache_node))
+        mysql_execute_sql_with_retry(thd, &mysql, old_tablename, NULL, sql_cache_node))
         return true;
 
     if (thd->variables.inception_osc_drop_new_table)
@@ -2430,7 +2447,7 @@ int inception_cleanup_biosc(
     }
 
     if (!thd->variables.inception_osc_drop_new_table || 
-        mysql_execute_sql_with_retry(thd, mysql, new_tablename, NULL, sql_cache_node))
+        mysql_execute_sql_with_retry(thd, &mysql, new_tablename, NULL, sql_cache_node))
         return true;
 
     return false;
@@ -2503,7 +2520,7 @@ execute_continue:
     to_execute = inception_event_dequeue(thd, sql_cache_node);
     while (to_execute && !inception_biosc_abort(thd, sql_cache_node))
     {
-        if (mysql_execute_sql_with_retry(thd, mysql, str_get(to_execute), NULL, sql_cache_node))
+        if (mysql_execute_sql_with_retry(thd, &mysql, str_get(to_execute), NULL, sql_cache_node))
             return true;
         inception_event_dequeue_set(thd, sql_cache_node);
 
@@ -2646,7 +2663,7 @@ reconnect:
             execute_sql = inception_event_dequeue(thd, sql_cache_node);
             if (execute_sql)
             {
-                if (mysql_execute_sql_with_retry(thd, mysql, 
+                if (mysql_execute_sql_with_retry(thd, &mysql, 
                       str_get(execute_sql), NULL, sql_cache_node))
                 {
                     sql_cache_node->osc_abort = true;
@@ -2658,7 +2675,7 @@ reconnect:
         }
         else if (sql_cache_node->biosc_copy_complete == true)
         {
-            if (mysql_execute_sql_with_retry(thd, mysql, set_var_sql, NULL, sql_cache_node))
+            if (mysql_execute_sql_with_retry(thd, &mysql, set_var_sql, NULL, sql_cache_node))
             {
                 sql_cache_node->osc_abort = true;
                 goto error;
@@ -2676,7 +2693,7 @@ reconnect:
                 sprintf(osc_output, "[Master thread] Lock origin table, new table "
                     "and magic table, retry: %d", lock_count++);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-                if (mysql_execute_sql_with_retry(thd, mysql, lock_sql, NULL, sql_cache_node))
+                if (mysql_execute_sql_with_retry(thd, &mysql, lock_sql, NULL, sql_cache_node))
                 {
                     sql_cache_node->osc_abort = true;
                     goto error;
@@ -2713,7 +2730,7 @@ reconnect:
                         thd->variables.inception_biosc_lock_table_max_time,
                         thd->variables.inception_biosc_retry_wait_time);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-                    if (mysql_execute_sql_with_retry(thd, mysql, 
+                    if (mysql_execute_sql_with_retry(thd, &mysql, 
                           unlock_tables, NULL, sql_cache_node))
                     {
                           sql_cache_node->osc_abort = true;
@@ -2762,11 +2779,11 @@ reconnect:
                          * 如果表成功删掉了，那再放锁，成功改表 */
                         sprintf(osc_output, "[Master thread] Drop magic/old table");
                         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-                        mysql_execute_sql_with_retry(thd, mysql, 
+                        mysql_execute_sql_with_retry(thd, &mysql, 
                             drop_old_table, NULL, sql_cache_node);
                         sprintf(osc_output, "[Master thread] Unlock tables");
                         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
-                        mysql_execute_sql_with_retry(thd, mysql, 
+                        mysql_execute_sql_with_retry(thd, &mysql, 
                             unlock_tables, NULL, sql_cache_node);
                         /* 如果已经完成，则这里就结束了，否则就重新来过 */
                         if (inception_wait_biosc_complete(thd, sql_cache_node))
