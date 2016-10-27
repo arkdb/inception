@@ -114,6 +114,7 @@ SET(SQL_SHARED_SOURCES
   sql_parse.cc
   optimize.cc
   sql_format.cc
+  sql_collector.cc
   sql_plugin.cc
   sql_prepare.cc
   sql_rename.cc

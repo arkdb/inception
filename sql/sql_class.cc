@@ -1238,6 +1238,56 @@ MYSQL* THD::get_transfer_connection()
   }
 }
 
+bool THD::init_collector_connection()
+{
+    MYSQL *mysql = &collector_conn;
+    ulong client_flag= CLIENT_REMEMBER_OPTIONS ;
+    uint net_timeout= 3600*24;
+    bool reconnect= TRUE;
+    
+    mysql_init(mysql);
+    mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+    mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
+    mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
+    
+    if (mysql_real_connect(mysql, inception_collector_host, inception_collector_user,
+                           inception_collector_password, NULL, inception_collector_port, NULL, client_flag) == 0)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_close(mysql);
+        return FALSE;
+    }
+    
+    collector_conn_inited= TRUE;
+    return TRUE;
+}
+
+MYSQL* THD::get_collector_connection()
+{
+    if (!collector_conn_inited)
+    {
+        if (inception_collector_port== 0 ||
+            inception_collector_user== NULL || inception_collector_user[0] == '\0' ||
+            inception_collector_host== NULL || inception_collector_host[0] == '\0' ||
+            inception_collector_password== NULL || inception_collector_password[0] == '\0')
+        {
+            my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+            return NULL;
+        }
+        if (init_collector_connection() == FALSE)
+            return NULL;
+        else
+            return &collector_conn;
+    }
+    else
+    {
+        return &collector_conn;
+    }
+}
+
 void THD::close_all_connections()
 {
   if (audit_conn_inited)
@@ -1256,6 +1306,15 @@ void THD::close_all_connections()
     mysql_close(&transfer_conn);
     transfer_conn_inited= false;
   }
+}
+
+void THD::close_collector_connection()
+{
+    if (collector_conn_inited)
+    {
+        mysql_close(&collector_conn);
+        collector_conn_inited= false;
+    }
 }
 
 void THD::push_internal_handler(Internal_error_handler *handler)
@@ -1808,6 +1867,7 @@ THD::~THD()
   mysql_deinit_sql_cache(this);
 
   close_all_connections();
+  close_collector_connection();
 
   free_root(&main_mem_root, MYF(0));
   DBUG_VOID_RETURN;

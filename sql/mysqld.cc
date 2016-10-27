@@ -557,6 +557,11 @@ char *inception_user = NULL;
 char *inception_password = NULL;
 uint remote_backup_port = 0;
 
+char *inception_collector_host = NULL;
+char *inception_collector_user = NULL;
+char *inception_collector_password = NULL;
+uint inception_collector_port = 0;
+
 bool inception_check_insert_field=0;
 bool inception_check_dml_where=0;
 bool inception_check_dml_limit=0;
@@ -600,6 +605,9 @@ char* inception_datacenter_host=NULL;
 int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
+bool inception_collector_on=0;
+uint inception_collector_idle=0;
+uint inception_collector_rule=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
@@ -616,9 +624,12 @@ char* inception_datacenter_password=NULL;
 mysql_mutex_t        osc_mutex;
 mysql_mutex_t        task_mutex;
 mysql_mutex_t        transfer_mutex;
+mysql_mutex_t        collector_cache_mutex;
+mysql_mutex_t        collector_idle_mutex;
 osc_cache_t global_osc_cache;
 task_cache_t global_task_cache;
 transfer_t global_transfer_cache;
+collector_t global_collector_cache;
 
 /**
   Soft upper limit for number of sp_head objects that can be stored
@@ -1705,6 +1716,8 @@ void clean_up(bool print_message)
   mysql_mutex_destroy(&osc_mutex);
   mysql_mutex_destroy(&task_mutex);
   mysql_mutex_destroy(&transfer_mutex);
+  mysql_mutex_destroy(&collector_cache_mutex);
+  mysql_mutex_destroy(&collector_idle_mutex);
   mysql_osc_cache_free();
 
   my_tz_free();
@@ -3430,9 +3443,12 @@ int init_common_variables()
   mysql_mutex_init(NULL, &osc_mutex, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(NULL, &task_mutex, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(NULL, &transfer_mutex, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(NULL, &collector_cache_mutex, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(NULL, &collector_idle_mutex, MY_MUTEX_INIT_FAST);
   LIST_INIT(global_osc_cache.osc_lst);
   LIST_INIT(global_task_cache.task_lst);
   LIST_INIT(global_transfer_cache.transfer_lst);
+  LIST_INIT(global_collector_cache.table_list);
   
   mysql_mutex_init(NULL, &isql_option_mutex, MY_MUTEX_INIT_FAST);
   isql_option = (char**)my_malloc(sizeof(char*) * (ISQL_OPTION_COUNT + 2), MY_ZEROFILL);

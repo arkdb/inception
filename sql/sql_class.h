@@ -243,6 +243,7 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_COMMAND_SHOW_THREAD_STATUS      13
 #define INCEPTION_COMMAND_SHOW_TABLE_STATUS      14
 #define INCEPTION_COMMAND_TASK_SHOW               15
+#define INCEPTION_COMMAND_COLLECTOR_EXECUTE       16
 
 #define LIST_PROCESS_HOST_LEN 64
 
@@ -269,6 +270,10 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 
 #define INCEPTION_DISPATCH_RANDOM           1
 #define INCEPTION_DISPATCH_ROW              2
+
+#define INCEPTION_START_COLLECTOR         1
+#define INCEPTION_STOP_COLLECTOR          2
+#define INCEPTION_SHOW_COLLECTOR_STATUS   3
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct
@@ -568,6 +573,23 @@ struct transfer_option_struct
     int                  min_value;
     int                  is_online;
     char                 comment[128];
+};
+
+typedef struct collector_table_struct collector_table_t;
+struct collector_table_struct
+{
+    char                 host[20];
+    int                  port;
+    char                 db[30];
+    char                 tname[30];
+    long                 table_id;
+    LIST_NODE_T(collector_table_t) link;
+};
+
+typedef struct collector_struct collector_t;
+struct collector_struct
+{
+    LIST_BASE_NODE_T(collector_table_t) table_list;
 };
 
 typedef struct gate_ddl_struct ddl_status_t;
@@ -4704,7 +4726,9 @@ public:
   MYSQL* get_audit_connection();
   MYSQL* get_backup_connection();
   MYSQL* get_transfer_connection();
+  MYSQL* get_collector_connection();
   void close_all_connections();
+  void close_collector_connection();
 
 private:
   bool init_audit_connection();
@@ -4721,8 +4745,11 @@ private:
   bool backup_conn_inited;
   bool init_transfer_connection();
   bool transfer_conn_inited;
+  bool init_collector_connection();
+  bool collector_conn_inited;
   MYSQL backup_conn;
   MYSQL transfer_conn;
+  MYSQL collector_conn;
 };
 
 
@@ -5965,6 +5992,8 @@ int mysql_format_set(THD* thd);
 int mysql_format_not_support(THD* thd);
 double my_rnd(struct rand_struct *rand_st);
 int handle_fatal_signal_low(THD* thd);
+
+int inception_collector_execute(THD* thd);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

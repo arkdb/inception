@@ -1207,7 +1207,8 @@ int mysql_not_need_data_source(THD* thd)
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_DO_IGNORE||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_THREAD_STATUS||
         thd->lex->inception_cmd_type == INCEPTION_COMMAND_SHOW_TABLE_STATUS||
-        thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET))
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_LOCAL_SET||
+        thd->lex->inception_cmd_type == INCEPTION_COMMAND_COLLECTOR_EXECUTE))
         DBUG_RETURN(TRUE);
     
     DBUG_RETURN(FALSE);
@@ -9468,7 +9469,9 @@ int mysql_execute_inception_command(THD* thd)
             return mysql_show_datacenter_threads_status(thd, thd->lex->name.str);
         case INCEPTION_COMMAND_SHOW_TABLE_STATUS:
             return mysql_show_datacenter_table_status(thd, thd->lex->name.str);
-
+        case INCEPTION_COMMAND_COLLECTOR_EXECUTE:
+            return inception_collector_execute(thd);
+            
         default:
             return false;
     }

@@ -214,6 +214,11 @@ extern ulong inception_transfer_parallel_workers;
 // extern bool inception_osc_drop_new_table;
 // extern bool inception_osc_drop_old_table;
 
+extern char *inception_collector_host;
+extern char *inception_collector_user;
+extern char *inception_collector_password;
+extern uint inception_collector_port;
+
 extern uint remote_backup_port;
 extern my_bool relay_log_recovery;
 extern uint sync_binlog_period, sync_relaylog_period, 

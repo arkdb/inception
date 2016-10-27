@@ -634,6 +634,27 @@ static Sys_var_charptr Sys_remote_system_password(
     READ_ONLY GLOBAL_VAR(remote_system_password), CMD_LINE(REQUIRED_ARG),
     IN_FS_CHARSET, DEFAULT(""));
 
+static Sys_var_charptr Sys_inception_collector_host(
+    "inception_collector_host", "the host of inception collector.",
+    READ_ONLY GLOBAL_VAR(inception_collector_host), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT("localhost"));
+
+static Sys_var_uint Sys_inception_collector_port(
+    "inception_collector_port",
+    "Port number to use for inception collector.",
+    READ_ONLY GLOBAL_VAR(inception_collector_port), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_charptr Sys_inception_collector_user(
+    "inception_collector_user", "the user name of inception collector.",
+    READ_ONLY GLOBAL_VAR(inception_collector_user), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT(""));
+
+static Sys_var_charptr Sys_inception_collector_password(
+    "inception_collector_password", "the password of remote process.",
+    READ_ONLY GLOBAL_VAR(inception_collector_password), CMD_LINE(REQUIRED_ARG),
+    IN_FS_CHARSET, DEFAULT(""));
+
 static Sys_var_bit Sys_autocommit(
     "autocommit", "autocommit",
     SESSION_VAR(option_bits), NO_CMD_LINE, OPTION_AUTOCOMMIT, DEFAULT(TRUE),
