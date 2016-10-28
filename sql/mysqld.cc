@@ -606,8 +606,9 @@ int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
 bool inception_collector_on=0;
-uint inception_collector_idle=0;
-uint inception_collector_rule=0;
+int inception_collector_idle=0;
+int inception_collector_rule=0;
+int inception_collector_running_worker=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;

@@ -1867,7 +1867,6 @@ THD::~THD()
   mysql_deinit_sql_cache(this);
 
   close_all_connections();
-  close_collector_connection();
 
   free_root(&main_mem_root, MYF(0));
   DBUG_VOID_RETURN;

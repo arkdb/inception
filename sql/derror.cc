@@ -1017,6 +1017,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_FUNC_EXISTED_ON_FIELD, "function existed on index field: \'%s\'.\'%s\':\'%s\'.");
     SERVER_SETMSG(ER_ADD_INDEX, "Table \'%s\'.\'%s\' need to add index `%s` (%s).");
     SERVER_SETMSG(ER_CONVERT_DATA_TYPE, "Convert field: \'%s\'.\'%s\' data: \'%s\' type: %s to type: \'%s\'.");
+    SERVER_SETMSG(ER_UNKNOWN_COLLECTOR_RULE, "Unknown inception collector rule: \'%s\'.");
     SERVER_SETMSG(ER_INDEX_USED_TRUNCATE, "Only %d columns can been used in Index: \'%s\'.\'%s\'.");
 
 	/* Register messages for use with my_error(). */

@@ -15504,6 +15504,13 @@ inception_show_param:
         lex->inception_cmd_sub_type = INCEPTION_SHOW_COLLECTOR_STATUS;
         lex->name= $6;
     }
+    | GET_SYM COLLECTOR_SYM RULE_SYM LIST_SYM
+    {
+        LEX *lex=Lex;
+        lex->sql_command = SQLCOM_INCEPTION;
+        lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
+        lex->inception_cmd_sub_type = INCEPTION_GET_COLLECTOR_LIST;
+    }
     ;
 
 inception_op_type:

@@ -48,6 +48,7 @@ extern mysql_mutex_t collector_cache_mutex;
 extern mysql_mutex_t collector_idle_mutex;
 extern bool inception_collector_on;
 extern int inception_collector_idle;
+extern int inception_collector_running_worker;
 extern int inception_collector_rule;//按位标志性---0:all; 1:cardinality
 //还少两个策略参数：是否全部count(*)和抽样步长
 //还有是否某一个rule单独起线程，起多少个线程
@@ -160,7 +161,7 @@ int clear_collector_cache()
         my_free(table_info);
     }
     
-    return false;
+    return FALSE;
 }
 
 int mark_progress_all(MYSQL* conn,double progress,char* state)
@@ -182,10 +183,10 @@ int mark_progress_all(MYSQL* conn,double progress,char* state)
                      "cardinality", state, progress, state, progress);
         
         if(get_mysql_res(conn, tmp))
-            return true;
+            return TRUE;
     }
     
-    return false;
+    return FALSE;
     
 }
 
@@ -218,19 +219,17 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info,
         }
         
         if(get_mysql_res(conn, tmp))
-            return true;
+            return TRUE;
     }
     
-    return false;
+    return FALSE;
 }
 
 int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
 {
     MYSQL_RES* res_dc = NULL;
-    MYSQL_ROW row_dc;
     char tmp[512];
     char host_[30];
-    int  count;
 
     strcpy(host_, table_info->host);
     str_replace(host_, ".", "_");
@@ -241,7 +240,7 @@ int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
-        return true;
+        return TRUE;
     }
     //创建采样信息存放的表
     sprintf (tmp, "create table collector_data_%s_%d.cardinality_%s_%s(\
@@ -255,10 +254,10 @@ int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
-        return true;
+        return TRUE;
     }
 
-    return false;
+    return FALSE;
 }
 
 int insert_cardinality(MYSQL* mysql_dc, collector_table_t* table_info, char* var, int value)
@@ -278,11 +277,11 @@ int insert_cardinality(MYSQL* mysql_dc, collector_table_t* table_info, char* var
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
-        return true;
+        return TRUE;
     }
     
     res_dc = NULL;
-    return false;
+    return FALSE;
 }
 
 int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, collector_table_t* table_info)
@@ -300,7 +299,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     {
         mysql_free_result(res);
         res = NULL;
-        return true;
+        return TRUE;
     }
     int rows = atoi(row[4]);
     int size = (atoi(row[6]) + atoi(row[8])) / 1024 / 1024;
@@ -316,7 +315,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     {
         mysql_free_result(res);
         res = NULL;
-        return true;
+        return TRUE;
     }
     
     memset(sql_arr, 0, 256*512);
@@ -354,7 +353,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     }
     
     res = NULL;
-    return false;
+    return FALSE;
 }
 
 //该线程主要是消费作用，从cache队列中不断获取table信息，然后进行处理。
@@ -390,7 +389,6 @@ pthread_handler_t collector_work_thread(void* arg)
         pthread_exit(0);
         return NULL;
     }
-    
     while (inception_collector_on)
     {
 begin:
@@ -405,9 +403,12 @@ begin:
             }
             continue;
         }
+
         if (flag > 0)
         {
+            mysql_mutex_lock(&collector_idle_mutex);
             inception_collector_idle--;
+            mysql_mutex_unlock(&collector_idle_mutex);
             flag = 0;
         }
         
@@ -453,6 +454,10 @@ begin:
     }
     
 error:
+    mysql_mutex_lock(&collector_idle_mutex);
+    inception_collector_idle--;
+    mysql_mutex_unlock(&collector_idle_mutex);
+    inception_collector_on = false;
     mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id);
     sql_print_information("cardinality_work_thread stop.");
     mysql_close(&mysql_collector);
@@ -464,6 +469,7 @@ error:
 }
 
 //该线程主要是生产作用，创建work线程后，开始向cache队列中插入table信息。
+//获取和释放全局collector需要加锁
 pthread_handler_t inception_collector_thread(void* arg)
 {
     pthread_t threadid;
@@ -477,7 +483,6 @@ pthread_handler_t inception_collector_thread(void* arg)
     char tmp[512];
     
     my_thread_init();
-    
     thd= new THD();
     thd->thread_stack= (char*) &thd;
     
@@ -489,9 +494,13 @@ pthread_handler_t inception_collector_thread(void* arg)
         mysql_thread_create(0, &threadid, &connection_attrib,
                             collector_work_thread, NULL);
 redo:
+    mysql_mutex_lock(&collector_idle_mutex);
     mysql = thd->get_collector_connection();
+    mysql_mutex_unlock(&collector_idle_mutex);
     if (mysql == NULL)
         goto error;
+    
+    inception_collector_running_worker = COLLECTOR_WORKER_NUM;
     
     mark_progress_all(mysql, 0.00, PROGRESS_ALL_STARTED);
     
@@ -519,7 +528,8 @@ redo:
     for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_SELECT_LIMIT)
     {
         sprintf(tmp, "select host,port,db,tname, id \
-                from `collector_data`.`table_dict` where id>=%d and id <%d",i,i+TABLE_SELECT_LIMIT);
+                from `collector_data`.`table_dict` where id>=%d and id <%d and refuse=0",
+                i,i+TABLE_SELECT_LIMIT);
         source_res = get_mysql_res(mysql, tmp);
         if (source_res == NULL)
             goto error;
@@ -540,23 +550,26 @@ redo:
             source_row = mysql_fetch_row(source_res);
         }
         mysql_free_result(source_res);
-        if ( i + 1 - global_collector_cache.table_list.count == (ulong)total_tables)
+        
+        //这里算进度有点问题，需要查一下
+        mysql_mutex_lock(&collector_cache_mutex);
+        progress = (double)(i + 1 - global_collector_cache.table_list.count) * 100 / (double)total_tables;
+        mysql_mutex_unlock(&collector_cache_mutex);
+        if (progress - 100.00 >= 0.00)
             progress = 99.99;
-        else
-            progress = (double)(i + 1 - global_collector_cache.table_list.count) * 100
-                        /(double)total_tables;
+            
         mark_progress_all(mysql, progress, PROGRESS_ALL_RUNNING);
     }
     if (!inception_collector_on)
         mark_progress_all(mysql, progress, PROGRESS_ALL_STOPED);
     
-    while (inception_collector_on == false
-           || (global_collector_cache.table_list.count > 0
-           || inception_collector_idle < COLLECTOR_WORKER_NUM));
+    while (inception_collector_on == true
+           && ((global_collector_cache.table_list.count > 0
+           || inception_collector_idle < COLLECTOR_WORKER_NUM)));
     mark_progress_all(mysql, 100.00, PROGRESS_ALL_FINISHED);
     
     //下次大循环策略，需修改
-    for (int i=0; i < 12000 && inception_collector_on; ++i)
+    for (int i=0; i < 1 && inception_collector_on; ++i)
         sleep(3);
     
     if (inception_collector_on)
@@ -566,7 +579,12 @@ error:
     sql_print_information("inception_collector_thread stop.");
     inception_collector_on = false;
     source_res=NULL;
+    
+    mysql_mutex_lock(&collector_idle_mutex);
+    inception_collector_idle--;
     thd->close_collector_connection();
+    mysql_mutex_unlock(&collector_idle_mutex);
+
     delete thd;
     my_thread_end();
     pthread_exit(0);
@@ -576,13 +594,13 @@ error:
 int assemble_rule(THD* thd)
 {
     if (thd->lex->name.length == 0)
-        return false;
+        return FALSE;
     
     if (strcasecmp("cardinality", thd->lex->name.str) == 0)
         inception_collector_rule |= COLLECTOR_RULE_CARDINALITY;
     else
-        return true;
-    return false;
+        return TRUE;
+    return FALSE;
 }
 
 int disassemble_rule(THD* thd)
@@ -590,24 +608,24 @@ int disassemble_rule(THD* thd)
     if (thd->lex->name.length == 0)
     {
         inception_collector_rule = COLLECTOR_RULE_ALL;
-        return false;
+        return FALSE;
     }
     if (strcasecmp("cardinality", thd->lex->name.str) == 0)
         inception_collector_rule ^= COLLECTOR_RULE_CARDINALITY;
     else
-        return true;
-    return false;
+        return TRUE;
+    return FALSE;
 }
 
 int inception_collector_start(THD* thd)
 {
-    sql_print_information("start");
     pthread_t threadid;
-    sleep(2);
-
     if(assemble_rule(thd))
-        return true;
-
+    {
+        my_error(ER_UNKNOWN_COLLECTOR_RULE,MYF(0),thd->lex->name.str);
+        return TRUE;
+    }
+    
     if (!inception_collector_on)
     {
         inception_collector_idle = 0;
@@ -615,54 +633,184 @@ int inception_collector_start(THD* thd)
         clear_collector_cache();
         mysql_thread_create(0, &threadid, &connection_attrib,
                             inception_collector_thread, NULL);
-    }
-    else
-    {
-        sql_print_information("Already started.");
+        while (inception_collector_running_worker != COLLECTOR_WORKER_NUM);
     }
     return FALSE;
 }
 
 int inception_collector_stop(THD* thd)
 {
-    sql_print_information("stop");
-    sleep(2);
+    if (disassemble_rule(thd))
+    {
+        my_error(ER_UNKNOWN_COLLECTOR_RULE,MYF(0),thd->lex->name.str);
+        return TRUE;
+    }
     
     if (inception_collector_on)
     {
-        disassemble_rule(thd);
         if(inception_collector_rule == COLLECTOR_RULE_ALL)
+        {
             inception_collector_on = false;
+            while (inception_collector_idle >= 0);
+        }
         else
             return TRUE;
-    }
-    else
-    {
-        sql_print_information("Not start.");
     }
     return FALSE;
 }
 
 int inception_collector_status(THD* thd)
 {
-    sql_print_information("status");
+    List<Item>      field_list;
+    char            tmp[512];
+    Protocol*       protocol= thd->protocol;
+    MYSQL*          mysql;
+    MYSQL_RES*      source_res;
+    MYSQL_ROW       source_row;
+    
+    DBUG_ENTER("inception_collector_status");
+    
+    if (assemble_rule(thd))
+    {
+        my_error(ER_UNKNOWN_COLLECTOR_RULE,MYF(0),thd->lex->name.str);
+        return TRUE;
+    }
+    
+    field_list.push_back(new Item_empty_string("thread_id", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("table_id", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("dest_host", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("dest_port", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("dest_db", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("dest_tname", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("rule", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("state", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("state_change_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("info", FN_REFLEN));
+    
+    if (protocol->send_result_set_metadata(&field_list,
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    if (inception_collector_rule == COLLECTOR_RULE_ALL)
+        sprintf(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
+                dest_tname, rule, state, start_time, info \
+                from collector_data.progress_detail");
+    else if (inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
+        sprintf(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
+                dest_tname, rule, state, start_time, info \
+                from collector_data.progress_detail \
+                where rule='cardinality'");
+    
+    mysql = thd->get_collector_connection();
+    if (mysql == NULL)
+        DBUG_RETURN(true);
+    
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        thd->close_collector_connection();
+        DBUG_RETURN(true);
+    }
+    
+    source_row = mysql_fetch_row(source_res);
+    while (source_row)
+    {
+        protocol->prepare_for_resend();
+        protocol->store(source_row[0], system_charset_info);
+        protocol->store(source_row[1], system_charset_info);
+        protocol->store(source_row[2], system_charset_info);
+        protocol->store(source_row[3], system_charset_info);
+        protocol->store(source_row[4], system_charset_info);
+        protocol->store(source_row[5], system_charset_info);
+        protocol->store(source_row[6], system_charset_info);
+        protocol->store(source_row[7], system_charset_info);
+        protocol->store(source_row[8], system_charset_info);
+        protocol->store(source_row[9], system_charset_info);
+        protocol->write();
+        source_row = mysql_fetch_row(source_res);
+    }
+    
+    mysql_free_result(source_res);
+    my_eof(thd);
+    thd->close_collector_connection();
+    
+    DBUG_RETURN(FALSE);
     return FALSE;
 }
 
-int inception_collector_init()
+int inception_collector_rule_list(THD* thd)
+{
+    List<Item>      field_list;
+    char            tmp[100];
+    Protocol*       protocol= thd->protocol;
+    MYSQL*          mysql;
+    MYSQL_RES*      source_res;
+    MYSQL_ROW       source_row;
+    
+    DBUG_ENTER("inception_collector_rule_list");
+    field_list.push_back(new Item_empty_string("Rule", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("state", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("start_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("stop_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("progress", FN_REFLEN));
+    
+    if (protocol->send_result_set_metadata(&field_list,
+        Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    {
+        DBUG_RETURN(true);
+    }
+
+    sprintf(tmp, "select rule, state, start_time, stop_time, progress \
+            from collector_data.progress_all");
+    mysql = thd->get_collector_connection();
+    if (mysql == NULL)
+        DBUG_RETURN(true);
+    
+    if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
+        (source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        thd->close_collector_connection();
+        DBUG_RETURN(true);
+    }
+    
+    source_row = mysql_fetch_row(source_res);
+    while (source_row)
+    {
+        protocol->prepare_for_resend();
+        protocol->store(source_row[0], system_charset_info);
+        protocol->store(source_row[1], system_charset_info);
+        protocol->store(source_row[2], system_charset_info);
+        protocol->store(source_row[3], system_charset_info);
+        protocol->store(source_row[4], system_charset_info);
+        protocol->write();
+        source_row = mysql_fetch_row(source_res);
+    }
+    
+    mysql_free_result(source_res);
+    my_eof(thd);
+    thd->close_collector_connection();
+    
+    DBUG_RETURN(FALSE);
+}
+
+int inception_collector_init(THD* thd)
 {
     MYSQL mysql;
     char tmp[1024];
 
     if (get_mysql_connection(&mysql, inception_collector_host, inception_collector_port,
                              inception_collector_user, inception_collector_password, NULL))
-        return true;
+        return TRUE;
     
     sprintf (tmp, "create database collector_data");
     if(get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
-        return true;
+        return TRUE;
     }
     
     sprintf (tmp, "create table collector_data.table_dict(\
@@ -671,12 +819,13 @@ int inception_collector_init()
              `port` int(11) NOT NULL DEFAULT '0', \
              `db` varchar(30) NOT NULL DEFAULT '', \
              `tname` varchar(30) NOT NULL DEFAULT '', \
+             `refuse` tinyint NOT NULL DEFAULT '0', \
              PRIMARY KEY (`id`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
     if(get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
-        return true;
+        return TRUE;
     }
     
     sprintf (tmp, "create table collector_data.progress_all(\
@@ -692,7 +841,7 @@ int inception_collector_init()
     if(get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
-        return true;
+        return TRUE;
     }
 
     
@@ -714,23 +863,37 @@ int inception_collector_init()
     if(get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
-        return true;
+        return TRUE;
     }
     
-    sprintf (tmp, "update collector_data.progress_detail set state='stoped' where state !='finished';");
-    if(get_mysql_res(&mysql, tmp))
+    //stop和莫名退出时，这两个表中running之类状态需要被设置成stoped，待处理
+    if ((thd->lex->inception_cmd_sub_type == INCEPTION_START_COLLECTOR
+         || thd->lex->inception_cmd_sub_type == INCEPTION_STOP_COLLECTOR)
+        && !inception_collector_on)
     {
-        mysql_close(&mysql);
-        return true;
+        sprintf (tmp, "update collector_data.progress_detail set state='stoped' \
+                 where state = 'running' or state = 'sleeping';");
+        if(get_mysql_res(&mysql, tmp))
+        {
+            mysql_close(&mysql);
+            return TRUE;
+        }
+        sprintf (tmp, "update collector_data.progress_all set state='stoped' \
+                 where state = 'running' or state = 'started';");
+        if(get_mysql_res(&mysql, tmp))
+        {
+            mysql_close(&mysql);
+            return TRUE;
+        }
     }
     
     mysql_close(&mysql);
-    return false;
+    return FALSE;
 }
 
 int inception_collector_execute(THD* thd)
 {
-    inception_collector_init();
+    inception_collector_init(thd);
     
     switch (thd->lex->inception_cmd_sub_type)
     {
@@ -740,9 +903,11 @@ int inception_collector_execute(THD* thd)
             return inception_collector_stop(thd);
         case INCEPTION_SHOW_COLLECTOR_STATUS:
             return inception_collector_status(thd);
+        case INCEPTION_GET_COLLECTOR_LIST:
+            return inception_collector_rule_list(thd);
         default:
-            return false;
+            return FALSE;
     }
     
-    return false;
+    return FALSE;
 }
