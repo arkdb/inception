@@ -584,6 +584,7 @@ struct collector_table_struct
     char                 db[30];
     char                 tname[30];
     long                 table_id;
+    int                  steps;
     LIST_NODE_T(collector_table_t) link;
 };
 

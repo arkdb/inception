@@ -35,11 +35,11 @@
 #define PROGRESS_DETAIL_SLEEPING   (char*)"sleeping"
 #define PROGRESS_DETAIL_FINISHED   (char*)"finished"
 
-#define COLLECTOR_WORKER_NUM          2
-#define TABLE_SELECT_LIMIT            100
-#define COLLECTOR_CACHE_LENGTH        1000
-#define MAX_ROW_NUM                   1000000
-#define MAX_TABLE_SIZE                500 //MB
+#define TABLE_ID_STEPS                100
+#define CACHE_QUEUE_LENGTH            1000
+#define SUITABLE_ROW_NUM              1000000
+#define SUITABLE_TABLE_SIZE           500 //MB
+
 #define COLLECTOR_RULE_ALL            0
 #define COLLECTOR_RULE_CARDINALITY    1
 
@@ -212,7 +212,7 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info,
                      dest_port, dest_db, dest_tname, rule, state, info) values(%ld, %ld, '%s', %d, '%s', '%s',\
                      'cardinality','%s', '%s') ON DUPLICATE KEY UPDATE table_id = %ld, dest_host='%s',\
                      dest_port=%d, dest_db='%s', dest_tname='%s', state='%s', start_time=now(), info='%s'",
-                     table_info->table_id % COLLECTOR_WORKER_NUM + 1, table_info->table_id,
+                     table_info->table_id % inception_collector_parallel_workers + 1, table_info->table_id,
                      table_info->host, table_info->port, table_info->db,table_info->tname,
                      state, replace_sql, table_info->table_id, table_info->host,table_info->port,
                      table_info->db, table_info->tname, state, replace_sql);
@@ -263,7 +263,6 @@ int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
 int insert_cardinality(MYSQL* mysql_dc, collector_table_t* table_info, char* var, int value)
 {
     MYSQL_RES* res_dc = NULL;
-    MYSQL_ROW row_dc;
     char tmp[512];
     char host_[30];
     
@@ -289,7 +288,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     MYSQL_RES* res = NULL;
     MYSQL_ROW row;
     char tmp[512];
-    char sql_arr[256][512] = {0};
+    char field_arr[256][32];
     
     //先获取这个表的大小信息，后用来判断如何采样
     sprintf (tmp, "show table status like '%s'", table_info->tname);
@@ -318,38 +317,87 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
         return TRUE;
     }
     
-    memset(sql_arr, 0, 256*512);
+    memset(field_arr, 0, 256*32);
     int num=0;
     
-    //开始采样
     while (row)
     {
-        if(rows > MAX_ROW_NUM && size > MAX_TABLE_SIZE)
+        if (strcasecmp("id", row[0]) == 0)
         {
-            //根据采样策略进行采样
+            if ((strcasecmp("int", row[1]) == 0 || strcasecmp("bigint", row[1]) == 0)
+                && (strcasecmp("PRI", row[3]) == 0 || strcasecmp("UNI", row[3]) == 0))
+                strcpy(field_arr[num], row[0]);
+            else
+                sprintf(field_arr[num], "%s_useless", row[0]);
         }
         else
-        {
-            sprintf(sql_arr[num], "select count(*),'%s' from (select count(*) from %s.%s group by %s) tmp",
-                    row[0], table_info->db, table_info->tname, row[0]);
-        }
+            strcpy(field_arr[num], row[0]);
         ++num;
         row = mysql_fetch_row(res);
     }
     mysql_free_result(res);
     
+    int has_id = 0;
     for (int i=0; i < num && inception_collector_on; ++i)
     {
-        res = get_mysql_res(mysql, sql_arr[i]);
-        row = mysql_fetch_row(res);
-        mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, sql_arr[i], 0);
-        if (row != NULL && !insert_cardinality(mysql_dc, table_info, row[1], atoi(row[0])))
+        if(rows > SUITABLE_ROW_NUM && size > SUITABLE_TABLE_SIZE)
         {
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, sql_arr[i], 0);
+            //根据采样策略进行采样,必须自增id
+            for (int j=0; j < num && has_id == 0; ++j)
+            {
+                if (strcasecmp("id", field_arr[i]) == 0)
+                    has_id = 1;
+            }
+            if (has_id)
+            {
+                sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
+                res = get_mysql_res(mysql, tmp);
+                row = mysql_fetch_row(res);
+                int max_id = atoi(row[0]);
+                int value = 0;
+                mysql_free_result(res);
+                int cardinal = 1;
+                for (int j=0; j < max_id;)
+                {
+                    int id_steps = table_info->steps;
+                    if (j + id_steps > max_id)
+                        id_steps = max_id;
+                    sprintf(tmp, "select count(*) from \
+                            (select count(*) from %s.%s where id > %d and id <=%d group by %s) tmp",
+                            table_info->db, table_info->tname, j, j + id_steps, field_arr[i]);
+                    res = get_mysql_res(mysql, tmp);
+                    row = mysql_fetch_row(res);
+                    
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
+                    if (row != NULL)
+                        value += atoi(row[0]);
+                    else
+                        mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+                    mysql_free_result(res);
+                    cardinal++;
+                    j += table_info->steps;
+                }
+                if (insert_cardinality(mysql_dc, table_info, field_arr[i], value/cardinal))
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
+                else
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+            }
+            else
+                break;
         }
         else
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, sql_arr[i], 0);
-        mysql_free_result(res);
+        {
+            sprintf(tmp, "select count(*) from (select count(*) from %s.%s group by %s) tmp",
+                    table_info->db, table_info->tname, field_arr[i]);
+            res = get_mysql_res(mysql, tmp);
+            row = mysql_fetch_row(res);
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
+            if (row != NULL && !insert_cardinality(mysql_dc, table_info, field_arr[i], atoi(row[0])))
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
+            else
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+            mysql_free_result(res);
+        }
     }
     
     res = NULL;
@@ -416,13 +464,14 @@ begin:
         
         collector_table_t* table_info =
             LIST_GET_FIRST(global_collector_cache.table_list);
-        LIST_REMOVE(link, global_collector_cache.table_list, table_info);
+        if (table_info != NULL)
+            LIST_REMOVE(link, global_collector_cache.table_list, table_info);
         
         mysql_mutex_unlock(&collector_cache_mutex);
         
         if (table_info == NULL)
             goto begin;
-        thread_id = table_info->table_id % COLLECTOR_WORKER_NUM+1;
+        thread_id = table_info->table_id % inception_collector_parallel_workers + 1;
         
         if (get_mysql_connection(&mysql, table_info->host, table_info->port,
                                  remote_system_user, remote_system_password, table_info->db))
@@ -430,14 +479,12 @@ begin:
             my_free(table_info);
             goto error;
         }
-        
         if (create_db_table(&mysql_dc, table_info))
         {
             my_free(table_info);
             mysql_close(&mysql);
             goto error;
         }
-        
         if (inception_collector_rule == COLLECTOR_RULE_ALL
             || inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
         {
@@ -458,7 +505,8 @@ error:
     inception_collector_idle--;
     mysql_mutex_unlock(&collector_idle_mutex);
     inception_collector_on = false;
-    mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id);
+    if (thread_id > 0)
+        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id);
     sql_print_information("cardinality_work_thread stop.");
     mysql_close(&mysql_collector);
     mysql_close(&mysql_dc);
@@ -490,9 +538,11 @@ pthread_handler_t inception_collector_thread(void* arg)
     
     setup_connection_thread_globals(thd);
     
-    for (int i=0; i < COLLECTOR_WORKER_NUM; ++i)
+    for (int i=0; i < inception_collector_parallel_workers; ++i)
+    {
         mysql_thread_create(0, &threadid, &connection_attrib,
                             collector_work_thread, NULL);
+    }
 redo:
     mysql_mutex_lock(&collector_idle_mutex);
     mysql = thd->get_collector_connection();
@@ -500,11 +550,11 @@ redo:
     if (mysql == NULL)
         goto error;
     
-    inception_collector_running_worker = COLLECTOR_WORKER_NUM;
+    inception_collector_running_worker = inception_collector_parallel_workers;
     
     mark_progress_all(mysql, 0.00, PROGRESS_ALL_STARTED);
     
-    sprintf (tmp, "select max(id) from `collector_data`.`table_dict`");
+    strcpy(tmp, "select max(id) from `collector_data`.`table_dict`");
     
     source_res = get_mysql_res(mysql, tmp);
     if (source_res == NULL)
@@ -514,7 +564,7 @@ redo:
     total_tables = atoi(source_row[0]);
     mysql_free_result(source_res);
     
-    sprintf (tmp, "select min(table_id) from `collector_data`.`progress_detail` where state <> 'finished'");
+    strcpy(tmp, "select min(table_id) from `collector_data`.`progress_detail` where state <> 'finished'");
     
     source_res = get_mysql_res(mysql, tmp);
     if (source_res == NULL)
@@ -525,11 +575,11 @@ redo:
         last_id = atol(source_row[0]);
     mysql_free_result(source_res);
     
-    for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_SELECT_LIMIT)
+    for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_ID_STEPS)
     {
-        sprintf(tmp, "select host,port,db,tname, id \
+        sprintf(tmp, "select host,port,db,tname,id,steps \
                 from `collector_data`.`table_dict` where id>=%d and id <%d and refuse=0",
-                i,i+TABLE_SELECT_LIMIT);
+                i,i+TABLE_ID_STEPS);
         source_res = get_mysql_res(mysql, tmp);
         if (source_res == NULL)
             goto error;
@@ -537,7 +587,7 @@ redo:
         source_row= mysql_fetch_row(source_res);
         while (source_row && inception_collector_on)
         {
-            while (global_collector_cache.table_list.count >= COLLECTOR_CACHE_LENGTH);
+            while (global_collector_cache.table_list.count >= CACHE_QUEUE_LENGTH);
             collector_table_t* table_info;
             table_info = (collector_table_t*)my_malloc(sizeof(collector_table_t), MY_ZEROFILL);
             
@@ -546,18 +596,20 @@ redo:
             strcpy(table_info->tname, source_row[3]);
             table_info->port = atoi(source_row[1]);
             table_info->table_id = atol(source_row[4]);
+            table_info->steps = atoi(source_row[5]);
             LIST_ADD_LAST(link, global_collector_cache.table_list, table_info);
             source_row = mysql_fetch_row(source_res);
         }
         mysql_free_result(source_res);
         
-        //这里算进度有点问题，需要查一下
+        //这里算进度可能有点问题，需要关注一下
         mysql_mutex_lock(&collector_cache_mutex);
         progress = (double)(i + 1 - global_collector_cache.table_list.count) * 100 / (double)total_tables;
         mysql_mutex_unlock(&collector_cache_mutex);
+        
         if (progress - 100.00 >= 0.00)
             progress = 99.99;
-            
+
         mark_progress_all(mysql, progress, PROGRESS_ALL_RUNNING);
     }
     if (!inception_collector_on)
@@ -565,11 +617,12 @@ redo:
     
     while (inception_collector_on == true
            && ((global_collector_cache.table_list.count > 0
-           || inception_collector_idle < COLLECTOR_WORKER_NUM)));
+           || inception_collector_idle < inception_collector_parallel_workers)));
+
     mark_progress_all(mysql, 100.00, PROGRESS_ALL_FINISHED);
     
     //下次大循环策略，需修改
-    for (int i=0; i < 1 && inception_collector_on; ++i)
+    for (int i=0; i < 100 && inception_collector_on; ++i)
         sleep(3);
     
     if (inception_collector_on)
@@ -633,7 +686,7 @@ int inception_collector_start(THD* thd)
         clear_collector_cache();
         mysql_thread_create(0, &threadid, &connection_attrib,
                             inception_collector_thread, NULL);
-        while (inception_collector_running_worker != COLLECTOR_WORKER_NUM);
+        while (inception_collector_running_worker != inception_collector_parallel_workers);
     }
     return FALSE;
 }
@@ -694,11 +747,11 @@ int inception_collector_status(THD* thd)
     }
 
     if (inception_collector_rule == COLLECTOR_RULE_ALL)
-        sprintf(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
+        strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
                 dest_tname, rule, state, start_time, info \
                 from collector_data.progress_detail");
     else if (inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
-        sprintf(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
+        strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
                 dest_tname, rule, state, start_time, info \
                 from collector_data.progress_detail \
                 where rule='cardinality'");
@@ -763,7 +816,7 @@ int inception_collector_rule_list(THD* thd)
         DBUG_RETURN(true);
     }
 
-    sprintf(tmp, "select rule, state, start_time, stop_time, progress \
+    strcpy(tmp, "select rule, state, start_time, stop_time, progress \
             from collector_data.progress_all");
     mysql = thd->get_collector_connection();
     if (mysql == NULL)
@@ -806,20 +859,21 @@ int inception_collector_init(THD* thd)
                              inception_collector_user, inception_collector_password, NULL))
         return TRUE;
     
-    sprintf (tmp, "create database collector_data");
+    strcpy(tmp, "create database collector_data");
     if(get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
         return TRUE;
     }
     
-    sprintf (tmp, "create table collector_data.table_dict(\
+    strcpy(tmp, "create table collector_data.table_dict(\
              `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
              `host` varchar(20) NOT NULL DEFAULT '', \
              `port` int(11) NOT NULL DEFAULT '0', \
              `db` varchar(30) NOT NULL DEFAULT '', \
              `tname` varchar(30) NOT NULL DEFAULT '', \
              `refuse` tinyint NOT NULL DEFAULT '0', \
+             `steps` int(11) NOT NULL DEFAULT '10000', \
              PRIMARY KEY (`id`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
     if(get_mysql_res(&mysql, tmp))
@@ -828,7 +882,7 @@ int inception_collector_init(THD* thd)
         return TRUE;
     }
     
-    sprintf (tmp, "create table collector_data.progress_all(\
+    strcpy(tmp, "create table collector_data.progress_all(\
              `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
              `rule` varchar(20) NOT NULL DEFAULT '',\
              `state` varchar(15) NOT NULL DEFAULT '', \
@@ -845,7 +899,7 @@ int inception_collector_init(THD* thd)
     }
 
     
-    sprintf (tmp, "create table collector_data.progress_detail(\
+    strcpy(tmp, "create table collector_data.progress_detail(\
              `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
              `thread_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
              `table_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
@@ -871,14 +925,14 @@ int inception_collector_init(THD* thd)
          || thd->lex->inception_cmd_sub_type == INCEPTION_STOP_COLLECTOR)
         && !inception_collector_on)
     {
-        sprintf (tmp, "update collector_data.progress_detail set state='stoped' \
+        strcpy(tmp, "update collector_data.progress_detail set state='stoped' \
                  where state = 'running' or state = 'sleeping';");
         if(get_mysql_res(&mysql, tmp))
         {
             mysql_close(&mysql);
             return TRUE;
         }
-        sprintf (tmp, "update collector_data.progress_all set state='stoped' \
+        strcpy(tmp, "update collector_data.progress_all set state='stoped' \
                  where state = 'running' or state = 'started';");
         if(get_mysql_res(&mysql, tmp))
         {

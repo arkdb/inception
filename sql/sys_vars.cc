@@ -1112,3 +1112,8 @@ static Sys_var_ulong Sys_server_id(
     GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
     VALID_RANGE(2, UINT_MAX32), DEFAULT(2), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
+static Sys_var_uint Sys_inception_collector_parallel_workers(
+    "inception_collector_parallel_workers", "the parallel works of inception collector.",
+    GLOBAL_VAR(inception_collector_parallel_workers), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, UINT_MAX32), DEFAULT(5), BLOCK_SIZE(1));

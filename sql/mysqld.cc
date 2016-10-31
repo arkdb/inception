@@ -609,6 +609,7 @@ bool inception_collector_on=0;
 int inception_collector_idle=0;
 int inception_collector_rule=0;
 int inception_collector_running_worker=0;
+int inception_collector_parallel_workers=5;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
