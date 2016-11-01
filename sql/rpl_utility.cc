@@ -115,16 +115,31 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
 
   case MYSQL_TYPE_DATE:
   case MYSQL_TYPE_TIME:
-  case MYSQL_TYPE_TIME2:
     return 3;
 
+  case MYSQL_TYPE_TIME2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 3;
+
   case MYSQL_TYPE_TIMESTAMP:
-  case MYSQL_TYPE_TIMESTAMP2:
     return 4;
 
+  case MYSQL_TYPE_TIMESTAMP2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 4;
+
   case MYSQL_TYPE_DATETIME:
-  case MYSQL_TYPE_DATETIME2:
     return 8;
+
+  case MYSQL_TYPE_DATETIME2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 8;
 
   case MYSQL_TYPE_BIT:
     /*
@@ -165,7 +180,7 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
     return uint_max(4 * 8);
 
   default:
-    return ~(uint32) 0;
+    return UINT_MAX;
   }
 }
 
@@ -787,7 +802,8 @@ table_def::create_conversion_table(
     uint pack_length= 0;
     uint32 max_length=
       max_display_length_for_field(type(col), field_metadata(col));
-
+    if (max_length == UINT_MAX)
+        max_length = field_info->field_length;
     switch(type(col))
     {
       int precision;

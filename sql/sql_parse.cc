@@ -5005,7 +5005,8 @@ int mysql_check_create_index(THD *thd)
                         keymaxlen += field_node->max_length;
                     }
 
-                    if (field_node->real_type != MYSQL_TYPE_INT24 &&
+                    if (key->type == Key::PRIMARY &&
+                        field_node->real_type != MYSQL_TYPE_INT24 &&
                         field_node->real_type != MYSQL_TYPE_LONGLONG &&
                         field_node->real_type != MYSQL_TYPE_LONG &&
                         inception_enable_pk_columns_only_int)
@@ -9931,8 +9932,19 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
         field_info->flags = field->flags;
         field_info->decimals = field->decimals;
 
+        field_info->field_length =field->length;
+        if (field->length > MAX_DATETIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_DATETIME)
+            field_info->real_type = MYSQL_TYPE_DATETIME2;
+        if (field->length > MAX_DATETIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_TIMESTAMP)
+            field_info->real_type = MYSQL_TYPE_TIMESTAMP2;
+        if (field->length > MAX_TIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_TIME)
+            field_info->real_type = MYSQL_TYPE_TIME2;
+
         field_info->charsetnr = field->charsetnr;
-        field_info->max_length = calc_pack_length(field->type,field->length);
+        field_info->max_length = calc_pack_length(field_info->real_type,field->length);
 
         //调整最大长度，根据表定义的字符集来调整
         if (field_info->charset)
@@ -9944,7 +9956,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
             field_info->charsetnr = field_info->charset->number;
         }
 
-        max_length += calc_pack_length(field->type,field_info->max_length);
+        max_length += calc_pack_length(field_info->real_type,field_info->max_length);
         mysql_prepare_field(field_info);
 
         field_info = LIST_GET_NEXT(link, field_info);
@@ -9959,7 +9971,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
     {
         field = &source_res->fields[i];
         field_info->field_ptr = table_info->record + max_length;
-        max_length += calc_pack_length(field->type,field_info->max_length);
+        max_length += calc_pack_length(field_info->real_type,field_info->max_length);
         field_info = LIST_GET_NEXT(link, field_info);
     }
 
