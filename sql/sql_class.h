@@ -296,6 +296,7 @@ struct field_info_struct
     uint    auto_increment;
     char    data_type[FN_LEN + 1];
     uint    max_length;
+    uint    field_length;
     enum enum_field_types real_type;
     uint    pack_flag;
     uint    flags;
