@@ -35,10 +35,10 @@
 #define PROGRESS_DETAIL_SLEEPING   (char*)"sleeping"
 #define PROGRESS_DETAIL_FINISHED   (char*)"finished"
 
+//是否某一个rule单独起线程，起多少个线程
+//可以看都哪些表，修改这些表的信息
 #define TABLE_ID_STEPS                100
 #define CACHE_QUEUE_LENGTH            1000
-#define SUITABLE_ROW_NUM              1000000
-#define SUITABLE_TABLE_SIZE           500 //MB
 
 #define COLLECTOR_RULE_ALL            0
 #define COLLECTOR_RULE_CARDINALITY    1
@@ -50,9 +50,6 @@ extern bool inception_collector_on;
 extern int inception_collector_idle;
 extern int inception_collector_running_worker;
 extern int inception_collector_rule;//按位标志性---0:all; 1:cardinality
-//还少两个策略参数：是否全部count(*)和抽样步长
-//还有是否某一个rule单独起线程，起多少个线程
-
 
 void str_replace(char* str_src, char* str_find, char* str_replace)
 {
@@ -288,21 +285,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     MYSQL_RES* res = NULL;
     MYSQL_ROW row;
     char tmp[512];
-    char field_arr[256][32];
-    
-    //先获取这个表的大小信息，后用来判断如何采样
-    sprintf (tmp, "show table status like '%s'", table_info->tname);
-    res = get_mysql_res(mysql, tmp);
-    row = mysql_fetch_row(res);
-    if (row == NULL)
-    {
-        mysql_free_result(res);
-        res = NULL;
-        return TRUE;
-    }
-    int rows = atoi(row[4]);
-    int size = (atoi(row[6]) + atoi(row[8])) / 1024 / 1024;
-    mysql_free_result(res);
+    collector_field_list_t field_list;
     
     //获取表中列的信息
     sprintf (tmp, "select COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, COLUMN_KEY \
@@ -316,90 +299,121 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
         res = NULL;
         return TRUE;
     }
+    LIST_INIT(field_list.field_list);
     
-    memset(field_arr, 0, 256*32);
-    int num=0;
-    
+    int has_id = 0;
     while (row)
     {
-        if (strcasecmp("id", row[0]) == 0)
-        {
-            if ((strcasecmp("int", row[1]) == 0 || strcasecmp("bigint", row[1]) == 0)
-                && (strcasecmp("PRI", row[3]) == 0 || strcasecmp("UNI", row[3]) == 0))
-                strcpy(field_arr[num], row[0]);
-            else
-                sprintf(field_arr[num], "%s_useless", row[0]);
-        }
-        else
-            strcpy(field_arr[num], row[0]);
-        ++num;
+        if (strcasecmp("id", row[0]) == 0
+            && (strcasecmp("int", row[1]) == 0 || strcasecmp("bigint", row[1]) == 0)
+            && (strcasecmp("PRI", row[3]) == 0 || strcasecmp("UNI", row[3]) == 0))
+            has_id = 1;
+        
+        collector_field_t* field;
+        field = (collector_field_t*)my_malloc(sizeof(collector_field_t), MY_ZEROFILL);
+        strcpy(field->name, row[0]);
+        strcpy(field->type, row[1]);
+        if (row[2])
+            field->length = atoi(row[2]);
+        strcpy(field->key, row[3]);
+        field->cardinality=0;
+        memset(field->kinds, 0, 256*256);
+        LIST_ADD_LAST(link, field_list.field_list, field);
         row = mysql_fetch_row(res);
     }
     mysql_free_result(res);
     
-    int has_id = 0;
-    for (int i=0; i < num && inception_collector_on; ++i)
+    collector_field_t* field = LIST_GET_FIRST(field_list.field_list);
+    while (field && inception_collector_on)
     {
-        if(rows > SUITABLE_ROW_NUM && size > SUITABLE_TABLE_SIZE)
+        //根据采样策略进行采样,必须自增id
+        if (has_id)
         {
-            //根据采样策略进行采样,必须自增id
-            for (int j=0; j < num && has_id == 0; ++j)
+            sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
+            res = get_mysql_res(mysql, tmp);
+            row = mysql_fetch_row(res);
+            int max_id = 0;
+            if (row && row[0])
+                max_id = atoi(row[0]);
+            mysql_free_result(res);
+
+            for (int j = 0; j < max_id;)
             {
-                if (strcasecmp("id", field_arr[i]) == 0)
-                    has_id = 1;
-            }
-            if (has_id)
-            {
-                sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
+                int id_steps = table_info->steps * table_info->sample_percent;
+                if (j + id_steps > max_id)
+                    id_steps = max_id;
+
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
+                
+                int count = 0;
+                sprintf(tmp, "select count(*) from \
+                        (select id from %s.%s where id > %d and id <=%d group by %s) tmp",
+                        table_info->db, table_info->tname, j, j + id_steps, field->name);
                 res = get_mysql_res(mysql, tmp);
                 row = mysql_fetch_row(res);
-                int max_id = atoi(row[0]);
-                int value = 0;
-                mysql_free_result(res);
-                int cardinal = 1;
-                for (int j=0; j < max_id;)
+                if (row != NULL)
+                    count = atoi(row[0]);
+                else
                 {
-                    int id_steps = table_info->steps;
-                    if (j + id_steps > max_id)
-                        id_steps = max_id;
-                    sprintf(tmp, "select count(*) from \
-                            (select count(*) from %s.%s where id > %d and id <=%d group by %s) tmp",
-                            table_info->db, table_info->tname, j, j + id_steps, field_arr[i]);
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+                    mysql_free_result(res);
+                    break;
+                }
+                mysql_free_result(res);
+
+                if (count > 15 || field->cardinality > 256)
+                    field->cardinality += count;
+                else
+                {
+                    sprintf(tmp, "select %s from %s.%s where id > %d and id <=%d group by %s",
+                            field->name, table_info->db, table_info->tname, j, j + id_steps, field->name);
                     res = get_mysql_res(mysql, tmp);
                     row = mysql_fetch_row(res);
                     
-                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
-                    if (row != NULL)
-                        value += atoi(row[0]);
-                    else
-                        mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+                    while (row)
+                    {
+                        if (row[0] == NULL)
+                            row[0] = (char*)"NULL";
+                        int in_kinds=0;
+                        for (int k=0; k < field->cardinality && k < 256; ++k)
+                        {
+                            if (strcasecmp(field->kinds[k], row[0]) == 0)
+                            {
+                                in_kinds=1;
+                                break;
+                            }
+                            
+                        }
+                        if (in_kinds == 0)
+                        {
+                            if (field->cardinality + 1 < 256)
+                                strcpy(field->kinds[field->cardinality + 1], row[0]);
+                            field->cardinality++;
+                        }
+                        row = mysql_fetch_row(res);
+                    }
                     mysql_free_result(res);
-                    cardinal++;
-                    j += table_info->steps;
                 }
-                if (insert_cardinality(mysql_dc, table_info, field_arr[i], value/cardinal))
-                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
-                else
-                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+
+                j += table_info->steps;
             }
-            else
-                break;
-        }
-        else
-        {
-            sprintf(tmp, "select count(*) from (select count(*) from %s.%s group by %s) tmp",
-                    table_info->db, table_info->tname, field_arr[i]);
-            res = get_mysql_res(mysql, tmp);
-            row = mysql_fetch_row(res);
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
-            if (row != NULL && !insert_cardinality(mysql_dc, table_info, field_arr[i], atoi(row[0])))
+            if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
                 mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
             else
                 mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
-            mysql_free_result(res);
         }
+        else
+            break;
+        
+        field = LIST_GET_NEXT(link, field);
     }
     
+    while (field_list.field_list.count > 0) {
+        collector_field_t* field;
+        field = LIST_GET_FIRST(field_list.field_list);
+        LIST_REMOVE(link, field_list.field_list, field);
+        my_free(field);
+    }
     res = NULL;
     return FALSE;
 }
@@ -466,7 +480,7 @@ begin:
             LIST_GET_FIRST(global_collector_cache.table_list);
         if (table_info != NULL)
             LIST_REMOVE(link, global_collector_cache.table_list, table_info);
-        
+
         mysql_mutex_unlock(&collector_cache_mutex);
         
         if (table_info == NULL)
@@ -561,7 +575,8 @@ redo:
         goto error;
     
     source_row= mysql_fetch_row(source_res);
-    total_tables = atoi(source_row[0]);
+    if (source_row[0])
+        total_tables = atoi(source_row[0]);
     mysql_free_result(source_res);
     
     strcpy(tmp, "select min(table_id) from `collector_data`.`progress_detail` where state <> 'finished'");
@@ -577,7 +592,7 @@ redo:
     
     for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_ID_STEPS)
     {
-        sprintf(tmp, "select host,port,db,tname,id,steps \
+        sprintf(tmp, "select host,port,db,tname,id,steps,sample_percent \
                 from `collector_data`.`table_dict` where id>=%d and id <%d and refuse=0",
                 i,i+TABLE_ID_STEPS);
         source_res = get_mysql_res(mysql, tmp);
@@ -597,6 +612,7 @@ redo:
             table_info->port = atoi(source_row[1]);
             table_info->table_id = atol(source_row[4]);
             table_info->steps = atoi(source_row[5]);
+            table_info->sample_percent = atof(source_row[6]);
             LIST_ADD_LAST(link, global_collector_cache.table_list, table_info);
             source_row = mysql_fetch_row(source_res);
         }
@@ -874,6 +890,7 @@ int inception_collector_init(THD* thd)
              `tname` varchar(30) NOT NULL DEFAULT '', \
              `refuse` tinyint NOT NULL DEFAULT '0', \
              `steps` int(11) NOT NULL DEFAULT '10000', \
+             `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
              PRIMARY KEY (`id`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
     if(get_mysql_res(&mysql, tmp))
@@ -919,11 +936,8 @@ int inception_collector_init(THD* thd)
         mysql_close(&mysql);
         return TRUE;
     }
-    
-    //stop和莫名退出时，这两个表中running之类状态需要被设置成stoped，待处理
-    if ((thd->lex->inception_cmd_sub_type == INCEPTION_START_COLLECTOR
-         || thd->lex->inception_cmd_sub_type == INCEPTION_STOP_COLLECTOR)
-        && !inception_collector_on)
+
+    if (!inception_collector_on)
     {
         strcpy(tmp, "update collector_data.progress_detail set state='stoped' \
                  where state = 'running' or state = 'sleeping';");

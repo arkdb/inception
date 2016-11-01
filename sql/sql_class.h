@@ -585,6 +585,7 @@ struct collector_table_struct
     char                 tname[30];
     long                 table_id;
     int                  steps;
+    double               sample_percent;
     LIST_NODE_T(collector_table_t) link;
 };
 
@@ -592,6 +593,24 @@ typedef struct collector_struct collector_t;
 struct collector_struct
 {
     LIST_BASE_NODE_T(collector_table_t) table_list;
+};
+
+typedef struct collector_field_struct collector_field_t;
+struct collector_field_struct
+{
+    char                 name[32];
+    char                 type[32];
+    char                 key[10];
+    char                 kinds[256][256];
+    int                  length;
+    int                  cardinality;
+    LIST_NODE_T(collector_field_t) link;
+};
+
+typedef struct collector_field_list_struct collector_field_list_t;
+struct collector_field_list_struct
+{
+    LIST_BASE_NODE_T(collector_field_t) field_list;
 };
 
 typedef struct gate_ddl_struct ddl_status_t;
