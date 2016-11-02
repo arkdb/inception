@@ -324,86 +324,81 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     mysql_free_result(res);
     
     collector_field_t* field = LIST_GET_FIRST(field_list.field_list);
-    while (field && inception_collector_on)
+    //根据采样策略进行采样,必须自增id
+    while (has_id && field && inception_collector_on)
     {
-        //根据采样策略进行采样,必须自增id
-        if (has_id)
+        sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
+        res = get_mysql_res(mysql, tmp);
+        row = mysql_fetch_row(res);
+        int max_id = 0;
+        if (row && row[0])
+            max_id = atoi(row[0]);
+        mysql_free_result(res);
+
+        for (int j = 0; j < max_id;)
         {
-            sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
+            int id_steps = table_info->steps * table_info->sample_percent;
+            if (j + id_steps > max_id)
+                id_steps = max_id;
+
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
+            
+            int count = 0;
+            sprintf(tmp, "select count(*) from \
+                    (select id from %s.%s where id > %d and id <=%d group by %s) tmp",
+                    table_info->db, table_info->tname, j, j + id_steps, field->name);
             res = get_mysql_res(mysql, tmp);
             row = mysql_fetch_row(res);
-            int max_id = 0;
-            if (row && row[0])
-                max_id = atoi(row[0]);
+            if (row != NULL)
+                count = atoi(row[0]);
+            else
+            {
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+                mysql_free_result(res);
+                break;
+            }
             mysql_free_result(res);
 
-            for (int j = 0; j < max_id;)
+            if (count > 15 || field->cardinality > 256)
+                field->cardinality += count;
+            else
             {
-                int id_steps = table_info->steps * table_info->sample_percent;
-                if (j + id_steps > max_id)
-                    id_steps = max_id;
-
-                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
-                
-                int count = 0;
-                sprintf(tmp, "select count(*) from \
-                        (select id from %s.%s where id > %d and id <=%d group by %s) tmp",
-                        table_info->db, table_info->tname, j, j + id_steps, field->name);
+                sprintf(tmp, "select %s from %s.%s where id > %d and id <=%d group by %s",
+                        field->name, table_info->db, table_info->tname, j, j + id_steps, field->name);
                 res = get_mysql_res(mysql, tmp);
                 row = mysql_fetch_row(res);
-                if (row != NULL)
-                    count = atoi(row[0]);
-                else
+                
+                while (row)
                 {
-                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
-                    mysql_free_result(res);
-                    break;
+                    if (row[0] == NULL)
+                        row[0] = (char*)"NULL";
+                    int in_kinds=0;
+                    for (int k=0; k < field->cardinality && k < 256; ++k)
+                    {
+                        if (strcasecmp(field->kinds[k], row[0]) == 0)
+                        {
+                            in_kinds=1;
+                            break;
+                        }
+                        
+                    }
+                    if (in_kinds == 0)
+                    {
+                        if (field->cardinality + 1 < 256)
+                            strcpy(field->kinds[field->cardinality + 1], row[0]);
+                        field->cardinality++;
+                    }
+                    row = mysql_fetch_row(res);
                 }
                 mysql_free_result(res);
-
-                if (count > 15 || field->cardinality > 256)
-                    field->cardinality += count;
-                else
-                {
-                    sprintf(tmp, "select %s from %s.%s where id > %d and id <=%d group by %s",
-                            field->name, table_info->db, table_info->tname, j, j + id_steps, field->name);
-                    res = get_mysql_res(mysql, tmp);
-                    row = mysql_fetch_row(res);
-                    
-                    while (row)
-                    {
-                        if (row[0] == NULL)
-                            row[0] = (char*)"NULL";
-                        int in_kinds=0;
-                        for (int k=0; k < field->cardinality && k < 256; ++k)
-                        {
-                            if (strcasecmp(field->kinds[k], row[0]) == 0)
-                            {
-                                in_kinds=1;
-                                break;
-                            }
-                            
-                        }
-                        if (in_kinds == 0)
-                        {
-                            if (field->cardinality + 1 < 256)
-                                strcpy(field->kinds[field->cardinality + 1], row[0]);
-                            field->cardinality++;
-                        }
-                        row = mysql_fetch_row(res);
-                    }
-                    mysql_free_result(res);
-                }
-
-                j += table_info->steps;
             }
-            if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
-                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
-            else
-                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
+
+            j += table_info->steps;
         }
+        if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
         else
-            break;
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
         
         field = LIST_GET_NEXT(link, field);
     }
