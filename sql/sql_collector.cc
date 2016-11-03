@@ -44,7 +44,7 @@
 #define COLLECTOR_RULE_CARDINALITY    1
 
 #define FIELD_VALUE_FORE                  0
-#define FIELD_VALUE_MIND                  1
+#define FIELD_VALUE_TMP                   1
 #define FIELD_VALUE_HIND                  2
 
 extern collector_t global_collector_cache;
@@ -333,7 +333,7 @@ int set_field_value(collector_field_list_t* field_list, char* name, char* value,
         {
             if (type == FIELD_VALUE_FORE)
                 strcpy(field->value_fore, value);
-            if (type == FIELD_VALUE_HIND)
+            else if (type == FIELD_VALUE_HIND)
                 strcpy(field->value_hind, value);
             else
                 strcpy(field->value_tmp, value);
@@ -353,6 +353,7 @@ int exchange_field_fore_and_tmp(collector_field_list_t* field_list)
             strcpy(field->value_fore, field->value_tmp);
             strcpy(field->value_tmp, "NULL");
             strcpy(field->value_hind, "NULL");
+            if (strcasecmp("NULL", field->value_fore));
         }
         field = LIST_GET_NEXT(link, field);
     }
@@ -398,7 +399,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     }
     for (int i=0; i < count; ++i)
     {
-        sprintf(tmp, "%s %s", tmp, keys[i]);
+        sprintf(tmp, "%s %s%s", tmp, keys[i], i+1==count?"":",");
     }
     sprintf(tmp, "%s from %s.%s force index(primary) ", tmp, table_info->db, table_info->tname);
 
@@ -407,30 +408,37 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     else
     {
         sprintf(tmp, "%s where 1=1 and ", tmp);
-        for (int i = 0; i< count; ++i)
-        {
-            char value[256];
-            if (i+1 == count)
-            {
-                if(get_field_value(field_list, keys[i], value, (char*)">=", true))
-                {
-                    field_t->done = true;
-                    return TRUE;
-                }
-                sprintf(tmp, "%s %s and", tmp, value);
-            }
-            else
-            {
-                if(get_field_value(field_list, keys[i], value, (char*)"=", true))
-                {
-                    field_t->done = true;
-                    return TRUE;
-                }
-                sprintf(tmp, "%s %s and ", tmp, value);
-            }
-        }
         
-        sprintf(tmp, "%s 1=1 limit %d, 2", tmp, table_info->steps-1);
+        for (int j = count; j > 0; --j)
+        {
+            sprintf(tmp, "%s ( ", tmp);
+            for (int i = 0; i< j; ++i)
+            {
+                char value[256];
+                if (i+1 == j)
+                {
+                    if(get_field_value(field_list, keys[i], value, (char*)">=", true))
+                    {
+                        field_t->done = true;
+                        return TRUE;
+                    }
+                    sprintf(tmp, "%s %s and", tmp, value);
+                }
+                else
+                {
+                    if(get_field_value(field_list, keys[i], value, (char*)"=", true))
+                    {
+                        field_t->done = true;
+                        return TRUE;
+                    }
+                    sprintf(tmp, "%s %s and ", tmp, value);
+                }
+            }
+            sprintf(tmp, "%s 1=1 ) ", tmp);
+            if (j-1 != 0)
+                sprintf(tmp, "%s or ", tmp);
+        }
+        sprintf(tmp, "%s limit %d, 2", tmp, table_info->steps-1);
     }
     
     res = get_mysql_res(mysql, tmp);
@@ -453,7 +461,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     row = mysql_fetch_row(res);
     if (row != NULL)
         for (int i = 0; i < count; ++i)
-            set_field_value(field_list, keys[i], row[i], FIELD_VALUE_MIND);
+            set_field_value(field_list, keys[i], row[i], FIELD_VALUE_TMP);
     mysql_free_result(res);
     return FALSE;
 }
@@ -514,11 +522,12 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     }
     
     int has_pri = 0;
-    collector_field_t* field = LIST_GET_FIRST(field_list.field_list);
+    collector_field_t* field;
     while (row)
     {
         if (strcasecmp("PRIMARY", row[2]) == 0)
         {
+            field = LIST_GET_FIRST(field_list.field_list);
             while (field)
             {
                 if (strcasecmp(row[4], field->name) == 0)
@@ -554,25 +563,32 @@ next_field:
             sprintf(tmp, "select count(*) from (select count(*) from %s.%s force index(primary) \
                     where 1=1 and ",
                    table_info->db, table_info->tname);
-            for (int i = 0; i< key_count; ++i)
+            for (int j = key_count; j > 0; --j)
             {
-                char value[256];
-                if (i+1 == key_count)
+                sprintf(tmp, "%s ( ", tmp);
+                for (int i = 0; i< j; ++i)
                 {
-                    if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
-                        sprintf(tmp, "%s %s and", tmp, value);
-                    if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
-                        sprintf(tmp, "%s %s and", tmp, value);
+                    char value[256];
+                    if (i+1 == j)
+                    {
+                        if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                    else
+                    {
+                        if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
                 }
-                else
-                {
-                    if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
-                        sprintf(tmp, "%s %s and", tmp, value);
-                    if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
-                        sprintf(tmp, "%s %s and", tmp, value);
-                }
+                sprintf(tmp, "%s 1=1 ) ", tmp);
+                if (j-1 != 0)
+                    sprintf(tmp, "%s or ", tmp);
             }
-            sprintf(tmp, "%s 1=1 group by %s limit %d) tmp", tmp, field->name, limits);
+            sprintf(tmp, "%s group by %s limit %d) tmp", tmp, field->name, limits);
 
             res = get_mysql_res(mysql, tmp);
             row = mysql_fetch_row(res);
@@ -592,25 +608,32 @@ next_field:
             {
                 sprintf(tmp, "select %s from %s.%s force index(primary) where 1=1 and ",
                         field->name, table_info->db, table_info->tname);
-                for (int i = 0; i< key_count; ++i)
+                for (int j = key_count; j > 0; --j)
                 {
-                    char value[256];
-                    if (i+1 == key_count)
+                    sprintf(tmp, "%s ( ", tmp);
+                    for (int i = 0; i< j; ++i)
                     {
-                        if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                        if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
-                            sprintf(tmp, "%s %s and", tmp, value);
+                        char value[256];
+                        if (i+1 == j)
+                        {
+                            if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                            if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                        }
+                        else
+                        {
+                            if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                            if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                        }
                     }
-                    else
-                    {
-                        if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                        if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                    }
+                    sprintf(tmp, "%s 1=1 ) ", tmp);
+                    if (j-1 != 0)
+                        sprintf(tmp, "%s or ", tmp);
                 }
-                sprintf(tmp, "%s 1=1 group by %s",tmp, field->name);
+                sprintf(tmp, "%s group by %s",tmp, field->name);
                 res = get_mysql_res(mysql, tmp);
                 row = mysql_fetch_row(res);
                 
