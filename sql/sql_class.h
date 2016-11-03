@@ -602,8 +602,13 @@ struct collector_field_struct
     char                 type[32];
     char                 key[10];
     char                 kinds[256][256];
+    char                 value_fore[256];
+    char                 value_hind[256];
+    char                 value_tmp[256];
     int                  length;
     int                  cardinality;
+    int                  seq_in_index;
+    int                  done;
     LIST_NODE_T(collector_field_t) link;
 };
 

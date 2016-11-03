@@ -43,6 +43,10 @@
 #define COLLECTOR_RULE_ALL            0
 #define COLLECTOR_RULE_CARDINALITY    1
 
+#define FIELD_VALUE_FORE                  0
+#define FIELD_VALUE_MIND                  1
+#define FIELD_VALUE_HIND                  2
+
 extern collector_t global_collector_cache;
 extern mysql_mutex_t collector_cache_mutex;
 extern mysql_mutex_t collector_idle_mutex;
@@ -280,13 +284,190 @@ int insert_cardinality(MYSQL* mysql_dc, collector_table_t* table_info, char* var
     return FALSE;
 }
 
-int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, collector_table_t* table_info)
+int need_quotation(collector_field_t* field)
+{
+    if (strcasecmp("bit", field->type) == 0
+        || strcasecmp("tinyint", field->type) == 0
+        || strcasecmp("smallint", field->type) == 0
+        || strcasecmp("mediumint", field->type) == 0
+        || strcasecmp("int", field->type) == 0
+        || strcasecmp("bigint", field->type) == 0
+        || strcasecmp("decimal", field->type) == 0
+        || strcasecmp("float", field->type) == 0
+        || strcasecmp("double", field->type) == 0)
+        return FALSE;
+    else
+        return TRUE;
+}
+
+int get_field_value(collector_field_list_t* field_list, char* name, char* value, char* sign, int is_fore)
+{
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    char field_value[256];
+    while (field)
+    {
+        strcpy(field_value, is_fore?field->value_fore:field->value_hind);
+
+        if (strcasecmp(name, field->name) == 0
+            && strcasecmp("NULL", field_value))
+        {
+            if (need_quotation(field))
+                sprintf(value, "%s %s ''%s''",
+                        field->name, sign, field_value);
+            else
+                sprintf(value, "%s %s %s",
+                        field->name, sign, field_value);
+            return FALSE;
+        }
+        field = LIST_GET_NEXT(link, field);
+    }
+    return TRUE;
+}
+
+int set_field_value(collector_field_list_t* field_list, char* name, char* value, int type)
+{
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    while (field)
+    {
+        if (strcasecmp(name, field->name) == 0)
+        {
+            if (type == FIELD_VALUE_FORE)
+                strcpy(field->value_fore, value);
+            if (type == FIELD_VALUE_HIND)
+                strcpy(field->value_hind, value);
+            else
+                strcpy(field->value_tmp, value);
+        }
+        field = LIST_GET_NEXT(link, field);
+    }
+    return FALSE;
+}
+
+int exchange_field_fore_and_tmp(collector_field_list_t* field_list)
+{
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    while (field)
+    {
+        if (strcmp("PRI", field->key) == 0)
+        {
+            strcpy(field->value_fore, field->value_tmp);
+            strcpy(field->value_tmp, "NULL");
+            strcpy(field->value_hind, "NULL");
+        }
+        field = LIST_GET_NEXT(link, field);
+    }
+    return FALSE;
+}
+
+int clean_field_value(collector_field_list_t* field_list)
+{
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    while (field)
+    {
+        if (strcmp("PRI", field->key) == 0)
+        {
+            strcpy(field->value_fore, "NULL");
+            strcpy(field->value_tmp, "NULL");
+            strcpy(field->value_hind, "NULL");
+        }
+        field = LIST_GET_NEXT(link, field);
+    }
+    return FALSE;
+}
+
+int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
+                          collector_field_list_t* field_list, collector_field_t* field_t, int is_first)
 {
     MYSQL_RES* res = NULL;
     MYSQL_ROW row;
     char tmp[512];
+    char keys[256][256];
+    int count = 0;
+    strcpy(tmp, "select ");
+    memset(keys, 0, 256*256);
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    while (field)
+    {
+        if (strcmp("PRI", field->key) == 0)
+        {
+            int index = field->seq_in_index-1;
+            strcpy(keys[index], field->name);
+            count++;
+        }
+        field = LIST_GET_NEXT(link, field);
+    }
+    for (int i=0; i < count; ++i)
+    {
+        sprintf(tmp, "%s %s", tmp, keys[i]);
+    }
+    sprintf(tmp, "%s from %s.%s force index(primary) ", tmp, table_info->db, table_info->tname);
+
+    if (is_first)
+        sprintf(tmp, "%s limit 1", tmp);
+    else
+    {
+        sprintf(tmp, "%s where 1=1 and ", tmp);
+        for (int i = 0; i< count; ++i)
+        {
+            char value[256];
+            if (i+1 == count)
+            {
+                if(get_field_value(field_list, keys[i], value, (char*)">=", true))
+                {
+                    field_t->done = true;
+                    return TRUE;
+                }
+                sprintf(tmp, "%s %s and", tmp, value);
+            }
+            else
+            {
+                if(get_field_value(field_list, keys[i], value, (char*)"=", true))
+                {
+                    field_t->done = true;
+                    return TRUE;
+                }
+                sprintf(tmp, "%s %s and ", tmp, value);
+            }
+        }
+        
+        sprintf(tmp, "%s 1=1 limit %d, 2", tmp, table_info->steps-1);
+    }
+    
+    res = get_mysql_res(mysql, tmp);
+    row = mysql_fetch_row(res);
+    if (row == NULL)
+    {
+        if (is_first)
+        {
+            field_t->done = true;
+            mysql_free_result(res);
+            res = NULL;
+            return TRUE;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < count; ++i)
+            set_field_value(field_list, keys[i], row[i], is_first?FIELD_VALUE_FORE:FIELD_VALUE_HIND);
+    }
+    row = mysql_fetch_row(res);
+    if (row != NULL)
+        for (int i = 0; i < count; ++i)
+            set_field_value(field_list, keys[i], row[i], FIELD_VALUE_MIND);
+    mysql_free_result(res);
+    return FALSE;
+}
+
+int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, collector_table_t* table_info)
+{
+    MYSQL_RES* res = NULL;
+    MYSQL_ROW row;
+    char keys[256][256];
+    int key_count = 0;
+    char tmp[512];
     collector_field_list_t field_list;
     
+    memset(keys, 0, 256*256);
     //获取表中列的信息
     sprintf (tmp, "select COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, COLUMN_KEY \
              from information_schema.COLUMNS where TABLE_SCHEMA='%s' and TABLE_NAME='%s'",
@@ -300,15 +481,8 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
         return TRUE;
     }
     LIST_INIT(field_list.field_list);
-    
-    int has_id = 0;
     while (row)
     {
-        if (strcasecmp("id", row[0]) == 0
-            && (strcasecmp("int", row[1]) == 0 || strcasecmp("bigint", row[1]) == 0)
-            && (strcasecmp("PRI", row[3]) == 0 || strcasecmp("UNI", row[3]) == 0))
-            has_id = 1;
-        
         collector_field_t* field;
         field = (collector_field_t*)my_malloc(sizeof(collector_field_t), MY_ZEROFILL);
         strcpy(field->name, row[0]);
@@ -317,36 +491,89 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
             field->length = atoi(row[2]);
         strcpy(field->key, row[3]);
         field->cardinality=0;
+        field->seq_in_index=0;
         memset(field->kinds, 0, 256*256);
+        strcpy(field->value_fore, "NULL");
+        strcpy(field->value_hind, "NULL");
+        strcpy(field->value_tmp, "NULL");
+        field->done = false;
         LIST_ADD_LAST(link, field_list.field_list, field);
         row = mysql_fetch_row(res);
     }
     mysql_free_result(res);
     
-    collector_field_t* field = LIST_GET_FIRST(field_list.field_list);
-    //根据采样策略进行采样,必须自增id
-    while (has_id && field && inception_collector_on)
+    //获取主键信息
+    sprintf (tmp, "show index from %s.%s", table_info->db, table_info->tname);
+    res = get_mysql_res(mysql, tmp);
+    row = mysql_fetch_row(res);
+    if (row == NULL)
     {
-        sprintf(tmp, "select max(id) from %s.%s", table_info->db, table_info->tname);
-        res = get_mysql_res(mysql, tmp);
-        row = mysql_fetch_row(res);
-        int max_id = 0;
-        if (row && row[0])
-            max_id = atoi(row[0]);
         mysql_free_result(res);
-
-        for (int j = 0; j < max_id;)
+        res = NULL;
+        return TRUE;
+    }
+    
+    int has_pri = 0;
+    collector_field_t* field = LIST_GET_FIRST(field_list.field_list);
+    while (row)
+    {
+        if (strcasecmp("PRIMARY", row[2]) == 0)
         {
-            int id_steps = table_info->steps * table_info->sample_percent;
-            if (j + id_steps > max_id)
-                id_steps = max_id;
+            while (field)
+            {
+                if (strcasecmp(row[4], field->name) == 0)
+                {
+                    field->seq_in_index = atoi(row[3]);
+                    strcpy(keys[field->seq_in_index-1], field->name);
+                    key_count++;
+                }
+                field = LIST_GET_NEXT(link, field);
+            }
+            has_pri = 1;
+        }
+        row = mysql_fetch_row(res);
+    }
+    mysql_free_result(res);
+    field = LIST_GET_FIRST(field_list.field_list);
+
+next_field:
+    assemble_fields_value(mysql, table_info, &field_list, field, true);
+    while (has_pri && field && inception_collector_on)
+    {
+        while (!field->done)
+        {
+            assemble_fields_value(mysql, table_info, &field_list, field, false);
+            if (field->done)
+                break;
+            int limits = table_info->steps * table_info->sample_percent;
 
             mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
             
             int count = 0;
-            sprintf(tmp, "select count(*) from \
-                    (select id from %s.%s where id > %d and id <=%d group by %s) tmp",
-                    table_info->db, table_info->tname, j, j + id_steps, field->name);
+
+            sprintf(tmp, "select count(*) from (select count(*) from %s.%s force index(primary) \
+                    where 1=1 and ",
+                   table_info->db, table_info->tname);
+            for (int i = 0; i< key_count; ++i)
+            {
+                char value[256];
+                if (i+1 == key_count)
+                {
+                    if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
+                        sprintf(tmp, "%s %s and", tmp, value);
+                    if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
+                        sprintf(tmp, "%s %s and", tmp, value);
+                }
+                else
+                {
+                    if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
+                        sprintf(tmp, "%s %s and", tmp, value);
+                    if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
+                        sprintf(tmp, "%s %s and", tmp, value);
+                }
+            }
+            sprintf(tmp, "%s 1=1 group by %s limit %d) tmp", tmp, field->name, limits);
+
             res = get_mysql_res(mysql, tmp);
             row = mysql_fetch_row(res);
             if (row != NULL)
@@ -363,8 +590,27 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
                 field->cardinality += count;
             else
             {
-                sprintf(tmp, "select %s from %s.%s where id > %d and id <=%d group by %s",
-                        field->name, table_info->db, table_info->tname, j, j + id_steps, field->name);
+                sprintf(tmp, "select %s from %s.%s force index(primary) where 1=1 and ",
+                        field->name, table_info->db, table_info->tname);
+                for (int i = 0; i< key_count; ++i)
+                {
+                    char value[256];
+                    if (i+1 == key_count)
+                    {
+                        if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                    else
+                    {
+                        if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                }
+                sprintf(tmp, "%s 1=1 group by %s",tmp, field->name);
                 res = get_mysql_res(mysql, tmp);
                 row = mysql_fetch_row(res);
                 
@@ -385,22 +631,23 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
                     if (in_kinds == 0)
                     {
                         if (field->cardinality + 1 < 256)
-                            strcpy(field->kinds[field->cardinality + 1], row[0]);
+                            strcpy(field->kinds[field->cardinality], row[0]);
                         field->cardinality++;
                     }
                     row = mysql_fetch_row(res);
                 }
                 mysql_free_result(res);
             }
-
-            j += table_info->steps;
+            exchange_field_fore_and_tmp(&field_list);
         }
         if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
             mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
         else
             mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
-        
+
         field = LIST_GET_NEXT(link, field);
+        clean_field_value(&field_list);
+        goto next_field;
     }
     
     while (field_list.field_list.count > 0) {
