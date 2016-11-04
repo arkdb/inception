@@ -32,7 +32,6 @@
 #define PROGRESS_DETAIL_RUNNING    (char*)"running"
 #define PROGRESS_DETAIL_FAILED     (char*)"failed"
 #define PROGRESS_DETAIL_STOPED     (char*)"stoped"
-#define PROGRESS_DETAIL_SLEEPING   (char*)"sleeping"
 #define PROGRESS_DETAIL_FINISHED   (char*)"finished"
 
 //是否某一个rule单独起线程，起多少个线程
@@ -183,7 +182,7 @@ int mark_progress_all(MYSQL* conn,double progress,char* state)
                      ON DUPLICATE KEY UPDATE state='%s',progress=%lf",
                      "cardinality", state, progress, state, progress);
         
-        if(get_mysql_res(conn, tmp))
+        if (get_mysql_res(conn, tmp))
             return TRUE;
     }
     
@@ -191,8 +190,8 @@ int mark_progress_all(MYSQL* conn,double progress,char* state)
     
 }
 
-int mark_progress_detail(MYSQL* conn, collector_table_t* table_info,
-                         char* state, char* info, ulong thread_id)
+int mark_progress_detail(MYSQL* conn, collector_table_t* table_info, char* state,
+                         char* info, ulong thread_id, int sum_no, int current_no)
 {
     char tmp[1024];
     char replace_sql[512];
@@ -208,18 +207,19 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info,
         else
         {
             strcpy(replace_sql, info);
-            str_replace(replace_sql, "'", "''");
+            str_replace(replace_sql, (char*)"'", (char*)"''");
             sprintf (tmp, "insert into collector_data.progress_detail(thread_id, table_id, dest_host,\
-                     dest_port, dest_db, dest_tname, rule, state, info) values(%ld, %ld, '%s', %d, '%s', '%s',\
-                     'cardinality','%s', '%s') ON DUPLICATE KEY UPDATE table_id = %ld, dest_host='%s',\
-                     dest_port=%d, dest_db='%s', dest_tname='%s', state='%s', start_time=now(), info='%s'",
+                     dest_port, dest_db, dest_tname, rule, state, sum_no, current_no, info) values(%ld, \
+                     %ld, '%s', %d, '%s', '%s', 'cardinality','%s', %d, %d, '%s') ON DUPLICATE KEY UPDATE \
+                     table_id = %ld, dest_host='%s',dest_port=%d, dest_db='%s', dest_tname='%s',\
+                     state='%s', sum_no=%d, current_no=%d , start_time=now(), info='%s'",\
                      table_info->table_id % inception_collector_parallel_workers + 1, table_info->table_id,
                      table_info->host, table_info->port, table_info->db,table_info->tname,
-                     state, replace_sql, table_info->table_id, table_info->host,table_info->port,
-                     table_info->db, table_info->tname, state, replace_sql);
+                     state, sum_no, current_no, replace_sql, table_info->table_id, table_info->host,table_info->port,
+                     table_info->db, table_info->tname, state, sum_no, current_no, replace_sql);
         }
         
-        if(get_mysql_res(conn, tmp))
+        if (get_mysql_res(conn, tmp))
             return TRUE;
     }
     
@@ -237,7 +237,7 @@ int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
 
     //创建采样信息存放实例的库
     sprintf (tmp, "create database collector_data_%s_%d", host_, table_info->port);
-    if(get_mysql_res(conn_dc, tmp))
+    if (get_mysql_res(conn_dc, tmp))
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
@@ -251,7 +251,7 @@ int create_db_table(MYSQL* conn_dc, collector_table_t* table_info)
              UNIQUE KEY `uniq_variable` (`variable`) \
              )engine=innodb default charset=utf8 comment='cardinality';", host_, table_info->port,
              table_info->db, table_info->tname);
-    if(get_mysql_res(conn_dc, tmp))
+    if (get_mysql_res(conn_dc, tmp))
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
@@ -273,7 +273,7 @@ int insert_cardinality(MYSQL* mysql_dc, collector_table_t* table_info, char* var
     sprintf (tmp, "insert into collector_data_%s_%d.cardinality_%s_%s(variable,value) values('%s',%d) \
              ON DUPLICATE KEY UPDATE value=%d;",
              host_, table_info->port,table_info->db, table_info->tname,var, value, value);
-    if(get_mysql_res(mysql_dc, tmp))
+    if (get_mysql_res(mysql_dc, tmp))
     {
         mysql_free_result(res_dc);
         res_dc = NULL;
@@ -417,7 +417,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
                 char value[256];
                 if (i+1 == j)
                 {
-                    if(get_field_value(field_list, keys[i], value, (char*)">=", true))
+                    if (get_field_value(field_list, keys[i], value, (char*)">=", true))
                     {
                         field_t->done = true;
                         return TRUE;
@@ -426,7 +426,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
                 }
                 else
                 {
-                    if(get_field_value(field_list, keys[i], value, (char*)"=", true))
+                    if (get_field_value(field_list, keys[i], value, (char*)"=", true))
                     {
                         field_t->done = true;
                         return TRUE;
@@ -466,7 +466,163 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     return FALSE;
 }
 
-int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, collector_table_t* table_info)
+int count_every_field(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
+                      collector_table_t* table_info, collector_field_list_t* field_list,
+                      char keys[][256], int key_count)
+{
+    char tmp[512];
+    MYSQL_RES* res = NULL;
+    MYSQL_ROW row;
+    collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    int current_no = 0;
+next_field:
+    if (field != NULL)
+        assemble_fields_value(mysql, table_info, field_list, field, true);
+    current_no++;
+    while (field && inception_collector_on)
+    {
+        while (!field->done)
+        {
+            assemble_fields_value(mysql, table_info, field_list, field, false);
+            if (field->done)
+                break;
+            
+            int limits = table_info->steps * table_info->sample_percent;
+            sprintf(tmp, "select count(*) from (select count(*) from %s.%s force index(primary) \
+                    where 1=1 and ", table_info->db, table_info->tname);
+            for (int j = key_count; j > 0; --j)
+            {
+                sprintf(tmp, "%s ( ", tmp);
+                for (int i = 0; i< j; ++i)
+                {
+                    char value[256];
+                    if (i+1 == j)
+                    {
+                        if (!get_field_value(field_list, keys[i], value, (char*)">=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (!get_field_value(field_list, keys[i], value, (char*)"<=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                    else
+                    {
+                        if (!get_field_value(field_list, keys[i], value, (char*)"=", true))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (!get_field_value(field_list, keys[i], value, (char*)"=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                }
+                sprintf(tmp, "%s 1=1 ) ", tmp);
+                if (j-1 != 0)
+                    sprintf(tmp, "%s or ", tmp);
+            }
+            sprintf(tmp, "%s group by %s limit %d) tmp", tmp, field->name, limits);
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING,
+                                 tmp, 0, field_list->field_list.count, current_no);
+            res = get_mysql_res(mysql, tmp);
+            if (res == NULL)
+            {
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
+                                     tmp, 0, field_list->field_list.count, current_no);
+                return TRUE;
+            }
+            row = mysql_fetch_row(res);
+            int count = 0;
+            if (row != NULL)
+                count = atoi(row[0]);
+            else
+            {
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
+                                     tmp, 0, field_list->field_list.count, current_no);
+                mysql_free_result(res);
+                return TRUE;
+            }
+            mysql_free_result(res);
+            
+            if (count > 15 || field->cardinality > 256)
+                field->cardinality += count;
+            else
+            {
+                sprintf(tmp, "select %s from %s.%s force index(primary) where 1=1 and ",
+                        field->name, table_info->db, table_info->tname);
+                for (int j = key_count; j > 0; --j)
+                {
+                    sprintf(tmp, "%s ( ", tmp);
+                    for (int i = 0; i< j; ++i)
+                    {
+                        char value[256];
+                        if (i+1 == j)
+                        {
+                            if (!get_field_value(field_list, keys[i], value, (char*)">=", true))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                            if (!get_field_value(field_list, keys[i], value, (char*)"<=", false))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                        }
+                        else
+                        {
+                            if (!get_field_value(field_list, keys[i], value, (char*)"=", true))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                            if (!get_field_value(field_list, keys[i], value, (char*)"=", false))
+                                sprintf(tmp, "%s %s and", tmp, value);
+                        }
+                    }
+                    sprintf(tmp, "%s 1=1 ) ", tmp);
+                    if (j-1 != 0)
+                        sprintf(tmp, "%s or ", tmp);
+                }
+                sprintf(tmp, "%s group by %s",tmp, field->name);
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING,
+                                     tmp, 0, field_list->field_list.count, current_no);
+                res = get_mysql_res(mysql, tmp);
+                if (res == NULL)
+                {
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
+                                         tmp, 0, field_list->field_list.count, current_no);
+                    return TRUE;
+                }
+                row = mysql_fetch_row(res);
+                
+                while (row)
+                {
+                    if (row[0] == NULL)
+                        row[0] = (char*)"NULL";
+                    int in_kinds=0;
+                    for (int k=0; k < field->cardinality && k < 256; ++k)
+                    {
+                        if (strcasecmp(field->kinds[k], row[0]) == 0)
+                        {
+                            in_kinds=1;
+                            break;
+                        }
+                        
+                    }
+                    if (in_kinds == 0)
+                    {
+                        if (field->cardinality + 1 < 256)
+                            strcpy(field->kinds[field->cardinality], row[0]);
+                        field->cardinality++;
+                    }
+                    row = mysql_fetch_row(res);
+                }
+                mysql_free_result(res);
+            }
+            exchange_field_fore_and_tmp(field_list);
+        }
+        if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED,
+                                 tmp, 0, field_list->field_list.count, current_no);
+        else
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
+                                 tmp, 0, field_list->field_list.count, current_no);
+        
+        field = LIST_GET_NEXT(link, field);
+        clean_field_value(field_list);
+        goto next_field;
+    }
+    return FALSE;
+}
+
+int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
+                        collector_table_t* table_info)
 {
     MYSQL_RES* res = NULL;
     MYSQL_ROW row;
@@ -480,7 +636,10 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     sprintf (tmp, "select COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, COLUMN_KEY \
              from information_schema.COLUMNS where TABLE_SCHEMA='%s' and TABLE_NAME='%s'",
              table_info->db, table_info->tname);
+    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0, 0, 0);
     res = get_mysql_res(mysql, tmp);
+    if (res == NULL)
+        return TRUE;
     row = mysql_fetch_row(res);
     if (row == NULL)
     {
@@ -512,7 +671,10 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
     
     //获取主键信息
     sprintf (tmp, "show index from %s.%s", table_info->db, table_info->tname);
+    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0, 0, 0);
     res = get_mysql_res(mysql, tmp);
+    if (res == NULL)
+        return TRUE;
     row = mysql_fetch_row(res);
     if (row == NULL)
     {
@@ -543,143 +705,29 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector, c
         row = mysql_fetch_row(res);
     }
     mysql_free_result(res);
-    field = LIST_GET_FIRST(field_list.field_list);
 
-next_field:
-    assemble_fields_value(mysql, table_info, &field_list, field, true);
-    while (has_pri && field && inception_collector_on)
+    if (has_pri && count_every_field(mysql, mysql_dc, mysql_collector,
+                          table_info, &field_list, keys, key_count))
     {
-        while (!field->done)
+        while (field_list.field_list.count > 0)
         {
-            assemble_fields_value(mysql, table_info, &field_list, field, false);
-            if (field->done)
-                break;
-            int limits = table_info->steps * table_info->sample_percent;
-
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0);
-            
-            int count = 0;
-
-            sprintf(tmp, "select count(*) from (select count(*) from %s.%s force index(primary) \
-                    where 1=1 and ",
-                   table_info->db, table_info->tname);
-            for (int j = key_count; j > 0; --j)
-            {
-                sprintf(tmp, "%s ( ", tmp);
-                for (int i = 0; i< j; ++i)
-                {
-                    char value[256];
-                    if (i+1 == j)
-                    {
-                        if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                        if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                    }
-                    else
-                    {
-                        if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                        if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
-                            sprintf(tmp, "%s %s and", tmp, value);
-                    }
-                }
-                sprintf(tmp, "%s 1=1 ) ", tmp);
-                if (j-1 != 0)
-                    sprintf(tmp, "%s or ", tmp);
-            }
-            sprintf(tmp, "%s group by %s limit %d) tmp", tmp, field->name, limits);
-
-            res = get_mysql_res(mysql, tmp);
-            row = mysql_fetch_row(res);
-            if (row != NULL)
-                count = atoi(row[0]);
-            else
-            {
-                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
-                mysql_free_result(res);
-                break;
-            }
-            mysql_free_result(res);
-
-            if (count > 15 || field->cardinality > 256)
-                field->cardinality += count;
-            else
-            {
-                sprintf(tmp, "select %s from %s.%s force index(primary) where 1=1 and ",
-                        field->name, table_info->db, table_info->tname);
-                for (int j = key_count; j > 0; --j)
-                {
-                    sprintf(tmp, "%s ( ", tmp);
-                    for (int i = 0; i< j; ++i)
-                    {
-                        char value[256];
-                        if (i+1 == j)
-                        {
-                            if(get_field_value(&field_list, keys[i], value, (char*)">=", true))
-                                sprintf(tmp, "%s %s and", tmp, value);
-                            if (get_field_value(&field_list, keys[i], value, (char*)"<=", false))
-                                sprintf(tmp, "%s %s and", tmp, value);
-                        }
-                        else
-                        {
-                            if(get_field_value(&field_list, keys[i], value, (char*)"=", true))
-                                sprintf(tmp, "%s %s and", tmp, value);
-                            if(get_field_value(&field_list, keys[i], value, (char*)"=", false))
-                                sprintf(tmp, "%s %s and", tmp, value);
-                        }
-                    }
-                    sprintf(tmp, "%s 1=1 ) ", tmp);
-                    if (j-1 != 0)
-                        sprintf(tmp, "%s or ", tmp);
-                }
-                sprintf(tmp, "%s group by %s",tmp, field->name);
-                res = get_mysql_res(mysql, tmp);
-                row = mysql_fetch_row(res);
-                
-                while (row)
-                {
-                    if (row[0] == NULL)
-                        row[0] = (char*)"NULL";
-                    int in_kinds=0;
-                    for (int k=0; k < field->cardinality && k < 256; ++k)
-                    {
-                        if (strcasecmp(field->kinds[k], row[0]) == 0)
-                        {
-                            in_kinds=1;
-                            break;
-                        }
-                        
-                    }
-                    if (in_kinds == 0)
-                    {
-                        if (field->cardinality + 1 < 256)
-                            strcpy(field->kinds[field->cardinality], row[0]);
-                        field->cardinality++;
-                    }
-                    row = mysql_fetch_row(res);
-                }
-                mysql_free_result(res);
-            }
-            exchange_field_fore_and_tmp(&field_list);
+            collector_field_t* field;
+            field = LIST_GET_FIRST(field_list.field_list);
+            LIST_REMOVE(link, field_list.field_list, field);
+            my_free(field);
         }
-        if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED, tmp, 0);
-        else
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED, tmp, 0);
-
-        field = LIST_GET_NEXT(link, field);
-        clean_field_value(&field_list);
-        goto next_field;
+        
+        return TRUE;
     }
     
-    while (field_list.field_list.count > 0) {
+    while (field_list.field_list.count > 0)
+    {
         collector_field_t* field;
         field = LIST_GET_FIRST(field_list.field_list);
         LIST_REMOVE(link, field_list.field_list, field);
         my_free(field);
     }
-    res = NULL;
+
     return FALSE;
 }
 
@@ -776,7 +824,7 @@ begin:
         }
         my_free(table_info);
         mysql_close(&mysql);
-        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_SLEEPING, NULL, thread_id);
+        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_FINISHED, NULL, thread_id, 0, 0);
     }
     
 error:
@@ -785,7 +833,7 @@ error:
     mysql_mutex_unlock(&collector_idle_mutex);
     inception_collector_on = false;
     if (thread_id > 0)
-        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id);
+        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id, 0, 0);
     sql_print_information("cardinality_work_thread stop.");
     mysql_close(&mysql_collector);
     mysql_close(&mysql_dc);
@@ -805,7 +853,7 @@ pthread_handler_t inception_collector_thread(void* arg)
     MYSQL_RES* source_res=NULL;
     MYSQL_ROW source_row;
     int total_tables = 0;
-    int last_id = 0;
+    int last_id = 1;
     double progress = 0.0;
     char tmp[512];
     
@@ -841,10 +889,11 @@ redo:
     
     source_row= mysql_fetch_row(source_res);
     if (source_row[0])
-        total_tables = atoi(source_row[0]);
+        total_tables = atoi(source_row[0]) + 1;
     mysql_free_result(source_res);
     
-    strcpy(tmp, "select min(table_id) from `collector_data`.`progress_detail` where state <> 'finished'");
+    strcpy(tmp, "select min(table_id) from `collector_data`.`progress_detail` \
+           where state <> 'finished'");
     
     source_res = get_mysql_res(mysql, tmp);
     if (source_res == NULL)
@@ -854,6 +903,13 @@ redo:
     if (*source_row)
         last_id = atol(source_row[0]);
     mysql_free_result(source_res);
+    
+    strcpy(tmp, "truncate table collector_data.progress_detail");
+    if (get_mysql_res(mysql, tmp))
+        goto error;
+    strcpy(tmp, "truncate table collector_data.progress_all");
+    if (get_mysql_res(mysql, tmp))
+        goto error;
     
     for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_ID_STEPS)
     {
@@ -883,7 +939,7 @@ redo:
         }
         mysql_free_result(source_res);
         
-        //这里算进度可能有点问题，需要关注一下
+        //这里算进度可能有点问题，需要关注一下!!!!!!!!!!!!!!!!!!
         mysql_mutex_lock(&collector_cache_mutex);
         progress = (double)(i + 1 - global_collector_cache.table_list.count) * 100 / (double)total_tables;
         mysql_mutex_unlock(&collector_cache_mutex);
@@ -902,7 +958,7 @@ redo:
 
     mark_progress_all(mysql, 100.00, PROGRESS_ALL_FINISHED);
     
-    //下次大循环策略，需修改
+    //下次大循环策略，需修改!!!!!!!!!!!!!!!!!!!!!!
     for (int i=0; i < 100 && inception_collector_on; ++i)
         sleep(3);
     
@@ -954,7 +1010,7 @@ int disassemble_rule(THD* thd)
 int inception_collector_start(THD* thd)
 {
     pthread_t threadid;
-    if(assemble_rule(thd))
+    if (assemble_rule(thd))
     {
         my_error(ER_UNKNOWN_COLLECTOR_RULE,MYF(0),thd->lex->name.str);
         return TRUE;
@@ -982,7 +1038,7 @@ int inception_collector_stop(THD* thd)
     
     if (inception_collector_on)
     {
-        if(inception_collector_rule == COLLECTOR_RULE_ALL)
+        if (inception_collector_rule == COLLECTOR_RULE_ALL)
         {
             inception_collector_on = false;
             while (inception_collector_idle >= 0);
@@ -1018,6 +1074,8 @@ int inception_collector_status(THD* thd)
     field_list.push_back(new Item_empty_string("dest_tname", FN_REFLEN));
     field_list.push_back(new Item_empty_string("rule", FN_REFLEN));
     field_list.push_back(new Item_empty_string("state", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("sum_no", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("current_no", FN_REFLEN));
     field_list.push_back(new Item_empty_string("state_change_time", FN_REFLEN));
     field_list.push_back(new Item_empty_string("info", FN_REFLEN));
     
@@ -1029,11 +1087,11 @@ int inception_collector_status(THD* thd)
 
     if (inception_collector_rule == COLLECTOR_RULE_ALL)
         strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
-                dest_tname, rule, state, start_time, info \
+                dest_tname, rule, state, sum_no, current_no, start_time, info \
                 from collector_data.progress_detail");
     else if (inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
         strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
-                dest_tname, rule, state, start_time, info \
+                dest_tname, rule, state, sum_no, current_no, start_time, info \
                 from collector_data.progress_detail \
                 where rule='cardinality'");
     
@@ -1063,6 +1121,8 @@ int inception_collector_status(THD* thd)
         protocol->store(source_row[7], system_charset_info);
         protocol->store(source_row[8], system_charset_info);
         protocol->store(source_row[9], system_charset_info);
+        protocol->store(source_row[10], system_charset_info);
+        protocol->store(source_row[11], system_charset_info);
         protocol->write();
         source_row = mysql_fetch_row(source_res);
     }
@@ -1141,7 +1201,7 @@ int inception_collector_init(THD* thd)
         return TRUE;
     
     strcpy(tmp, "create database collector_data");
-    if(get_mysql_res(&mysql, tmp))
+    if (get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
         return TRUE;
@@ -1158,7 +1218,7 @@ int inception_collector_init(THD* thd)
              `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
              PRIMARY KEY (`id`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if(get_mysql_res(&mysql, tmp))
+    if (get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
         return TRUE;
@@ -1174,7 +1234,7 @@ int inception_collector_init(THD* thd)
              PRIMARY KEY (`id`), \
              UNIQUE KEY `uniq_rule` (`rule`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if(get_mysql_res(&mysql, tmp))
+    if (get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
         return TRUE;
@@ -1191,12 +1251,14 @@ int inception_collector_init(THD* thd)
              `dest_tname` varchar(30) NOT NULL DEFAULT '', \
              `rule` varchar(20) NOT NULL DEFAULT '',\
              `state` varchar(20) NOT NULL DEFAULT '', \
+             `sum_no` int(11) NOT NULL DEFAULT '0', \
+             `current_no` int(11) NOT NULL DEFAULT '0', \
              `start_time`  timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
              `info` varchar(255) NOT NULL DEFAULT '', \
              PRIMARY KEY (`id`), \
              UNIQUE KEY `uniq_thread_id_rule` (`thread_id`,`rule`) \
              ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if(get_mysql_res(&mysql, tmp))
+    if (get_mysql_res(&mysql, tmp))
     {
         mysql_close(&mysql);
         return TRUE;
@@ -1205,15 +1267,15 @@ int inception_collector_init(THD* thd)
     if (!inception_collector_on)
     {
         strcpy(tmp, "update collector_data.progress_detail set state='stoped' \
-                 where state = 'running' or state = 'sleeping';");
-        if(get_mysql_res(&mysql, tmp))
+                 where state = 'running';");
+        if (get_mysql_res(&mysql, tmp))
         {
             mysql_close(&mysql);
             return TRUE;
         }
         strcpy(tmp, "update collector_data.progress_all set state='stoped' \
                  where state = 'running' or state = 'started';");
-        if(get_mysql_res(&mysql, tmp))
+        if (get_mysql_res(&mysql, tmp))
         {
             mysql_close(&mysql);
             return TRUE;
