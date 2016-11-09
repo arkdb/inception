@@ -952,7 +952,7 @@ pthread_handler_t inception_collector_thread(void* arg)
         
         mysql_mutex_lock(&collector_cache_mutex);
         if (j > 0)
-            progress = (double)(i - global_collector_cache.table_list.count) * 100 / (double)total_tables;
+            progress = (double)(j - global_collector_cache.table_list.count) * 100 / (double)total_tables;
         mysql_mutex_unlock(&collector_cache_mutex);
         
         if (progress - 100.00 >= 0.00)
