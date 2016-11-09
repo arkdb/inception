@@ -34,8 +34,6 @@
 #define PROGRESS_DETAIL_STOPED     (char*)"stoped"
 #define PROGRESS_DETAIL_FINISHED   (char*)"finished"
 
-//是否某一个rule单独起线程，起多少个线程
-//可以看都哪些表，修改这些表的信息
 #define TABLE_ID_STEPS                100
 #define CACHE_QUEUE_LENGTH            1000
 
@@ -45,6 +43,8 @@
 #define FIELD_VALUE_FORE                  0
 #define FIELD_VALUE_TMP                   1
 #define FIELD_VALUE_HIND                  2
+
+#define THREAD_SLEEP_NSEC                 1
 
 extern collector_t global_collector_cache;
 extern mysql_mutex_t collector_cache_mutex;
@@ -200,8 +200,8 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info, char* state
         || inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
     {
         if (table_info == NULL)
-            sprintf (tmp, "insert into collector_data.progress_detail(thread_id,rule,state) \
-                     values(%ld,'cardinality','%s') ON DUPLICATE KEY UPDATE state='%s', start_time=now(),\
+            sprintf (tmp, "insert into collector_data.progress_detail(thread_id,rule,state, info) \
+                     values(%ld,'cardinality','%s','') ON DUPLICATE KEY UPDATE state='%s', start_time=now(),\
                      info=''",
                      thread_id, state, state);
         else
@@ -213,7 +213,7 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info, char* state
                      %ld, '%s', %d, '%s', '%s', 'cardinality','%s', %d, %d, '%s') ON DUPLICATE KEY UPDATE \
                      table_id = %ld, dest_host='%s',dest_port=%d, dest_db='%s', dest_tname='%s',\
                      state='%s', sum_no=%d, current_no=%d , start_time=now(), info='%s'",\
-                     table_info->table_id % inception_collector_parallel_workers + 1, table_info->table_id,
+                     thread_id, table_info->table_id,
                      table_info->host, table_info->port, table_info->db,table_info->tname,
                      state, sum_no, current_no, replace_sql, table_info->table_id, table_info->host,table_info->port,
                      table_info->db, table_info->tname, state, sum_no, current_no, replace_sql);
@@ -468,7 +468,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
 
 int count_every_field(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
                       collector_table_t* table_info, collector_field_list_t* field_list,
-                      char keys[][256], int key_count)
+                      char keys[][256], int key_count, ulong thread_id)
 {
     char tmp[512];
     MYSQL_RES* res = NULL;
@@ -517,12 +517,12 @@ next_field:
             }
             sprintf(tmp, "%s group by %s limit %d) tmp", tmp, field->name, limits);
             mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING,
-                                 tmp, 0, field_list->field_list.count, current_no);
+                                 tmp, thread_id, field_list->field_list.count, current_no);
             res = get_mysql_res(mysql, tmp);
             if (res == NULL)
             {
                 mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
-                                     tmp, 0, field_list->field_list.count, current_no);
+                                     tmp, thread_id, field_list->field_list.count, current_no);
                 return TRUE;
             }
             row = mysql_fetch_row(res);
@@ -532,7 +532,7 @@ next_field:
             else
             {
                 mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
-                                     tmp, 0, field_list->field_list.count, current_no);
+                                     tmp, thread_id, field_list->field_list.count, current_no);
                 mysql_free_result(res);
                 return TRUE;
             }
@@ -571,12 +571,12 @@ next_field:
                 }
                 sprintf(tmp, "%s group by %s",tmp, field->name);
                 mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING,
-                                     tmp, 0, field_list->field_list.count, current_no);
+                                     tmp, thread_id, field_list->field_list.count, current_no);
                 res = get_mysql_res(mysql, tmp);
                 if (res == NULL)
                 {
                     mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
-                                         tmp, 0, field_list->field_list.count, current_no);
+                                         tmp, thread_id, field_list->field_list.count, current_no);
                     return TRUE;
                 }
                 row = mysql_fetch_row(res);
@@ -607,22 +607,26 @@ next_field:
             }
             exchange_field_fore_and_tmp(field_list);
         }
-        if (insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
-            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FINISHED,
-                                 tmp, 0, field_list->field_list.count, current_no);
+        if (!insert_cardinality(mysql_dc, table_info, field->name, field->cardinality))
+            mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING,
+                                 tmp, thread_id, field_list->field_list.count, current_no);
         else
             mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
-                                 tmp, 0, field_list->field_list.count, current_no);
+                                 tmp, thread_id, field_list->field_list.count, current_no);
         
         field = LIST_GET_NEXT(link, field);
         clean_field_value(field_list);
         goto next_field;
     }
+    
+    if (!inception_collector_on)
+        mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_STOPED,
+                             tmp, thread_id, field_list->field_list.count, current_no);
     return FALSE;
 }
 
 int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
-                        collector_table_t* table_info)
+                        collector_table_t* table_info, ulong thread_id)
 {
     MYSQL_RES* res = NULL;
     MYSQL_ROW row;
@@ -636,7 +640,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
     sprintf (tmp, "select COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, COLUMN_KEY \
              from information_schema.COLUMNS where TABLE_SCHEMA='%s' and TABLE_NAME='%s'",
              table_info->db, table_info->tname);
-    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0, 0, 0);
+    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, thread_id, 0, 0);
     res = get_mysql_res(mysql, tmp);
     if (res == NULL)
         return TRUE;
@@ -671,7 +675,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
     
     //获取主键信息
     sprintf (tmp, "show index from %s.%s", table_info->db, table_info->tname);
-    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, 0, 0, 0);
+    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_RUNNING, tmp, thread_id, 0, 0);
     res = get_mysql_res(mysql, tmp);
     if (res == NULL)
         return TRUE;
@@ -707,7 +711,7 @@ int collect_cardinality(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
     mysql_free_result(res);
 
     if (has_pri && count_every_field(mysql, mysql_dc, mysql_collector,
-                          table_info, &field_list, keys, key_count))
+                          table_info, &field_list, keys, key_count, thread_id))
     {
         while (field_list.field_list.count > 0)
         {
@@ -739,13 +743,15 @@ pthread_handler_t collector_work_thread(void* arg)
     MYSQL mysql_dc;
     MYSQL mysql;
     ulong thread_id=0;
-    int flag=0;
+    int loop_flag=0;
         
     my_thread_init();
     thd= new THD;
     thd->thread_stack= (char*) &thd;
     
     setup_connection_thread_globals(thd);
+    
+    thread_id = atol((char*)arg);
     
     if (get_mysql_connection(&mysql_collector, inception_collector_host, inception_collector_port,
                              inception_collector_user, inception_collector_password, NULL))
@@ -764,27 +770,31 @@ pthread_handler_t collector_work_thread(void* arg)
         pthread_exit(0);
         return NULL;
     }
+    
     while (inception_collector_on)
     {
 begin:
         if (global_collector_cache.table_list.count == 0)
         {
-            if (flag == 0)
+            if (loop_flag == 0)
             {
                 mysql_mutex_lock(&collector_idle_mutex);
                 inception_collector_idle++;
                 mysql_mutex_unlock(&collector_idle_mutex);
-                flag=1;
+                mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_FINISHED, NULL, thread_id, 0, 0);
+                loop_flag=1;
             }
+
+            sleep(THREAD_SLEEP_NSEC);
             continue;
         }
 
-        if (flag > 0)
+        if (loop_flag > 0)
         {
             mysql_mutex_lock(&collector_idle_mutex);
             inception_collector_idle--;
             mysql_mutex_unlock(&collector_idle_mutex);
-            flag = 0;
+            loop_flag = 0;
         }
         
         mysql_mutex_lock(&collector_cache_mutex);
@@ -798,7 +808,6 @@ begin:
         
         if (table_info == NULL)
             goto begin;
-        thread_id = table_info->table_id % inception_collector_parallel_workers + 1;
         
         if (get_mysql_connection(&mysql, table_info->host, table_info->port,
                                  remote_system_user, remote_system_password, table_info->db))
@@ -815,7 +824,7 @@ begin:
         if (inception_collector_rule == COLLECTOR_RULE_ALL
             || inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
         {
-            if (collect_cardinality(&mysql, &mysql_dc, &mysql_collector, table_info))
+            if (collect_cardinality(&mysql, &mysql_dc, &mysql_collector, table_info, thread_id))
             {
                 my_free(table_info);
                 mysql_close(&mysql);
@@ -832,8 +841,6 @@ error:
     inception_collector_idle--;
     mysql_mutex_unlock(&collector_idle_mutex);
     inception_collector_on = false;
-    if (thread_id > 0)
-        mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_STOPED, NULL, thread_id, 0, 0);
     sql_print_information("cardinality_work_thread stop.");
     mysql_close(&mysql_collector);
     mysql_close(&mysql_dc);
@@ -856,6 +863,7 @@ pthread_handler_t inception_collector_thread(void* arg)
     int last_id = 1;
     double progress = 0.0;
     char tmp[512];
+    char no[256][5];
     
     my_thread_init();
     thd= new THD();
@@ -865,12 +873,6 @@ pthread_handler_t inception_collector_thread(void* arg)
     
     setup_connection_thread_globals(thd);
     
-    for (int i=0; i < inception_collector_parallel_workers; ++i)
-    {
-        mysql_thread_create(0, &threadid, &connection_attrib,
-                            collector_work_thread, NULL);
-    }
-redo:
     mysql_mutex_lock(&collector_idle_mutex);
     mysql = thd->get_collector_connection();
     mysql_mutex_unlock(&collector_idle_mutex);
@@ -911,6 +913,14 @@ redo:
     if (get_mysql_res(mysql, tmp))
         goto error;
     
+    memset(no, 0, 256 * 5);
+    for (int i=0; i < inception_collector_parallel_workers; ++i)
+    {
+        sprintf(no[i], "%d", i+1);
+        mysql_thread_create(0, &threadid, &connection_attrib,
+                            collector_work_thread, (void*)no[i]);
+    }
+    
     for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_ID_STEPS)
     {
         sprintf(tmp, "select host,port,db,tname,id,steps,sample_percent \
@@ -919,10 +929,11 @@ redo:
         source_res = get_mysql_res(mysql, tmp);
         if (source_res == NULL)
             goto error;
-        
+        int j=0;
         source_row= mysql_fetch_row(source_res);
         while (source_row && inception_collector_on)
         {
+            ++j;
             while (global_collector_cache.table_list.count >= CACHE_QUEUE_LENGTH);
             collector_table_t* table_info;
             table_info = (collector_table_t*)my_malloc(sizeof(collector_table_t), MY_ZEROFILL);
@@ -939,9 +950,9 @@ redo:
         }
         mysql_free_result(source_res);
         
-        //这里算进度可能有点问题，需要关注一下!!!!!!!!!!!!!!!!!!
         mysql_mutex_lock(&collector_cache_mutex);
-        progress = (double)(i + 1 - global_collector_cache.table_list.count) * 100 / (double)total_tables;
+        if (j > 0)
+            progress = (double)(i - global_collector_cache.table_list.count) * 100 / (double)total_tables;
         mysql_mutex_unlock(&collector_cache_mutex);
         
         if (progress - 100.00 >= 0.00)
@@ -949,21 +960,16 @@ redo:
 
         mark_progress_all(mysql, progress, PROGRESS_ALL_RUNNING);
     }
-    if (!inception_collector_on)
-        mark_progress_all(mysql, progress, PROGRESS_ALL_STOPED);
     
     while (inception_collector_on == true
            && ((global_collector_cache.table_list.count > 0
-           || inception_collector_idle < inception_collector_parallel_workers)));
-
-    mark_progress_all(mysql, 100.00, PROGRESS_ALL_FINISHED);
+           || inception_collector_idle < inception_collector_parallel_workers)))
+        sleep(THREAD_SLEEP_NSEC);
     
-    //下次大循环策略，需修改!!!!!!!!!!!!!!!!!!!!!!
-    for (int i=0; i < 100 && inception_collector_on; ++i)
-        sleep(3);
-    
-    if (inception_collector_on)
-        goto redo;
+    if (!inception_collector_on)
+        mark_progress_all(mysql, progress, PROGRESS_ALL_STOPED);
+    else
+        mark_progress_all(mysql, 100.00, PROGRESS_ALL_FINISHED);
     
 error:
     sql_print_information("inception_collector_thread stop.");
@@ -1088,12 +1094,12 @@ int inception_collector_status(THD* thd)
     if (inception_collector_rule == COLLECTOR_RULE_ALL)
         strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
                 dest_tname, rule, state, sum_no, current_no, start_time, info \
-                from collector_data.progress_detail");
+                from collector_data.progress_detail order by rule, thread_id");
     else if (inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
         strcpy(tmp, "select thread_id, table_id, dest_host, dest_port, dest_db, \
                 dest_tname, rule, state, sum_no, current_no, start_time, info \
                 from collector_data.progress_detail \
-                where rule='cardinality'");
+                where rule='cardinality' order by thread_id");
     
     mysql = thd->get_collector_connection();
     if (mysql == NULL)
