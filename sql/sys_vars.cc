@@ -1117,3 +1117,8 @@ static Sys_var_uint Sys_inception_collector_parallel_workers(
     "inception_collector_parallel_workers", "the parallel works of inception collector.",
     GLOBAL_VAR(inception_collector_parallel_workers), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, 255), DEFAULT(5), BLOCK_SIZE(1));
+
+static Sys_var_uint Sys_inception_collector_special_workers_no(
+    "inception_collector_special_workers_no", "the begin number of special inception collector thread id.",
+    GLOBAL_VAR(inception_collector_special_workers_no), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 255), DEFAULT(150), BLOCK_SIZE(1));

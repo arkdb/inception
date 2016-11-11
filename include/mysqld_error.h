@@ -951,4 +951,5 @@
 #define  ER_CONVERT_DATA_TYPE                                                 1950
 #define  ER_INDEX_USED_TRUNCATE                                               1951
 #define  ER_UNKNOWN_COLLECTOR_RULE                                            1952
-#define  ER_ERROR_LAST                                                        1953
+#define  ER_UNKNOWN_COLLECTOR_THREAD                                          1953
+#define  ER_ERROR_LAST                                                        1954

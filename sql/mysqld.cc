@@ -608,8 +608,11 @@ char* inception_datacenter_password=NULL;
 bool inception_collector_on=0;
 int inception_collector_idle=0;
 int inception_collector_rule=0;
+char* inception_collector_thread_stoped=0;
+char* inception_collector_thread_skiped=0;
 int inception_collector_running_worker=0;
 int inception_collector_parallel_workers=5;
+int inception_collector_special_workers_no=150;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
@@ -628,6 +631,7 @@ mysql_mutex_t        task_mutex;
 mysql_mutex_t        transfer_mutex;
 mysql_mutex_t        collector_cache_mutex;
 mysql_mutex_t        collector_idle_mutex;
+mysql_mutex_t        collector_special_thread_mutex;
 osc_cache_t global_osc_cache;
 task_cache_t global_task_cache;
 transfer_t global_transfer_cache;
@@ -1714,12 +1718,15 @@ void clean_up(bool print_message)
   if (cleanup_done++)
     return; /* purecov: inspected */
   my_free(isql_option);
+  my_free(inception_collector_thread_stoped);
+  my_free(inception_collector_thread_skiped);
   mysql_mutex_destroy(&isql_option_mutex);
   mysql_mutex_destroy(&osc_mutex);
   mysql_mutex_destroy(&task_mutex);
   mysql_mutex_destroy(&transfer_mutex);
   mysql_mutex_destroy(&collector_cache_mutex);
   mysql_mutex_destroy(&collector_idle_mutex);
+  mysql_mutex_destroy(&collector_special_thread_mutex);
   mysql_osc_cache_free();
 
   my_tz_free();
@@ -3447,6 +3454,8 @@ int init_common_variables()
   mysql_mutex_init(NULL, &transfer_mutex, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(NULL, &collector_cache_mutex, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(NULL, &collector_idle_mutex, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(NULL, &collector_special_thread_mutex, MY_MUTEX_INIT_FAST);
+
   LIST_INIT(global_osc_cache.osc_lst);
   LIST_INIT(global_task_cache.task_lst);
   LIST_INIT(global_transfer_cache.transfer_lst);
@@ -3455,7 +3464,8 @@ int init_common_variables()
   mysql_mutex_init(NULL, &isql_option_mutex, MY_MUTEX_INIT_FAST);
   isql_option = (char**)my_malloc(sizeof(char*) * (ISQL_OPTION_COUNT + 2), MY_ZEROFILL);
   memset(&global_source, 0, sizeof(sinfo_t));
-
+  inception_collector_thread_stoped = (char*)my_malloc(TEST_CORE_ON_SIGNAL, MY_ZEROFILL);
+  inception_collector_thread_skiped = (char*)my_malloc(TEST_CORE_ON_SIGNAL, MY_ZEROFILL);
 
   init_default_auth_plugin();
 

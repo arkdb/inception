@@ -49,10 +49,15 @@
 extern collector_t global_collector_cache;
 extern mysql_mutex_t collector_cache_mutex;
 extern mysql_mutex_t collector_idle_mutex;
+extern mysql_mutex_t collector_special_thread_mutex;
 extern bool inception_collector_on;
 extern int inception_collector_idle;
 extern int inception_collector_running_worker;
+extern char* inception_collector_thread_stoped;
+extern char* inception_collector_thread_skiped;
 extern int inception_collector_rule;//按位标志性---0:all; 1:cardinality
+
+int inception_collector_special_workers_current_no = inception_collector_special_workers_no + 1;
 
 void str_replace(char* str_src, char* str_find, char* str_replace)
 {
@@ -130,10 +135,10 @@ int get_mysql_connection(MYSQL* conn, char* host, uint port, char* user, char* p
         password== NULL || password[0] == '\0')
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-        return NULL;
+        return TRUE;
     }
     if (init_mysql_connection(conn, host, port, user, password, db) == FALSE)
-        return NULL;
+        return TRUE;
     else
         return FALSE;
 }
@@ -223,6 +228,101 @@ int mark_progress_detail(MYSQL* conn, collector_table_t* table_info, char* state
             return TRUE;
     }
     
+    return FALSE;
+}
+
+int inception_collector_init(THD* thd)
+{
+    MYSQL mysql;
+    char tmp[1024];
+    
+    if (get_mysql_connection(&mysql, inception_collector_host, inception_collector_port,
+                             inception_collector_user, inception_collector_password, NULL))
+        return TRUE;
+    
+    strcpy(tmp, "create database collector_data");
+    if (get_mysql_res(&mysql, tmp))
+    {
+        mysql_close(&mysql);
+        return TRUE;
+    }
+    
+    strcpy(tmp, "create table collector_data.table_dict(\
+           `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
+           `host` varchar(20) NOT NULL DEFAULT '', \
+           `port` int(11) NOT NULL DEFAULT '0', \
+           `db` varchar(30) NOT NULL DEFAULT '', \
+           `tname` varchar(30) NOT NULL DEFAULT '', \
+           `refuse` tinyint NOT NULL DEFAULT '0', \
+           `steps` int(11) NOT NULL DEFAULT '10000', \
+           `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
+           PRIMARY KEY (`id`) \
+           ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
+    if (get_mysql_res(&mysql, tmp))
+    {
+        mysql_close(&mysql);
+        return TRUE;
+    }
+    
+    strcpy(tmp, "create table collector_data.progress_all(\
+           `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
+           `rule` varchar(20) NOT NULL DEFAULT '',\
+           `state` varchar(15) NOT NULL DEFAULT '', \
+           `start_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+           `stop_time`  timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, \
+           `progress` decimal(5,2) NOT NULL DEFAULT '0', \
+           PRIMARY KEY (`id`), \
+           UNIQUE KEY `uniq_rule` (`rule`) \
+           ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
+    if (get_mysql_res(&mysql, tmp))
+    {
+        mysql_close(&mysql);
+        return TRUE;
+    }
+    
+    
+    strcpy(tmp, "create table collector_data.progress_detail(\
+           `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
+           `thread_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
+           `table_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
+           `dest_host` varchar(20) NOT NULL DEFAULT '', \
+           `dest_port` int(11) NOT NULL DEFAULT '0', \
+           `dest_db` varchar(30) NOT NULL DEFAULT '', \
+           `dest_tname` varchar(30) NOT NULL DEFAULT '', \
+           `rule` varchar(20) NOT NULL DEFAULT '',\
+           `state` varchar(20) NOT NULL DEFAULT '', \
+           `sum_no` int(11) NOT NULL DEFAULT '0', \
+           `current_no` int(11) NOT NULL DEFAULT '0', \
+           `start_time`  timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+           `info` varchar(255) NOT NULL DEFAULT '', \
+           PRIMARY KEY (`id`), \
+           UNIQUE KEY `uniq_thread_id_rule` (`thread_id`,`rule`) \
+           ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
+    if (get_mysql_res(&mysql, tmp))
+    {
+        mysql_close(&mysql);
+        return TRUE;
+    }
+    
+    if (!inception_collector_on)
+    {
+        strcpy(tmp, "update collector_data.progress_detail set state='stoped' \
+               where state = 'running';");
+        if (get_mysql_res(&mysql, tmp))
+        {
+            mysql_close(&mysql);
+            return TRUE;
+        }
+        strcpy(tmp, "update collector_data.progress_all set state='stoped' \
+               where state = 'running' or state = 'started';");
+        if (get_mysql_res(&mysql, tmp))
+        {
+            mysql_close(&mysql);
+            return TRUE;
+        }
+    }
+    inception_collector_rule = 0;
+    mysql_close(&mysql);
     return FALSE;
 }
 
@@ -376,6 +476,59 @@ int clean_field_value(collector_field_list_t* field_list)
     return FALSE;
 }
 
+int assemble_rule(THD* thd)
+{
+    if (thd->lex->name.length == 0)
+        return FALSE;
+    
+    if (strcasecmp("cardinality", thd->lex->name.str) == 0)
+        inception_collector_rule |= COLLECTOR_RULE_CARDINALITY;
+    else
+        return TRUE;
+    return FALSE;
+}
+
+int disassemble_rule(THD* thd)
+{
+    if (thd->lex->name.length == 0)
+    {
+        inception_collector_rule = COLLECTOR_RULE_ALL;
+        return FALSE;
+    }
+    if (strcasecmp("cardinality", thd->lex->name.str) == 0)
+        inception_collector_rule ^= COLLECTOR_RULE_CARDINALITY;
+    else
+        return TRUE;
+    return FALSE;
+}
+
+int assemble_thread_stoped(THD* thd)
+{
+    int thread_id = thd->lex->type;
+    
+    if (thread_id > 0 && thread_id <= inception_collector_parallel_workers)
+    {
+        inception_collector_thread_stoped[thread_id] = '1';
+    }
+    else
+        return TRUE;
+    return FALSE;
+}
+
+int disassemble_thread_stoped(THD* thd)
+{
+    int thread_id = thd->lex->type;
+    
+    if (thread_id > 0 && thread_id <= inception_collector_parallel_workers)
+    {
+        inception_collector_thread_stoped[thread_id] = '0';
+    }
+    else
+        return TRUE;
+    return FALSE;
+}
+
+
 int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
                           collector_field_list_t* field_list, collector_field_t* field_t, int is_first)
 {
@@ -475,14 +628,34 @@ int count_every_field(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_collector,
     MYSQL_ROW row;
     collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
     int current_no = 0;
+    int sleep_no   = -1;
+    
 next_field:
     if (field != NULL)
         assemble_fields_value(mysql, table_info, field_list, field, true);
     current_no++;
-    while (field && inception_collector_on)
+
+    while (field &&
+           (inception_collector_on || thread_id > inception_collector_special_workers_no))
     {
         while (!field->done)
         {
+            while (inception_collector_thread_stoped[thread_id] == '1')
+            {
+                if (sleep_no != current_no)
+                {
+                    mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_STOPED,
+                                         tmp, thread_id, field_list->field_list.count, current_no);
+                    sleep_no = current_no;
+                }
+                sleep(THREAD_SLEEP_NSEC);
+            }
+            if (inception_collector_thread_skiped[thread_id] == '1')
+            {
+                mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_STOPED,
+                                     tmp, thread_id, field_list->field_list.count, current_no);
+                return FALSE;
+            }
             assemble_fields_value(mysql, table_info, field_list, field, false);
             if (field->done)
                 break;
@@ -619,9 +792,12 @@ next_field:
         goto next_field;
     }
     
-    if (!inception_collector_on)
+    if (!inception_collector_on && thread_id <= inception_collector_special_workers_no)
+    {
         mark_progress_detail(mysql_collector, table_info, PROGRESS_DETAIL_STOPED,
                              tmp, thread_id, field_list->field_list.count, current_no);
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -919,6 +1095,8 @@ pthread_handler_t inception_collector_thread(void* arg)
         sprintf(no[i], "%d", i+1);
         mysql_thread_create(0, &threadid, &connection_attrib,
                             collector_work_thread, (void*)no[i]);
+        inception_collector_thread_stoped[i] = '0';
+        inception_collector_thread_skiped[i] = '0';
     }
     
     for (int i= last_id; i < total_tables && inception_collector_on; i= i+TABLE_ID_STEPS)
@@ -964,7 +1142,16 @@ pthread_handler_t inception_collector_thread(void* arg)
     while (inception_collector_on == true
            && ((global_collector_cache.table_list.count > 0
            || inception_collector_idle < inception_collector_parallel_workers)))
+    {
+        mysql_mutex_lock(&collector_cache_mutex);
+        progress = (double)(total_tables - global_collector_cache.table_list.count) * 100
+                            / (double)total_tables;
+        mysql_mutex_unlock(&collector_cache_mutex);
+        if (progress - 100.00 >= 0.00)
+            progress = 99.99;
+        mark_progress_all(mysql, progress, PROGRESS_ALL_RUNNING);
         sleep(THREAD_SLEEP_NSEC);
+    }
     
     if (!inception_collector_on)
         mark_progress_all(mysql, progress, PROGRESS_ALL_STOPED);
@@ -987,30 +1174,86 @@ error:
     return NULL;
 }
 
-int assemble_rule(THD* thd)
+//手动执行收集某一个表信息的线程
+pthread_handler_t collector_special_work_thread(void* arg)
 {
-    if (thd->lex->name.length == 0)
-        return FALSE;
+    THD *thd = NULL;
+    MYSQL mysql_collector;
+    MYSQL mysql_dc;
+    MYSQL mysql;
+    ulong thread_id=0;
+    collector_table_t* table_info;
     
-    if (strcasecmp("cardinality", thd->lex->name.str) == 0)
-        inception_collector_rule |= COLLECTOR_RULE_CARDINALITY;
-    else
-        return TRUE;
-    return FALSE;
-}
-
-int disassemble_rule(THD* thd)
-{
-    if (thd->lex->name.length == 0)
+    my_thread_init();
+    thd= new THD;
+    thd->thread_stack= (char*) &thd;
+    
+    setup_connection_thread_globals(thd);
+    
+    mysql_mutex_lock(&collector_special_thread_mutex);
+    if (inception_collector_special_workers_current_no == 256)
+        inception_collector_special_workers_current_no = inception_collector_special_workers_no + 1;
+    thread_id = inception_collector_special_workers_current_no++;
+    mysql_mutex_unlock(&collector_special_thread_mutex);
+    
+    if (get_mysql_connection(&mysql_collector, inception_collector_host, inception_collector_port,
+                             inception_collector_user, inception_collector_password, NULL))
     {
-        inception_collector_rule = COLLECTOR_RULE_ALL;
-        return FALSE;
+        delete thd;
+        my_thread_end();
+        pthread_exit(0);
+        return NULL;
     }
-    if (strcasecmp("cardinality", thd->lex->name.str) == 0)
-        inception_collector_rule ^= COLLECTOR_RULE_CARDINALITY;
-    else
-        return TRUE;
-    return FALSE;
+    if (get_mysql_connection(&mysql_dc, inception_datacenter_host, inception_datacenter_port,
+                             inception_datacenter_user, inception_datacenter_password, NULL))
+    {
+        mysql_close(&mysql_collector);
+        delete thd;
+        my_thread_end();
+        pthread_exit(0);
+        return NULL;
+    }
+    
+    table_info = (collector_table_t*)arg;
+    if (table_info == NULL)
+        goto error;
+    
+    if (get_mysql_connection(&mysql, table_info->host, table_info->port,
+                             remote_system_user, remote_system_password, table_info->db))
+    {
+        mark_progress_detail(&mysql_collector, table_info, PROGRESS_DETAIL_FAILED,
+                             (char*)"Got wrong table info.", thread_id, 0, 0);
+        my_free(table_info);
+        goto error;
+    }
+    if (create_db_table(&mysql_dc, table_info))
+    {
+        my_free(table_info);
+        mysql_close(&mysql);
+        goto error;
+    }
+    if (inception_collector_rule == COLLECTOR_RULE_ALL
+        || inception_collector_rule & COLLECTOR_RULE_CARDINALITY)
+    {
+        if (collect_cardinality(&mysql, &mysql_dc, &mysql_collector, table_info, thread_id))
+        {
+            my_free(table_info);
+            mysql_close(&mysql);
+            goto error;
+        }
+    }
+    my_free(table_info);
+    mysql_close(&mysql);
+    mark_progress_detail(&mysql_collector, NULL, PROGRESS_DETAIL_FINISHED, NULL, thread_id, 0, 0);
+    
+error:
+    sql_print_information("collector_special_work_thread stop.");
+    mysql_close(&mysql_collector);
+    mysql_close(&mysql_dc);
+    delete thd;
+    my_thread_end();
+    pthread_exit(0);
+    return NULL;
 }
 
 int inception_collector_start(THD* thd)
@@ -1029,7 +1272,8 @@ int inception_collector_start(THD* thd)
         clear_collector_cache();
         mysql_thread_create(0, &threadid, &connection_attrib,
                             inception_collector_thread, NULL);
-        while (inception_collector_running_worker != inception_collector_parallel_workers);
+        while (inception_collector_running_worker != inception_collector_parallel_workers)
+            sleep(THREAD_SLEEP_NSEC);
     }
     return FALSE;
 }
@@ -1047,7 +1291,8 @@ int inception_collector_stop(THD* thd)
         if (inception_collector_rule == COLLECTOR_RULE_ALL)
         {
             inception_collector_on = false;
-            while (inception_collector_idle >= 0);
+            while (inception_collector_idle >= 0)
+                sleep(THREAD_SLEEP_NSEC);
         }
         else
             return TRUE;
@@ -1197,98 +1442,63 @@ int inception_collector_rule_list(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
-int inception_collector_init(THD* thd)
+int inception_collector_start_thread(THD *thd)
 {
-    MYSQL mysql;
-    char tmp[1024];
+    if (disassemble_thread_stoped(thd))
+    {
+        char error_msg[3];
+        sprintf(error_msg, "%ld", thd->lex->type);
+        my_error(ER_UNKNOWN_COLLECTOR_THREAD,MYF(0),error_msg);
+        return TRUE;
+    }
+    return FALSE;
+}
 
-    if (get_mysql_connection(&mysql, inception_collector_host, inception_collector_port,
-                             inception_collector_user, inception_collector_password, NULL))
-        return TRUE;
-    
-    strcpy(tmp, "create database collector_data");
-    if (get_mysql_res(&mysql, tmp))
+int inception_collector_stop_thread(THD *thd)
+{
+    if (assemble_thread_stoped(thd))
     {
-        mysql_close(&mysql);
+        char error_msg[3];
+        sprintf(error_msg, "%ld", thd->lex->type);
+        my_error(ER_UNKNOWN_COLLECTOR_THREAD,MYF(0),error_msg);
         return TRUE;
     }
-    
-    strcpy(tmp, "create table collector_data.table_dict(\
-             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
-             `host` varchar(20) NOT NULL DEFAULT '', \
-             `port` int(11) NOT NULL DEFAULT '0', \
-             `db` varchar(30) NOT NULL DEFAULT '', \
-             `tname` varchar(30) NOT NULL DEFAULT '', \
-             `refuse` tinyint NOT NULL DEFAULT '0', \
-             `steps` int(11) NOT NULL DEFAULT '10000', \
-             `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
-             PRIMARY KEY (`id`) \
-             ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if (get_mysql_res(&mysql, tmp))
-    {
-        mysql_close(&mysql);
-        return TRUE;
-    }
-    
-    strcpy(tmp, "create table collector_data.progress_all(\
-             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
-             `rule` varchar(20) NOT NULL DEFAULT '',\
-             `state` varchar(15) NOT NULL DEFAULT '', \
-             `start_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
-             `stop_time`  timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, \
-             `progress` decimal(5,2) NOT NULL DEFAULT '0', \
-             PRIMARY KEY (`id`), \
-             UNIQUE KEY `uniq_rule` (`rule`) \
-             ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if (get_mysql_res(&mysql, tmp))
-    {
-        mysql_close(&mysql);
-        return TRUE;
-    }
+    return FALSE;
+}
 
+int inception_collector_skip_table(THD *thd)
+{
+    int thread_id = thd->lex->type;
     
-    strcpy(tmp, "create table collector_data.progress_detail(\
-             `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\
-             `thread_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
-             `table_id` bigint(20) unsigned NOT NULL DEFAULT '0', \
-             `dest_host` varchar(20) NOT NULL DEFAULT '', \
-             `dest_port` int(11) NOT NULL DEFAULT '0', \
-             `dest_db` varchar(30) NOT NULL DEFAULT '', \
-             `dest_tname` varchar(30) NOT NULL DEFAULT '', \
-             `rule` varchar(20) NOT NULL DEFAULT '',\
-             `state` varchar(20) NOT NULL DEFAULT '', \
-             `sum_no` int(11) NOT NULL DEFAULT '0', \
-             `current_no` int(11) NOT NULL DEFAULT '0', \
-             `start_time`  timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
-             `info` varchar(255) NOT NULL DEFAULT '', \
-             PRIMARY KEY (`id`), \
-             UNIQUE KEY `uniq_thread_id_rule` (`thread_id`,`rule`) \
-             ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
-    if (get_mysql_res(&mysql, tmp))
+    if (thread_id > 0 && thread_id < 256)
     {
-        mysql_close(&mysql);
+        inception_collector_thread_skiped[thread_id] = '1';
+        return FALSE;
+    }
+    else
+    {
+        char error_msg[3];
+        sprintf(error_msg, "%ld", thd->lex->type);
+        my_error(ER_UNKNOWN_COLLECTOR_THREAD,MYF(0),error_msg);
         return TRUE;
     }
+}
 
-    if (!inception_collector_on)
-    {
-        strcpy(tmp, "update collector_data.progress_detail set state='stoped' \
-                 where state = 'running';");
-        if (get_mysql_res(&mysql, tmp))
-        {
-            mysql_close(&mysql);
-            return TRUE;
-        }
-        strcpy(tmp, "update collector_data.progress_all set state='stoped' \
-                 where state = 'running' or state = 'started';");
-        if (get_mysql_res(&mysql, tmp))
-        {
-            mysql_close(&mysql);
-            return TRUE;
-        }
-    }
+int inception_start_collector_table(THD *thd)
+{
+    pthread_t threadid;
+    collector_table_t* table_info;
+    table_info = (collector_table_t*)my_malloc(sizeof(collector_table_t), MY_ZEROFILL);
     
-    mysql_close(&mysql);
+    strcpy(table_info->host, thd->lex->ident.str);
+    strcpy(table_info->db, thd->lex->create_view_select.str);
+    strcpy(table_info->tname, thd->lex->comment.str);
+    table_info->port = thd->lex->type;
+    table_info->table_id = 0;
+    table_info->steps = thd->lex->nest_level;
+    table_info->sample_percent = my_atof(thd->lex->length);
+    mysql_thread_create(0, &threadid, &connection_attrib,
+                        collector_special_work_thread, (void*)table_info);
     return FALSE;
 }
 
@@ -1306,6 +1516,14 @@ int inception_collector_execute(THD* thd)
             return inception_collector_status(thd);
         case INCEPTION_GET_COLLECTOR_LIST:
             return inception_collector_rule_list(thd);
+        case INCEPTION_START_COLLECTOR_THREAD:
+            return inception_collector_start_thread(thd);
+        case INCEPTION_STOP_COLLECTOR_THREAD:
+            return inception_collector_stop_thread(thd);
+        case INCEPTION_SKIP_COLLECTOR_TABLE:
+            return inception_collector_skip_table(thd);
+        case INCEPTION_START_COLLECTOR_TABLE:
+            return inception_start_collector_table(thd);
         default:
             return FALSE;
     }

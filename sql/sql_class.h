@@ -275,6 +275,10 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_STOP_COLLECTOR          2
 #define INCEPTION_SHOW_COLLECTOR_STATUS   3
 #define INCEPTION_GET_COLLECTOR_LIST      4
+#define INCEPTION_START_COLLECTOR_THREAD  5
+#define INCEPTION_STOP_COLLECTOR_THREAD   6
+#define INCEPTION_SKIP_COLLECTOR_TABLE    7
+#define INCEPTION_START_COLLECTOR_TABLE   8
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct

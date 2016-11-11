@@ -219,6 +219,7 @@ extern char *inception_collector_user;
 extern char *inception_collector_password;
 extern uint inception_collector_port;
 extern int inception_collector_parallel_workers;
+extern int inception_collector_special_workers_no;
 
 extern uint remote_backup_port;
 extern my_bool relay_log_recovery;
