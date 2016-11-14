@@ -448,12 +448,11 @@ int exchange_field_fore_and_tmp(collector_field_list_t* field_list)
     collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
     while (field)
     {
-        if (strcmp("PRI", field->key) == 0)
+        if (strcasecmp("PRI", field->key) == 0)
         {
             strcpy(field->value_fore, field->value_tmp);
             strcpy(field->value_tmp, "NULL");
             strcpy(field->value_hind, "NULL");
-            if (strcasecmp("NULL", field->value_fore));
         }
         field = LIST_GET_NEXT(link, field);
     }
