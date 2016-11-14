@@ -638,7 +638,8 @@ next_field:
     while (field &&
            (inception_collector_on || thread_id > inception_collector_special_workers_no))
     {
-        while (!field->done)
+        while (!field->done &&
+               (inception_collector_on || thread_id > inception_collector_special_workers_no))
         {
             while (inception_collector_thread_stoped[thread_id] == '1')
             {
