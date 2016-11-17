@@ -844,6 +844,7 @@ class thread_info
     int dest_port;
     int state;
     char progress[64];
+    char current_db[64];
     CSET_STRING query_string;
     CSET_STRING query_string_e;
 };
