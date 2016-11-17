@@ -4069,7 +4069,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
                 sprintf(thd_info->progress,"%d", LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
 
-            sprintf(thd_info->current_db, thd->thd_sinfo->db);
+            sprintf(thd_info->current_db, tmp->thd_sinfo->db);
 
             //info
             if (tmp->query())
