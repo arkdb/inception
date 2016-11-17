@@ -600,6 +600,7 @@ char* inception_datacenter_host=NULL;
 int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
+ulong inception_max_allowed_statements=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;

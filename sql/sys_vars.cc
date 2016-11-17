@@ -1057,3 +1057,11 @@ static Sys_var_ulong Sys_server_id(
     GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
     VALID_RANGE(2, UINT_MAX32), DEFAULT(2), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
+static Sys_var_ulong Sys_inception_max_allowed_statements(
+    "inception_max_allowed_statements",
+    "the max statements allowed when check",
+    GLOBAL_VAR(inception_max_allowed_statements), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 204800), DEFAULT(100000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+

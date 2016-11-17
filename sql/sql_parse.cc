@@ -713,6 +713,12 @@ int mysql_cache_one_sql(THD* thd)
     sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
+    if (sql_cache_node->seqno > (int)inception_max_allowed_statements)
+    {
+        my_error(ER_TOO_MANY_STATEMENTS, MYF(0), inception_max_allowed_statements);
+        DBUG_RETURN(ER_NO);
+    }
+
     mysql_compute_sql_sha1(thd, sql_cache_node);
     sql_cache_node->affected_rows = thd->affected_rows;
     sql_cache_node->ignore = thd->lex->ignore;
@@ -4005,6 +4011,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     field_list.push_back(new Item_empty_string("Info",max_query_length));
     field_list.push_back(new Item_empty_string("Current_Execute",max_query_length));
     field_list.push_back(new Item_empty_string("Progress",FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Current_DB",FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4049,10 +4056,17 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             memset(thd_info->progress, 0, 64);
             if (tmp->current_execute && tmp->current_execute->sql_statement)
             {
+                /* set the executing progress */
                 char *q= thd->strmake(tmp->current_execute->sql_statement, 100);
                 thd_info->query_string_e= CSET_STRING(q, q ? 100: 0, system_charset_info);
                 
-                sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,LIST_GET_LEN(tmp->sql_cache->field_lst));
+                sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,
+                    LIST_GET_LEN(tmp->sql_cache->field_lst));
+            }
+            else
+            {
+                /* set the checking progress */
+                sprintf(thd_info->progress,"%d", LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
 
             //info
@@ -4117,6 +4131,8 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
         protocol->store(thd_info->query_string_e.str(), thd_info->query_string_e.charset());
         //percent
         protocol->store(thd_info->progress, system_charset_info);
+        // current db
+        protocol->store(thd->thd_sinfo->db, system_charset_info);
         if (protocol->write())
             break; /* purecov: inspected */
     }

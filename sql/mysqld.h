@@ -213,6 +213,7 @@ extern ulong inception_transfer_parallel_workers;
 // extern double inception_osc_chunk_size_limit;
 // extern bool inception_osc_drop_new_table;
 // extern bool inception_osc_drop_old_table;
+extern ulong inception_max_allowed_statements;
 
 extern uint remote_backup_port;
 extern my_bool relay_log_recovery;

@@ -1011,6 +1011,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_NET_ERROR_ON_WRITE, "Got an error writing communication packets.");
     SERVER_SETMSG(ER_DERIVED_MUST_HAVE_ALIAS, "Every derived table must have its own alias.");
     SERVER_SETMSG(ER_SET_OPTIONS_ERROR, "Set transfer options error: \'%s\'.");
+    SERVER_SETMSG(ER_TOO_MANY_STATEMENTS, "There is too many statements in one task, max %d allowed.");
 
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

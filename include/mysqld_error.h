@@ -943,4 +943,5 @@
 #define  ER_NET_ERROR_ON_WRITE                                                1942
 #define  ER_DERIVED_MUST_HAVE_ALIAS                                           1943
 #define  ER_SET_OPTIONS_ERROR                                                 1944
-#define  ER_ERROR_LAST                                                        1945
+#define  ER_TOO_MANY_STATEMENTS                                               1945
+#define  ER_ERROR_LAST                                                        1946
