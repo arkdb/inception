@@ -4063,7 +4063,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
                 sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,
                     LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
-            else
+            else if (tmp->sql_cache)
             {
                 /* set the checking progress */
                 sprintf(thd_info->progress,"%d", LIST_GET_LEN(tmp->sql_cache->field_lst));
