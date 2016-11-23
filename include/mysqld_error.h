@@ -950,6 +950,6 @@
 #define  ER_ADD_INDEX                                                         1949
 #define  ER_CONVERT_DATA_TYPE                                                 1950
 #define  ER_INDEX_USED_TRUNCATE                                               1951
-#define  ER_UNKNOWN_COLLECTOR_RULE                                            1952
-#define  ER_UNKNOWN_COLLECTOR_THREAD                                          1953
+#define  ER_UNKNOWN_COLLECTOR_INSTANCE                                        1952
+#define  ER_COLLECTOR_INSTANCE_ON                                             1953
 #define  ER_ERROR_LAST                                                        1954

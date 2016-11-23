@@ -918,7 +918,8 @@ THD::THD(bool enable_plugins)
    m_stmt_da(&main_da),
    audit_conn_inited(false),
    backup_conn_inited(false),
-   transfer_conn_inited(false)
+   transfer_conn_inited(false),
+   collector_conn_inited(false)
 {
   ulong tmp;
 
@@ -1306,15 +1307,11 @@ void THD::close_all_connections()
     mysql_close(&transfer_conn);
     transfer_conn_inited= false;
   }
-}
-
-void THD::close_collector_connection()
-{
-    if (collector_conn_inited)
-    {
-        mysql_close(&collector_conn);
-        collector_conn_inited= false;
-    }
+  if (collector_conn_inited)
+  {
+      mysql_close(&collector_conn);
+      collector_conn_inited= false;
+  }
 }
 
 void THD::push_internal_handler(Internal_error_handler *handler)
@@ -1773,7 +1770,6 @@ void THD::cleanup(void)
   my_hash_free(&user_vars);
   mysql_mutex_destroy(&sleep_lock);
   mysql_cond_destroy(&sleep_cond);
-
 //   if (gtid_mode > 0)
 //     variables.gtid_next.set_automatic();
 //   close_temporary_tables(this);

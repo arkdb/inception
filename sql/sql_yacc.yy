@@ -1534,7 +1534,6 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  ROW_SYM                       /* SQL-2003-R */
 %token  ROW_COUNT_SYM                 /* SQL-2003-N */
 %token  RTREE_SYM
-%token  RULE_SYM
 %token  SAVEPOINT_SYM                 /* SQL-2003-R */
 %token  SCHEDULE_SYM
 %token  SCHEMA_NAME_SYM               /* SQL-2003-N */
@@ -1609,7 +1608,6 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  SWAPS_SYM
 %token  SWITCHES_SYM
 %token  SYSDATE
-%token  SKIP_TABLE_SYM
 %token  TABLES
 %token  TABLESPACE
 %token  TABLE_REF_PRIORITY
@@ -1641,7 +1639,6 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  TRUNCATE_SYM
 %token  TYPES_SYM
 %token  TYPE_SYM                      /* SQL-2003-N */
-%token  THREAD_SYM
 %token  UDF_RETURNS_SYM
 %token  ULONGLONG_NUM
 %token  UNCOMMITTED_SYM               /* SQL-2003-N */
@@ -15491,27 +15488,20 @@ inception_show_param:
         lex->inception_cmd_type = INCEPTION_COMMAND_SHOW_TABLE_STATUS;
         lex->name= $6;
     }
-    | GET_SYM COLLECTOR_SYM STATUS_SYM
+    | GET_SYM COLLECTOR_SYM STATUS_SYM FOR_SYM INSTANCE_SYM ident
     {
         LEX *lex=Lex;
         lex->sql_command = SQLCOM_INCEPTION;
         lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-        lex->inception_cmd_sub_type = INCEPTION_SHOW_COLLECTOR_STATUS;
-    }
-    | GET_SYM COLLECTOR_SYM STATUS_SYM FOR_SYM RULE_SYM ident
-    {
-        LEX *lex=Lex;
-        lex->sql_command = SQLCOM_INCEPTION;
-        lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-        lex->inception_cmd_sub_type = INCEPTION_SHOW_COLLECTOR_STATUS;
+        lex->inception_cmd_sub_type = INCEPTION_GET_COLLECTOR_INSTANCE_STATUS;
         lex->name= $6;
     }
-    | GET_SYM COLLECTOR_SYM RULE_SYM LIST_SYM
+    | GET_SYM COLLECTOR_SYM INSTANCE_SYM LIST_SYM
     {
         LEX *lex=Lex;
         lex->sql_command = SQLCOM_INCEPTION;
         lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-        lex->inception_cmd_sub_type = INCEPTION_GET_COLLECTOR_LIST;
+        lex->inception_cmd_sub_type = INCEPTION_GET_COLLECTOR_INSTANCE_LIST;
     }
     ;
 
@@ -15665,14 +15655,7 @@ inception:
             lex->name= $8;
             lex->comment = $12;
         }
-        | INCEPTION_SYM START_SYM COLLECTOR_SYM
-        {
-            LEX *lex=Lex;
-            lex->sql_command = SQLCOM_INCEPTION;
-            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_START_COLLECTOR;
-        }
-        | INCEPTION_SYM START_SYM COLLECTOR_SYM FOR_SYM RULE_SYM ident
+        | INCEPTION_SYM START_SYM COLLECTOR_SYM FOR_SYM INSTANCE_SYM ident
         {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_INCEPTION;
@@ -15680,14 +15663,7 @@ inception:
             lex->inception_cmd_sub_type = INCEPTION_START_COLLECTOR;
             lex->name= $6;
         }
-        | INCEPTION_SYM STOP_SYM COLLECTOR_SYM
-        {
-            LEX *lex=Lex;
-            lex->sql_command = SQLCOM_INCEPTION;
-            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_STOP_COLLECTOR;
-        }
-        | INCEPTION_SYM STOP_SYM COLLECTOR_SYM FOR_SYM RULE_SYM ident
+        | INCEPTION_SYM STOP_SYM COLLECTOR_SYM FOR_SYM INSTANCE_SYM ident
         {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_INCEPTION;
@@ -15695,43 +15671,26 @@ inception:
             lex->inception_cmd_sub_type = INCEPTION_STOP_COLLECTOR;
             lex->name= $6;
         }
-        | INCEPTION_SYM START_SYM COLLECTOR_SYM THREAD_SYM ulong_num
+        | INCEPTION_SYM CREATE COLLECTOR_SYM INSTANCE_SYM ident '(' TEXT_STRING_sys ',' ulong_num
+        ','  ulong_num  ')'
         {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_INCEPTION;
             lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_START_COLLECTOR_THREAD;
-            lex->type= $5;
+            lex->inception_cmd_sub_type = INCEPTION_CREATE_COLLECTOR_INSTANCE;
+            lex->ident= $5;
+            lex->comment= $7;
+            lex->type=  $9;
+            lex->nest_level= $11;
         }
-        | INCEPTION_SYM STOP_SYM COLLECTOR_SYM THREAD_SYM ulong_num
+        | INCEPTION_SYM SET COLLECTOR_SYM THREADS_SYM '(' TEXT_STRING_sys ',' ulong_num ')'
         {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_INCEPTION;
             lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_STOP_COLLECTOR_THREAD;
-            lex->type= $5;
-        }
-        | INCEPTION_SYM SKIP_TABLE_SYM COLLECTOR_SYM THREAD_SYM ulong_num
-        {
-            LEX *lex=Lex;
-            lex->sql_command = SQLCOM_INCEPTION;
-            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_SKIP_COLLECTOR_TABLE;
-            lex->type= $5;
-        }
-        | INCEPTION_SYM START_SYM COLLECTOR_SYM FOR_SYM '(' TEXT_STRING_sys ',' ulong_num
-        ',' TEXT_STRING_sys ',' TEXT_STRING_sys ',' ulong_num ',' DECIMAL_NUM ')'
-        {
-            LEX *lex=Lex;
-            lex->sql_command = SQLCOM_INCEPTION;
-            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
-            lex->inception_cmd_sub_type = INCEPTION_START_COLLECTOR_TABLE;
-            lex->type=  $8;
-            lex->ident= $6;
-            lex->create_view_select= $10;
-            lex->comment= $12;
-            lex->nest_level= $14;
-            Lex->length= $16.str;
+            lex->inception_cmd_sub_type = INCEPTION_SET_COLLECTOR_INSTANCE_THREADS_LIMIT;
+            lex->type= $8;
+            lex->name= $6;
         }
         ;
 

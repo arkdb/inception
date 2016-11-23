@@ -271,14 +271,12 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_DISPATCH_RANDOM           1
 #define INCEPTION_DISPATCH_ROW              2
 
-#define INCEPTION_START_COLLECTOR         1
-#define INCEPTION_STOP_COLLECTOR          2
-#define INCEPTION_SHOW_COLLECTOR_STATUS   3
-#define INCEPTION_GET_COLLECTOR_LIST      4
-#define INCEPTION_START_COLLECTOR_THREAD  5
-#define INCEPTION_STOP_COLLECTOR_THREAD   6
-#define INCEPTION_SKIP_COLLECTOR_TABLE    7
-#define INCEPTION_START_COLLECTOR_TABLE   8
+#define INCEPTION_START_COLLECTOR                      1
+#define INCEPTION_STOP_COLLECTOR                       2
+#define INCEPTION_CREATE_COLLECTOR_INSTANCE            3
+#define INCEPTION_SET_COLLECTOR_INSTANCE_THREADS_LIMIT 4
+#define INCEPTION_GET_COLLECTOR_INSTANCE_LIST          5
+#define INCEPTION_GET_COLLECTOR_INSTANCE_STATUS        6
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct
@@ -580,24 +578,40 @@ struct transfer_option_struct
     char                 comment[128];
 };
 
-typedef struct collector_table_struct collector_table_t;
-struct collector_table_struct
+typedef struct collector_worker_struct collector_worker_t;
+struct collector_worker_struct
 {
-    char                 host[20];
-    int                  port;
-    char                 db[30];
-    char                 tname[30];
-    long                 table_id;
-    int                  steps;
-    double               sample_percent;
-    LIST_NODE_T(collector_table_t) link;
+    THD                    *thd;
+    int                    thread_id;
+    LIST_NODE_T(collector_worker_struct) link;
 };
 
-typedef struct collector_struct collector_t;
-struct collector_struct
+typedef struct collector_worker_list_struct collector_worker_list_t;
+struct collector_worker_list_struct
 {
-    LIST_BASE_NODE_T(collector_table_t) table_list;
+    LIST_BASE_NODE_T(collector_worker_struct) worker_list;
 };
+
+typedef struct collector_queue_item_struct collector_queue_item_t;
+struct collector_queue_item_struct
+{
+    char                   host[20];
+    int                    port;
+    char                   db[32];
+    char                   tname[32];
+    char                   fname[32];
+    char                   sql[512];
+    ulong                  version;
+    int                    type;
+    LIST_NODE_T(collector_queue_item_struct) link;
+};
+
+typedef struct collector_queue_item_list_struct collector_queue_item_list_t;
+struct collector_queue_item_list_struct
+{
+    LIST_BASE_NODE_T(collector_queue_item_t) item_list;
+};
+
 
 typedef struct collector_field_struct collector_field_t;
 struct collector_field_struct
@@ -605,13 +619,12 @@ struct collector_field_struct
     char                 name[32];
     char                 type[32];
     char                 key[10];
-    char                 kinds[256][256];
     char                 value_fore[256];
     char                 value_hind[256];
     char                 value_tmp[256];
     int                  length;
-    int                  cardinality;
     int                  seq_in_index;
+    int                  is_beginning;
     int                  done;
     LIST_NODE_T(collector_field_t) link;
 };
@@ -620,6 +633,52 @@ typedef struct collector_field_list_struct collector_field_list_t;
 struct collector_field_list_struct
 {
     LIST_BASE_NODE_T(collector_field_t) field_list;
+};
+
+typedef struct collector_table_struct collector_table_t;
+struct collector_table_struct
+{
+    char                   host[20];
+    int                    port;
+    char                   db[32];
+    char                   tname[32];
+    int                    rule;
+    int                    steps;
+    double                 sample_percent;
+    char                   keys[256][256];
+    int                    key_count;
+    int                    done;
+    collector_field_list_t *collector_field_list;
+    LIST_NODE_T(collector_table_t) link;
+};
+
+typedef struct collector_table_list_struct collector_table_list_t;
+struct collector_table_list_struct
+{
+    LIST_BASE_NODE_T(collector_table_t) table_list;
+};
+
+typedef struct collector_instance_struct collector_instance_t;
+struct collector_instance_struct
+{
+    char                   name[32];
+    char                   host[20];
+    int                    port;
+    int                    threads_limit;
+    int                    on;
+    int                    thread_id;
+    int                    idle_num;
+    ulong                  version;
+    mysql_mutex_t          collector_worker_mutex;
+    collector_worker_list_t *collector_worker_list;
+    collector_table_list_t  *collector_table_list;
+    LIST_NODE_T(collector_instance_t) link;
+};
+
+typedef struct collector_instance_list_struct collector_instance_list_t;
+struct collector_instance_list_struct
+{
+    LIST_BASE_NODE_T(collector_instance_t) instance_list;
 };
 
 typedef struct gate_ddl_struct ddl_status_t;
@@ -3686,6 +3745,8 @@ public:
   optimize_cache_node_t* current_optimize;
   int  use_osc;//用来记录当前语句是不是可以使用osc来改表，临时记录而已
 
+  collector_queue_item_list_t* collector_queue_item_list;
+    
   int backup_flag;
   tablecache_t tablecache;
   MYSQL* mysql;
@@ -4758,7 +4819,6 @@ public:
   MYSQL* get_transfer_connection();
   MYSQL* get_collector_connection();
   void close_all_connections();
-  void close_collector_connection();
 
 private:
   bool init_audit_connection();
