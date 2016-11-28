@@ -474,6 +474,7 @@ int load_field(collector_table_t* (&table_info))
         strcpy(field->key, row[3]);
         field->seq_in_index = 0;
         field->is_beginning = TRUE;
+        field->sended_count = 0;
         strcpy(field->value_fore, "NULL");
         strcpy(field->value_hind, "NULL");
         strcpy(field->value_tmp, "NULL");
@@ -482,6 +483,22 @@ int load_field(collector_table_t* (&table_info))
         row = mysql_fetch_row(res);
     }
     mysql_free_result(res);
+    
+    //获取列估计行数
+    sprintf (tmp, "show table status like '%s'", table_info->tname);
+
+    if (get_mysql_res(&mysql, res, tmp))
+        return TRUE;
+    row = mysql_fetch_row(res);
+    if (row == NULL)
+    {
+        mysql_free_result(res);
+        res = NULL;
+        return TRUE;
+    }
+    
+    if (row[4] != NULL)
+        table_info->rows = atoi(row[4]) / table_info->steps;
     
     //获取主键信息
     sprintf (tmp, "show index from %s.%s", table_info->db, table_info->tname);
@@ -565,6 +582,7 @@ int load_table(THD *thd, collector_instance_t* (&instance))
         table_info->sample_percent = atof(source_row[6]);
         table_info->done = FALSE;
         table_info->key_count = 0;
+        table_info->rows = 0;
         memset(table_info->keys, 0, 256*256);
         table_info->collector_field_list =
         (collector_field_list_t*)my_malloc(sizeof(collector_field_list_t), MY_ZEROFILL);
@@ -649,6 +667,46 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
 done:
     thd->close_all_connections();
     return rest;
+}
+
+int get_count_process(char* instance_name, char* count_process)
+{
+    ulong rows = 0;
+    ulong sended_count = 0;
+    collector_instance_t* instance = NULL;
+    collector_instance_t* tmp_instance = LIST_GET_FIRST(global_collector_instance_cache.instance_list);
+
+    while (tmp_instance != NULL)
+    {
+        if (strcasecmp(instance_name, tmp_instance->name) == 0)
+        {
+            instance = tmp_instance;
+            break;
+        }
+        tmp_instance = LIST_GET_NEXT(link, tmp_instance);
+    }
+
+    strcpy(count_process, "NULL");
+    if (instance == NULL)
+        return TRUE;
+
+    collector_table_t* table = LIST_GET_FIRST(instance->collector_table_list->table_list);
+
+    while (table != NULL)
+    {
+        rows += table->rows;
+        collector_field_t* first_field = LIST_GET_FIRST(table->collector_field_list->field_list);
+        sended_count += first_field->sended_count;
+        table = LIST_GET_NEXT(link, table);
+    }
+    if (rows == 0 || instance->on == FALSE)
+        sprintf(count_process, "NULL");
+    else if (sended_count >= rows) //rows是估计出来的，是可能比实际的表行数要小的，不过应该小不了太多
+        sprintf(count_process, "99");
+    else
+        sprintf(count_process, "%ld", sended_count * 100 / rows);
+
+    return FALSE;
 }
 
 int collect_count(MYSQL* mysql, MYSQL* mysql_dc,
@@ -981,6 +1039,7 @@ int hand_out_count_sql(MYSQL* mysql,
                     LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
                     if (++instance->thread_id > instance->threads_limit)
                         instance->thread_id = 1;
+                    field->sended_count++;
                     break;
                 }
                 worker = LIST_GET_NEXT(link, worker);
@@ -1174,6 +1233,7 @@ int inception_get_collector_instance_list(THD *thd)
     field_list.push_back(new Item_empty_string("port", FN_REFLEN));
     field_list.push_back(new Item_empty_string("threads_limit", FN_REFLEN));
     field_list.push_back(new Item_empty_string("state", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("count_procecss", FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
                                            Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -1195,12 +1255,15 @@ int inception_get_collector_instance_list(THD *thd)
     source_row = mysql_fetch_row(source_res);
     while (source_row)
     {
+        char count_process[10];
         protocol->prepare_for_resend();
         protocol->store(source_row[0], system_charset_info);
         protocol->store(source_row[1], system_charset_info);
         protocol->store(source_row[2], system_charset_info);
         protocol->store(source_row[3], system_charset_info);
         protocol->store(instance_state(source_row[0])?"on":"off", system_charset_info);
+        get_count_process(source_row[0], count_process);
+        protocol->store(count_process, system_charset_info);
         protocol->write();
         source_row = mysql_fetch_row(source_res);
     }
@@ -1253,7 +1316,7 @@ int inception_set_collector_instance_threads_limit(THD *thd)
         rest = TRUE;
         goto done;
     }
-    
+
 done:
     thd->close_all_connections();
     return rest;
