@@ -376,7 +376,6 @@ int free_instance(collector_instance_t* (&instance))
         sprintf(tmp, "update collector_data.instance_dict set stop_time=now() \
                 where name = \'%s\'", instance->name);
         get_mysql_res(&mysql, source_res ,tmp);
-        mysql_free_result(source_res);
         mysql_close(&mysql);
     }
 
@@ -1154,7 +1153,6 @@ int inception_collector_start(THD* thd)
         sprintf(tmp, "update collector_data.instance_dict set start_time=now() \
                 where name = \'%s\'", instance->name);
         get_mysql_res(&mysql, source_res ,tmp);
-        mysql_free_result(source_res);
         mysql_close(&mysql);
     }
 
