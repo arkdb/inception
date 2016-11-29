@@ -99,10 +99,10 @@ int init_mysql_connection(MYSQL* conn, char* host, uint port, char* user, char* 
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
         mysql_close(mysql);
-        return FALSE;
+        return TRUE;
     }
 
-    return TRUE;
+    return FALSE;
 }
 
 int get_mysql_connection(MYSQL* conn, char* host, uint port, char* user, char* password, char* db)
@@ -115,7 +115,7 @@ int get_mysql_connection(MYSQL* conn, char* host, uint port, char* user, char* p
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
         return TRUE;
     }
-    if (init_mysql_connection(conn, host, port, user, password, db) == FALSE)
+    if (init_mysql_connection(conn, host, port, user, password, db))
         return TRUE;
     else
         return FALSE;
@@ -367,6 +367,19 @@ int free_queue(THD* (&thd))
 
 int free_instance(collector_instance_t* (&instance))
 {
+    MYSQL           mysql;
+    MYSQL_RES       *source_res;
+    char            tmp[1024];
+    if (!get_mysql_connection(&mysql, instance->host, instance->port,
+                              remote_system_user, remote_system_password, NULL))
+    {
+        sprintf(tmp, "update collector_data.instance_dict set stop_time=now() \
+                where name = \'%s\'", instance->name);
+        get_mysql_res(&mysql, source_res ,tmp);
+        mysql_free_result(source_res);
+        mysql_close(&mysql);
+    }
+
     collector_table_list_t *collector_table_list;
     collector_table_list = instance->collector_table_list;
     collector_table_t *table = LIST_GET_FIRST(collector_table_list->table_list);
@@ -766,13 +779,9 @@ pthread_handler_t collector_work_thread(void* arg)
         worker = LIST_GET_NEXT(link, worker);
     }
     mysql_mutex_unlock(&instance->collector_worker_mutex);
-    collector_queue_item_t* item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
-    while (item == NULL && instance->on)
-    {
-        sleep(THREAD_SLEEP_NSEC);
-        item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
-    }
     
+    collector_queue_item_t* item = NULL;
+
     if (!instance->on)
         goto done_0;
     
@@ -783,7 +792,7 @@ pthread_handler_t collector_work_thread(void* arg)
                              inception_datacenter_user, inception_datacenter_password, NULL))
         goto done_1;
     
-    if (get_mysql_connection(&mysql, item->host, item->port,
+    if (get_mysql_connection(&mysql, instance->host, instance->port,
                              remote_system_user, remote_system_password, NULL))
         goto done_2;
     
@@ -807,12 +816,13 @@ begin:
             my_free(item);
             item = next_item;
         }
-        if (loop_times == 10)
+        if (loop_times == 15)
         {
             mysql_mutex_lock(&instance->collector_worker_mutex);
             instance->idle_num++;
             mysql_mutex_unlock(&instance->collector_worker_mutex);
         }
+
         if (item == NULL)
         {
             loop_times++;
@@ -1123,17 +1133,31 @@ done:
 
 int inception_collector_start(THD* thd)
 {
-    pthread_t threadid;
+    pthread_t       threadid;
+    MYSQL           mysql;
+    MYSQL_RES       *source_res;
+    char            tmp[1024];
+
     if (validate_instance(thd))
     {
         my_error(ER_UNKNOWN_COLLECTOR_INSTANCE,MYF(0),thd->lex->name.str);
         return TRUE;
     }
-    
+
     collector_instance_t* instance = NULL;
     if (load_instance(thd, instance))
         return TRUE;
-    
+
+    if (!get_mysql_connection(&mysql, instance->host, instance->port,
+                              remote_system_user, remote_system_password, NULL))
+    {
+        sprintf(tmp, "update collector_data.instance_dict set start_time=now() \
+                where name = \'%s\'", instance->name);
+        get_mysql_res(&mysql, source_res ,tmp);
+        mysql_free_result(source_res);
+        mysql_close(&mysql);
+    }
+
     if (!instance->on)
     {
         instance->on = TRUE;
