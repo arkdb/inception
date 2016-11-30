@@ -370,8 +370,8 @@ int free_instance(collector_instance_t* (&instance))
     MYSQL           mysql;
     MYSQL_RES       *source_res;
     char            tmp[1024];
-    if (!get_mysql_connection(&mysql, instance->host, instance->port,
-                              remote_system_user, remote_system_password, NULL))
+    if (!get_mysql_connection(&mysql, inception_collector_host, inception_collector_port,
+                              inception_collector_user, inception_collector_password, NULL))
     {
         sprintf(tmp, "update collector_data.instance_dict set stop_time=now() \
                 where name = \'%s\'", instance->name);
@@ -1146,8 +1146,8 @@ int inception_collector_start(THD* thd)
     if (load_instance(thd, instance))
         return TRUE;
 
-    if (!get_mysql_connection(&mysql, instance->host, instance->port,
-                              remote_system_user, remote_system_password, NULL))
+    if (!get_mysql_connection(&mysql, inception_collector_host, inception_collector_port,
+                              inception_collector_user, inception_collector_password, NULL))
     {
         sprintf(tmp, "update collector_data.instance_dict set start_time=now() \
                 where name = \'%s\'", instance->name);
