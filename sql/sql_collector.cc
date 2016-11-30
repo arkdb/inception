@@ -840,9 +840,6 @@ done_0:
     sql_print_information("collector_work_thread stop.");
     instance->on = FALSE;
     free_queue(thd);
-    LIST_REMOVE(link, instance->collector_worker_list->worker_list, worker);
-    worker->thd = NULL;
-    my_free(worker);
     delete thd;
     my_thread_end();
     pthread_exit(0);
