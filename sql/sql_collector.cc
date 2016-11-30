@@ -1036,6 +1036,8 @@ int hand_out_count_sql(MYSQL* mysql,
             collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
             while (worker != NULL)
             {
+                if (!instance->on)
+                    return FALSE;
                 if (worker->thread_id == instance->thread_id
                     && worker->thd->collector_queue_item_list != NULL)
                 {
@@ -1068,8 +1070,8 @@ int hand_out_item(collector_instance_t* (&instance))
     if (get_mysql_connection(&mysql, table_info->host, table_info->port,
                              remote_system_user, remote_system_password, NULL))
         return TRUE;
-    if (table_info->rule == COLLECTOR_RULE_ALL
-        || table_info->rule & COLLECTOR_RULE_COUNT)
+    if ((table_info->rule == COLLECTOR_RULE_ALL
+        || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
         hand_out_count_sql(&mysql, instance);
  
     return FALSE;
