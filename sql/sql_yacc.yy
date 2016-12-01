@@ -15672,7 +15672,7 @@ inception:
             lex->name= $6;
         }
         | INCEPTION_SYM CREATE COLLECTOR_SYM INSTANCE_SYM ident '(' TEXT_STRING_sys ',' ulong_num
-        ','  ulong_num  ')'
+        ','  ulong_num ',' TEXT_STRING_sys ',' ulong_num ')'
         {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_INCEPTION;
@@ -15682,6 +15682,8 @@ inception:
             lex->comment= $7;
             lex->type=  $9;
             lex->nest_level= $11;
+            lex->name = $13;
+            lex->profile_options = $15;
         }
         | INCEPTION_SYM SET COLLECTOR_SYM THREADS_SYM '(' TEXT_STRING_sys ',' ulong_num ')'
         {

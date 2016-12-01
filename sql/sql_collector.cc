@@ -28,6 +28,7 @@
 
 #define COLLECTOR_RULE_ALL            0
 #define COLLECTOR_RULE_COUNT          1
+#define COLLECTOR_RULE_DIST_COUNT     2
 
 #define FIELD_VALUE_FORE                  0
 #define FIELD_VALUE_TMP                   1
@@ -162,6 +163,8 @@ int inception_collector_init(THD* thd)
            `start_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
            `stop_time`  timestamp NOT NULL DEFAULT '2000-01-01 00:00:00', \
            `threads_limit` int(11) NOT NULL DEFAULT '5', \
+           `tmp_host` varchar(20) NOT NULL DEFAULT '', \
+           `tmp_port` int(11) NOT NULL DEFAULT '0', \
            PRIMARY KEY (`id`), \
            UNIQUE KEY `uniq_name` (`name`) \
            ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
@@ -221,6 +224,21 @@ int create_db_table(MYSQL* conn_dc, collector_queue_item_t* item)
              item->db, item->tname);
     if (get_mysql_res(conn_dc, res_dc, tmp))
         return TRUE;
+    
+    //创建采样distinct count信息存放的表
+    sprintf (tmp, "create table collector_data_%s_%d.dist_count_%s_%s(\
+             id bigint unsigned  not null primary key auto_increment,\
+             variable varchar(32) not null default '', \
+             value int unsigned not null default 0, \
+             version bigint unsigned not null default 0, \
+             start_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+             end_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, \
+             UNIQUE KEY `uniq_variable_version` (`variable`,`version`) \
+             )engine=innodb default charset=utf8 comment='distinct_count';", host_, item->port,
+             item->db, item->tname);
+    if (get_mysql_res(conn_dc, res_dc, tmp))
+        return TRUE;
+    
     return FALSE;
 }
 
@@ -389,6 +407,8 @@ int free_instance(collector_instance_t* (&instance))
         collector_field_t *field = LIST_GET_FIRST(table->collector_field_list->field_list);
         while (field != NULL) {
             collector_field_t *next_field = LIST_GET_NEXT(link, field);
+            mysql_mutex_destroy(&field->dist_count_done_mutex);
+            mysql_mutex_destroy(&field->count_done_mutex);
             LIST_REMOVE(link, table->collector_field_list->field_list, field);
             my_free(field);
             field = next_field;
@@ -486,11 +506,17 @@ int load_field(collector_table_t* (&table_info))
         strcpy(field->key, row[3]);
         field->seq_in_index = 0;
         field->is_beginning = TRUE;
-        field->sended_count = 0;
+        field->is_ending = FALSE;
+        field->done = FALSE;
+        field->count_sended_count = 0;
+        field->count_done_count = 0;
+        field->dist_count_sended_count = 0;
+        field->dist_count_done_count = 0;
+        mysql_mutex_init(NULL, &field->dist_count_done_mutex, MY_MUTEX_INIT_FAST);
+        mysql_mutex_init(NULL, &field->count_done_mutex, MY_MUTEX_INIT_FAST);
         strcpy(field->value_fore, "NULL");
         strcpy(field->value_hind, "NULL");
         strcpy(field->value_tmp, "NULL");
-        field->done = FALSE;
         LIST_ADD_LAST(link, table_info->collector_field_list->field_list, field);
         row = mysql_fetch_row(res);
     }
@@ -580,7 +606,7 @@ int load_table(THD *thd, collector_instance_t* (&instance))
     }
     source_row= mysql_fetch_row(source_res);
     
-    while (source_row)
+    while (source_row != NULL)
     {
         collector_table_t* table_info;
         table_info = (collector_table_t*)my_malloc(sizeof(collector_table_t), MY_ZEROFILL);
@@ -599,11 +625,9 @@ int load_table(THD *thd, collector_instance_t* (&instance))
         table_info->collector_field_list =
         (collector_field_list_t*)my_malloc(sizeof(collector_field_list_t), MY_ZEROFILL);
         LIST_INIT(table_info->collector_field_list->field_list);
-        if (load_field(table_info))
-            continue;
-        LIST_ADD_LAST(link, instance->collector_table_list->table_list, table_info);
+        if (!load_field(table_info))
+            LIST_ADD_LAST(link, instance->collector_table_list->table_list, table_info);
         source_row = mysql_fetch_row(source_res);
-        thread_id++;
     }
     mysql_free_result(source_res);
 done:
@@ -639,7 +663,7 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
         rest = TRUE;
         goto done;
     }
-    sprintf(tmp, "select host, port, threads_limit \
+    sprintf(tmp, "select host, port, threads_limit, tmp_host, tmp_port \
             from collector_data.instance_dict where name = \'%s\'", thd->lex->name.str);
     if (get_mysql_res(mysql, source_res, tmp))
     {
@@ -653,6 +677,8 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
     strcpy(instance->host, source_row[0]);
     instance->port = atoi(source_row[1]);
     instance->threads_limit = atoi(source_row[2]);
+    strcpy(instance->tmp_host, source_row[3]);
+    instance->tmp_port = atoi(source_row[4]);
     instance->on = FALSE;
     instance->thread_id = 1;
     instance->idle_num = 0;
@@ -708,12 +734,15 @@ int get_count_process(char* instance_name, char* count_process)
     {
         rows += table->rows;
         collector_field_t* first_field = LIST_GET_FIRST(table->collector_field_list->field_list);
-        sended_count += first_field->sended_count;
+        if (first_field->count_sended_count == first_field->count_done_count)
+            sended_count += table->rows;
+        else
+            sended_count += first_field->count_sended_count;
         table = LIST_GET_NEXT(link, table);
     }
     if (rows == 0 || instance->on == FALSE)
         sprintf(count_process, "NULL");
-    else if (sended_count >= rows) //rows是估计出来的，是可能比实际的表行数要小的，不过应该小不了太多
+    else if (sended_count > rows) //rows是估计出来的，是可能比实际的表行数要小的，不过应该小不了太多
         sprintf(count_process, "99");
     else
         sprintf(count_process, "%ld", sended_count * 100 / rows);
@@ -721,13 +750,14 @@ int get_count_process(char* instance_name, char* count_process)
     return FALSE;
 }
 
-int collect_count(MYSQL* mysql, MYSQL* mysql_dc,
-                  MYSQL* mysql_collector, collector_queue_item_t* item)
+int collect_count(MYSQL* mysql, MYSQL* mysql_dc, collector_queue_item_t* item)
 {
     MYSQL_RES* source_res=NULL;
     MYSQL_ROW source_row;
     
     if (get_mysql_res(mysql, source_res, item->sql))
+        return TRUE;
+    if (source_res == NULL)
         return TRUE;
     source_row= mysql_fetch_row(source_res);
     
@@ -742,7 +772,163 @@ int collect_count(MYSQL* mysql, MYSQL* mysql_dc,
     
     if (insert_count(mysql_dc, item, (char*)"count", count))
         return TRUE;
+    
+    mysql_mutex_lock(&item->field->count_done_mutex);
+    item->field->count_done_count++;
+    mysql_mutex_unlock(&item->field->count_done_mutex);
+
     return FALSE;
+}
+
+int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collector_queue_item_t* item)
+{
+    MYSQL_RES* source_res=NULL;
+    MYSQL_ROW  source_row;
+    str_t*     insert_sql;
+    str_t*     tmp_chars;
+    int        rest = FALSE;
+    char       tmp[1024];
+    char       host_[30];
+    int        ignore = TRUE;
+    
+    strcpy(host_, item->host);
+    str_replace(host_, (char*)".", (char*)"_");
+    
+    insert_sql = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(insert_sql);
+    tmp_chars = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(tmp_chars);
+    
+    sprintf (tmp, "create database collector_tmp_data_%s_%d", host_, item->port);
+    if (get_mysql_res(mysql_tmp, source_res, tmp))
+    {
+        rest = TRUE;
+        goto done;
+    }
+    
+    //创建采样count信息存放的表
+    sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
+             id bigint unsigned  not null primary key auto_increment,\
+             value int unsigned not null default 0, \
+             UNIQUE KEY `uniq_value` (`value`) \
+             )engine=innodb default charset=utf8;", host_, item->port,
+             item->db, item->tname, item->field->name);
+    if (get_mysql_res(mysql_tmp, source_res, tmp))
+    {
+        rest = TRUE;
+        goto done;
+    }
+   
+    if (get_mysql_res(mysql, source_res, item->sql))
+    {
+        rest = TRUE;
+        goto done;
+    }
+    if (source_res == NULL)
+    {
+        rest = TRUE;
+        goto done;
+    }
+    
+    source_row= mysql_fetch_row(source_res);
+    
+    if (source_row != NULL)
+    {
+        sprintf(tmp, "insert ignore into collector_tmp_data_%s_%d.%s_%s_%s(value) values",
+                host_, item->port, item->db, item->tname, item->field->name);
+        str_append(insert_sql, tmp);
+        //这里还没处理完，明天处理， 大字段过滤掉，不做了
+        while (source_row != NULL)
+        {
+            if (source_row[0] != NULL)
+            {
+                str_append(insert_sql, "('");
+                str_append_with_length(tmp_chars, source_row[0], 190);
+                char* dupcharsql;
+                dupcharsql = (char*)my_malloc(tmp_chars->str_len * 2 + 1, MYF(0));
+                memset(dupcharsql, 0, tmp_chars->str_len * 2 + 1);
+                mysql_dup_char(tmp_chars->str, dupcharsql, '\\');
+                mysql_dup_char(tmp_chars->str, dupcharsql, '\'');
+                str_append_with_length(insert_sql, dupcharsql, strlen(dupcharsql));
+                str_append(insert_sql, "'),");
+                str_truncate_0(tmp_chars);
+                my_free(dupcharsql);
+            }
+            else
+            {
+                str_append(insert_sql, "('NULL'),");
+            }
+            source_row= mysql_fetch_row(source_res);
+        }
+        str_truncate(insert_sql, 1);
+        ignore = FALSE;
+    }
+    
+    mysql_free_result(source_res);
+    
+    if (ignore == FALSE)
+    {
+        if (get_mysql_res(mysql_tmp, source_res, insert_sql->str))
+        {
+            rest = TRUE;
+            goto done;
+        }
+        
+        mysql_mutex_lock(&item->field->dist_count_done_mutex);
+        item->field->dist_count_done_count++;
+        if (item->field->is_ending
+            && item->field->dist_count_done_count == item->field->dist_count_sended_count)
+        {
+            ulong count = 0;
+            
+            sprintf(tmp, "select count(*) from collector_tmp_data_%s_%d.%s_%s_%s",
+                    host_, item->port, item->db, item->tname, item->field->name);
+            
+            if (get_mysql_res(mysql_tmp, source_res, tmp))
+            {
+                rest = TRUE;
+                goto done;
+            }
+            if (source_res == NULL)
+            {
+                rest = TRUE;
+                goto done;
+            }
+            source_row= mysql_fetch_row(source_res);
+            
+            if (source_row == NULL && source_row[0] == NULL)
+            {
+                mysql_free_result(source_res);
+                rest = TRUE;
+                goto done;
+            }
+            
+            count = atol(source_row[0]);
+            mysql_free_result(source_res);
+
+            sprintf(tmp, "insert into collector_data_%s_%d.dist_count_%s_%s(variable,value,version) \
+                    values('%s',%ld,%ld)",
+                    host_, item->port, item->db, item->tname, item->field->name, count, item->version);
+            
+            if (get_mysql_res(mysql_dc, source_res, tmp))
+            {
+                rest = TRUE;
+                goto done;
+            }
+            
+            sprintf(tmp, "drop table collector_tmp_data_%s_%d.%s_%s_%s",
+                    host_, item->port, item->db, item->tname, item->field->name);
+            get_mysql_res(mysql_tmp, source_res, tmp);
+        }
+        mysql_mutex_unlock(&item->field->dist_count_done_mutex);
+    }
+    
+done:
+    str_deinit(insert_sql);
+    my_free(insert_sql);
+    str_deinit(tmp_chars);
+    my_free(tmp_chars);
+    return rest;
 }
 
 pthread_handler_t collector_work_thread(void* arg)
@@ -750,6 +936,7 @@ pthread_handler_t collector_work_thread(void* arg)
     THD *thd = NULL;
     MYSQL mysql_collector;
     MYSQL mysql_dc;
+    MYSQL mysql_tmp;
     MYSQL mysql;
     collector_instance_t* instance;
     int loop_times = 0;
@@ -795,6 +982,10 @@ pthread_handler_t collector_work_thread(void* arg)
                              remote_system_user, remote_system_password, NULL))
         goto done_2;
     
+    if (get_mysql_connection(&mysql_tmp, instance->tmp_host, instance->tmp_port,
+                             remote_system_user, remote_system_password, NULL))
+        goto done_3;
+    
 begin:
     if (instance->on)
     {
@@ -803,13 +994,20 @@ begin:
         {
             loop_times = 0;
             if (create_db_table(&mysql_dc, item))
-                goto done_3;
+                goto done;
             
             if (item->type == COLLECTOR_RULE_COUNT)
             {
-                if (collect_count(&mysql, &mysql_dc, &mysql_collector, item))
-                    goto done_3;
+                if (collect_count(&mysql, &mysql_dc, item))
+                    goto done;
             }
+            
+            if (item->type == COLLECTOR_RULE_DIST_COUNT)
+            {
+                if (collect_dist_count(&mysql, &mysql_dc, &mysql_tmp, item))
+                    goto done;
+            }
+            
             collector_queue_item_t* next_item = LIST_GET_NEXT(link, item);
             LIST_REMOVE(link, thd->collector_queue_item_list->item_list, item);
             my_free(item);
@@ -830,6 +1028,8 @@ begin:
         }
     }
     
+done:
+    mysql_close(&mysql_tmp);
 done_3:
     mysql_close(&mysql);
 done_2:
@@ -839,6 +1039,12 @@ done_1:
 done_0:
     sql_print_information("collector_work_thread stop.");
     instance->on = FALSE;
+    if (worker != NULL && instance->collector_worker_list != NULL)
+    {
+        LIST_REMOVE(link, instance->collector_worker_list->worker_list, worker);
+        worker->thd = NULL;
+        my_free(worker);
+    }
     free_queue(thd);
     delete thd;
     my_thread_end();
@@ -857,6 +1063,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     strcpy(tmp, "select ");
     memset(keys, 0, 256*256);
     collector_field_t* field = LIST_GET_FIRST(field_list->field_list);
+    
     while (field)
     {
         if (strcmp("PRI", field->key) == 0)
@@ -867,6 +1074,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
         }
         field = LIST_GET_NEXT(link, field);
     }
+    
     for (int i=0; i < count; ++i)
     {
         sprintf(tmp, "%s %s%s", tmp, keys[i], i+1==count?"":",");
@@ -889,7 +1097,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
                 {
                     if (get_field_value(field_list, keys[i], value, (char*)">=", true))
                     {
-                        field_t->done = true;
+                        field_t->done = TRUE;
                         return TRUE;
                     }
                     sprintf(tmp, "%s %s and", tmp, value);
@@ -898,7 +1106,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
                 {
                     if (get_field_value(field_list, keys[i], value, (char*)"=", true))
                     {
-                        field_t->done = true;
+                        field_t->done = TRUE;
                         return TRUE;
                     }
                     sprintf(tmp, "%s %s and ", tmp, value);
@@ -913,7 +1121,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     
     if (get_mysql_res(mysql, res, tmp))
     {
-        field_t->done = true;
+        field_t->done = TRUE;
         return TRUE;
     }
     row = mysql_fetch_row(res);
@@ -921,7 +1129,7 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     {
         if (is_first)
         {
-            field_t->done = true;
+            field_t->done = TRUE;
             mysql_free_result(res);
             res = NULL;
             return TRUE;
@@ -934,8 +1142,15 @@ int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
     }
     row = mysql_fetch_row(res);
     if (row != NULL)
+    {
         for (int i = 0; i < count; ++i)
             set_field_value(field_list, keys[i], row[i], FIELD_VALUE_TMP);
+    }
+    else
+    {
+        if (!is_first)
+            field_t->is_ending = TRUE;
+    }
     mysql_free_result(res);
     return FALSE;
 }
@@ -971,6 +1186,135 @@ int hand_out_count_sql(MYSQL* mysql,
             {
                 if (assemble_fields_value(mysql, table_info,
                                           table_info->collector_field_list,
+                                          field, TRUE))
+                {
+                    clean_field_value(table_info->collector_field_list);
+                    table_info->done = TRUE;
+                    table_done_count++;
+                    table_info = LIST_GET_NEXT(link, table_info);
+                    continue;
+                }
+                field->is_beginning = FALSE;
+            }
+            assemble_fields_value(mysql, table_info,
+                                  table_info->collector_field_list,
+                                  field, FALSE);
+            if (field->done)
+            {
+                table_info->done = TRUE;
+                table_done_count++;
+                continue;
+            }
+            
+            int limits = table_info->steps * table_info->sample_percent;
+            sprintf(tmp, "select count(*) from %s.%s force index(primary) \
+                    where 1=1 and ", table_info->db, table_info->tname);
+            for (int j = table_info->key_count; j > 0; --j)
+            {
+                sprintf(tmp, "%s ( ", tmp);
+                for (int i = 0; i< j; ++i)
+                {
+                    char value[256];
+                    if (i+1 == j)
+                    {
+                        if (!get_field_value(table_info->collector_field_list,
+                                             table_info->keys[i], value, (char*)">=", TRUE))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (!get_field_value(table_info->collector_field_list,
+                                             table_info->keys[i], value, (char*)"<=", false))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                    else
+                    {
+                        if (!get_field_value(table_info->collector_field_list,
+                                             table_info->keys[i], value, (char*)"=", TRUE))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                        if (!get_field_value(table_info->collector_field_list,
+                                             table_info->keys[i], value, (char*)"=", FALSE))
+                            sprintf(tmp, "%s %s and", tmp, value);
+                    }
+                }
+                sprintf(tmp, "%s 1=1 ) ", tmp);
+                if (j-1 != 0)
+                    sprintf(tmp, "%s or ", tmp);
+            }
+            sprintf(tmp, "%s limit %d", tmp, limits);
+            
+            collector_queue_item_t* item =
+            (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
+            strcpy(item->sql, tmp);
+            item->type = COLLECTOR_RULE_COUNT;
+            strcpy(item->host, table_info->host);
+            item->port = table_info->port;
+            strcpy(item->db, table_info->db);
+            strcpy(item->tname, table_info->tname);
+            item->version = instance->version;
+            item->field = field;
+            
+            collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
+            while (worker != NULL)
+            {
+                if (!instance->on)
+                    return FALSE;
+                if (worker->thread_id == instance->thread_id
+                    && worker->thd->collector_queue_item_list != NULL)
+                {
+                    while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
+                        sleep(THREAD_SLEEP_NSEC);
+                    
+                    LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
+                    if (++instance->thread_id > instance->threads_limit)
+                        instance->thread_id = 1;
+                    field->count_sended_count++;
+                    break;
+                }
+                worker = LIST_GET_NEXT(link, worker);
+            }
+            
+            exchange_field_fore_and_tmp(table_info->collector_field_list);
+            table_info = LIST_GET_NEXT(link, table_info);
+        }
+    }
+    return FALSE;
+}
+
+int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
+{
+    char tmp[1024];
+    uint table_done_count = 0;
+    collector_table_t* table_info;
+    
+    while (table_done_count != instance->collector_table_list->table_list.count)
+    {
+        table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+        while(table_info != NULL)
+        {
+            //判断表是否已做完
+            if (table_info->done)
+            {
+                table_info = LIST_GET_NEXT(link, table_info);
+                continue;
+            }
+            collector_field_t* field = LIST_GET_FIRST(table_info->collector_field_list->field_list);
+            //找到第一个未做完的列
+            while (field != NULL)
+            {
+                if (!field->done)
+                    break;
+                field = LIST_GET_NEXT(link, field);
+            }
+            //如果没有没做完的列，则表标记做完
+            if (field == NULL)
+            {
+                table_info->done = TRUE;
+                table_done_count++;
+                continue;
+            }
+
+            if (field != NULL && field->is_beginning)
+            {
+                if (assemble_fields_value(mysql, table_info,
+                                          table_info->collector_field_list,
                                           field, true))
                 {
                     clean_field_value(table_info->collector_field_list);
@@ -982,16 +1326,13 @@ int hand_out_count_sql(MYSQL* mysql,
             assemble_fields_value(mysql, table_info,
                                   table_info->collector_field_list,
                                   field, false);
+
             if (field->done)
-            {
-                table_info->done = TRUE;
-                table_done_count++;
                 continue;
-            }
-            
+
             int limits = table_info->steps * table_info->sample_percent;
-            sprintf(tmp, "select count(*) from %s.%s force index(primary) \
-                    where 1=1 and ", table_info->db, table_info->tname);
+            sprintf(tmp, "select %s from %s.%s force index(primary) \
+                    where 1=1 and ", field->name, table_info->db, table_info->tname);
             for (int j = table_info->key_count; j > 0; --j)
             {
                 sprintf(tmp, "%s ( ", tmp);
@@ -1021,18 +1362,19 @@ int hand_out_count_sql(MYSQL* mysql,
                 if (j-1 != 0)
                     sprintf(tmp, "%s or ", tmp);
             }
-            sprintf(tmp, "%s limit %d", tmp, limits);
+            sprintf(tmp, "%s group by %s limit %d", tmp, field->name, limits);
             
             collector_queue_item_t* item =
             (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
             strcpy(item->sql, tmp);
-            item->type = COLLECTOR_RULE_COUNT;
+            item->type = COLLECTOR_RULE_DIST_COUNT;
             strcpy(item->host, table_info->host);
             item->port = table_info->port;
             strcpy(item->db, table_info->db);
             strcpy(item->tname, table_info->tname);
             item->version = instance->version;
-            
+            item->field = field;
+
             collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
             while (worker != NULL)
             {
@@ -1043,16 +1385,16 @@ int hand_out_count_sql(MYSQL* mysql,
                 {
                     while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
                         sleep(THREAD_SLEEP_NSEC);
-                    
+
                     LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
                     if (++instance->thread_id > instance->threads_limit)
                         instance->thread_id = 1;
-                    field->sended_count++;
+                    field->dist_count_sended_count++;
                     break;
                 }
                 worker = LIST_GET_NEXT(link, worker);
             }
-            
+
             exchange_field_fore_and_tmp(table_info->collector_field_list);
             table_info = LIST_GET_NEXT(link, table_info);
         }
@@ -1067,12 +1409,33 @@ int hand_out_item(collector_instance_t* (&instance))
     collector_table_t *table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
     if (table_info == NULL)
         return TRUE;
+    
     if (get_mysql_connection(&mysql, table_info->host, table_info->port,
                              remote_system_user, remote_system_password, NULL))
         return TRUE;
+    
     if ((table_info->rule == COLLECTOR_RULE_ALL
         || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
         hand_out_count_sql(&mysql, instance);
+    
+    collector_table_t* tmp_table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+    while (tmp_table_info != NULL)
+    {
+        tmp_table_info->done = FALSE;
+        collector_field_t* tmp_field = LIST_GET_FIRST(tmp_table_info->collector_field_list->field_list);
+        while (tmp_field != NULL)
+        {
+            tmp_field->is_beginning = TRUE;
+            tmp_field->is_ending = FALSE;
+            tmp_field->done = FALSE;
+            tmp_field = LIST_GET_NEXT(link, tmp_field);
+        }
+        tmp_table_info = LIST_GET_NEXT(link, tmp_table_info);
+    }
+    
+    if ((table_info->rule == COLLECTOR_RULE_ALL
+         || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
+        hand_out_dist_count_sql(&mysql, instance);
  
     return FALSE;
 }
@@ -1115,12 +1478,9 @@ pthread_handler_t inception_collector_thread(void* arg)
     
 done:
     sql_print_information("inception_collector_thread stop.");
-    if (instance->on)
-    {
-        instance->on = FALSE;
-        while (instance->collector_worker_list->worker_list.count != 0)
-            sleep(THREAD_SLEEP_NSEC);
-    }
+    instance->on = FALSE;
+    while (instance->collector_worker_list->worker_list.count != 0)
+        sleep(THREAD_SLEEP_NSEC);
     free_instance(instance);
     thd->close_all_connections();
     delete thd;
@@ -1209,6 +1569,13 @@ int inception_create_collector_instance(THD *thd)
         rest = TRUE;
         goto done;
     }
+    
+    if (thd->lex->name.length > 15)
+    {
+        my_error(ER_WRONG_STRING_LENGTH,MYF(0),thd->lex->comment.str, "tmp_host", 15);
+        rest = TRUE;
+        goto done;
+    }
 
     mysql = thd->get_collector_connection();
     if (mysql == NULL)
@@ -1216,9 +1583,10 @@ int inception_create_collector_instance(THD *thd)
         rest = TRUE;
         goto done;
     }
-    sprintf(tmp, "insert into collector_data.instance_dict(`name`,`host`,`port`,`threads_limit`) \
-            values(\'%s\',\'%s\',%ld, %d)", thd->lex->ident.str, thd->lex->comment.str,
-            thd->lex->type, thd->lex->nest_level);
+    sprintf(tmp, "insert into collector_data.instance_dict(`name`,`host`,`port`,\
+            `threads_limit`,`tmp_host`,`tmp_port`) \
+            values(\'%s\',\'%s\',%ld, %d,\'%s\',%d)", thd->lex->ident.str, thd->lex->comment.str,
+            thd->lex->type, thd->lex->nest_level, thd->lex->name.str, thd->lex->profile_options);
     if (get_mysql_res(mysql, mysql_res, tmp))
     {
         rest = TRUE;
@@ -1255,6 +1623,10 @@ int inception_get_collector_instance_list(THD *thd)
     field_list.push_back(new Item_empty_string("threads_limit", FN_REFLEN));
     field_list.push_back(new Item_empty_string("state", FN_REFLEN));
     field_list.push_back(new Item_empty_string("count_procecss", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("start_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("stop_time", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("tmp_host", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("tmp_port", FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
                                            Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -1262,8 +1634,8 @@ int inception_get_collector_instance_list(THD *thd)
         rest = TRUE;
         goto done;
     }
-    strcpy(tmp, "select name, host, port, threads_limit \
-           from collector_data.instance_dict");
+    strcpy(tmp, "select name, host, port, threads_limit, start_time, stop_time, \
+           tmp_host, tmp_port from collector_data.instance_dict");
     
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res = mysql_store_result(mysql)) == NULL)
@@ -1285,6 +1657,10 @@ int inception_get_collector_instance_list(THD *thd)
         protocol->store(instance_state(source_row[0])?"on":"off", system_charset_info);
         get_count_process(source_row[0], count_process);
         protocol->store(count_process, system_charset_info);
+        protocol->store(source_row[4], system_charset_info);
+        protocol->store(source_row[5], system_charset_info);
+        protocol->store(source_row[6], system_charset_info);
+        protocol->store(source_row[7], system_charset_info);
         protocol->write();
         source_row = mysql_fetch_row(source_res);
     }
@@ -1429,122 +1805,3 @@ int inception_collector_execute(THD* thd)
     }
     return FALSE;
 }
-
-
-//int assemble_count_sql(MYSQL* mysql,
-//                       collector_instance_t* (&instance),
-//                       collector_table_t* (&table_info),
-//                       collector_field_t* (&field))
-//{
-//    char tmp[512];
-//    uint table_done_count = 0;
-//    
-//    while (table_done_count != instance->collector_table_list->table_list.count)
-//    {
-//        table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-//        while(table_info != NULL)
-//        {
-//            //判断表是否已做完
-//            if (table_info->done)
-//            {
-//                table_info = LIST_GET_NEXT(link, table_info);
-//                continue;
-//            }
-//            collector_field_t* field = LIST_GET_FIRST(table_info->collector_field_list->field_list);
-//            //找到第一个未做完的列
-//            while (field != NULL)
-//            {
-//                if (!field->done)
-//                    break;
-//                field = LIST_GET_NEXT(link, field);
-//            }
-//            //如果没有没做完的列，则表标记做完
-//            if (field == NULL)
-//            {
-//                table_info->done = TRUE;
-//                table_done_count++;
-//                continue;
-//            }
-//            
-//            if (field != NULL && field->is_beginning)
-//            {
-//                if (assemble_fields_value(mysql, table_info,
-//                                          table_info->collector_field_list,
-//                                          field, true))
-//                {
-//                    clean_field_value(table_info->collector_field_list);
-//                    table_info = LIST_GET_NEXT(link, table_info);
-//                    continue;
-//                }
-//                field->is_beginning = FALSE;
-//            }
-//            assemble_fields_value(mysql, table_info,
-//                                  table_info->collector_field_list,
-//                                  field, false);
-//            
-//            int limits = table_info->steps * table_info->sample_percent;
-//            sprintf(tmp, "select count(*) from (select count(*) from %s.%s force index(primary) \
-//                    where 1=1 and ", table_info->db, table_info->tname);
-//            for (int j = table_info->key_count; j > 0; --j)
-//            {
-//                sprintf(tmp, "%s ( ", tmp);
-//                for (int i = 0; i< j; ++i)
-//                {
-//                    char value[256];
-//                    if (i+1 == j)
-//                    {
-//                        if (!get_field_value(table_info->collector_field_list,
-//                                             table_info->keys[i], value, (char*)">=", true))
-//                            sprintf(tmp, "%s %s and", tmp, value);
-//                        if (!get_field_value(table_info->collector_field_list,
-//                                             table_info->keys[i], value, (char*)"<=", false))
-//                            sprintf(tmp, "%s %s and", tmp, value);
-//                    }
-//                    else
-//                    {
-//                        if (!get_field_value(table_info->collector_field_list,
-//                                             table_info->keys[i], value, (char*)"=", true))
-//                            sprintf(tmp, "%s %s and", tmp, value);
-//                        if (!get_field_value(table_info->collector_field_list,
-//                                             table_info->keys[i], value, (char*)"=", false))
-//                            sprintf(tmp, "%s %s and", tmp, value);
-//                    }
-//                }
-//                sprintf(tmp, "%s 1=1 ) ", tmp);
-//                if (j-1 != 0)
-//                    sprintf(tmp, "%s or ", tmp);
-//            }
-//            sprintf(tmp, "%s group by %s limit %d) tmp", tmp, field->name, limits);
-//            
-//            collector_queue_item_t* item =
-//            (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
-//            strcpy(item->sql, tmp);
-//            item->type = COLLECTOR_RULE_COUNT;
-//            strcpy(item->host, table_info->host);
-//            item->port = table_info->port;
-//            strcpy(item->db, table_info->db);
-//            strcpy(item->tname, table_info->tname);
-//            
-//            collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
-//            while (worker != NULL)
-//            {
-//                if (worker->thread_id == instance->thread_id)
-//                {
-//                    while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
-//                        sleep(THREAD_SLEEP_NSEC);
-//                    
-//                    LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
-//                    if (++instance->thread_id > instance->threads_limit)
-//                        instance->thread_id = 1;
-//                    break;
-//                }
-//                worker = LIST_GET_NEXT(link, worker);
-//            }
-//            
-//            exchange_field_fore_and_tmp(table_info->collector_field_list);
-//            table_info = LIST_GET_NEXT(link, table_info);
-//        }
-//    }
-//    
-//    return FALSE;
-//}

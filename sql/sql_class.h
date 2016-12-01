@@ -592,27 +592,6 @@ struct collector_worker_list_struct
     LIST_BASE_NODE_T(collector_worker_struct) worker_list;
 };
 
-typedef struct collector_queue_item_struct collector_queue_item_t;
-struct collector_queue_item_struct
-{
-    char                   host[20];
-    int                    port;
-    char                   db[32];
-    char                   tname[32];
-    char                   fname[32];
-    char                   sql[512];
-    ulong                  version;
-    int                    type;
-    LIST_NODE_T(collector_queue_item_struct) link;
-};
-
-typedef struct collector_queue_item_list_struct collector_queue_item_list_t;
-struct collector_queue_item_list_struct
-{
-    LIST_BASE_NODE_T(collector_queue_item_t) item_list;
-};
-
-
 typedef struct collector_field_struct collector_field_t;
 struct collector_field_struct
 {
@@ -625,8 +604,14 @@ struct collector_field_struct
     int                  length;
     int                  seq_in_index;
     int                  is_beginning;
-    ulong                sended_count;
+    int                  is_ending;
     int                  done;
+    ulong                dist_count_done_count;
+    ulong                dist_count_sended_count;
+    ulong                count_done_count;
+    ulong                count_sended_count;
+    mysql_mutex_t        dist_count_done_mutex;
+    mysql_mutex_t        count_done_mutex;
     LIST_NODE_T(collector_field_t) link;
 };
 
@@ -666,6 +651,8 @@ struct collector_instance_struct
     char                   name[32];
     char                   host[20];
     int                    port;
+    char                   tmp_host[20];
+    int                    tmp_port;
     int                    threads_limit;
     int                    on;
     int                    thread_id;
@@ -681,6 +668,26 @@ typedef struct collector_instance_list_struct collector_instance_list_t;
 struct collector_instance_list_struct
 {
     LIST_BASE_NODE_T(collector_instance_t) instance_list;
+};
+
+typedef struct collector_queue_item_struct collector_queue_item_t;
+struct collector_queue_item_struct
+{
+    char                   host[20];
+    int                    port;
+    char                   db[32];
+    char                   tname[32];
+    char                   sql[512];
+    ulong                  version;
+    int                    type;
+    collector_field_t*     field;
+    LIST_NODE_T(collector_queue_item_struct) link;
+};
+
+typedef struct collector_queue_item_list_struct collector_queue_item_list_t;
+struct collector_queue_item_list_struct
+{
+    LIST_BASE_NODE_T(collector_queue_item_t) item_list;
 };
 
 typedef struct gate_ddl_struct ddl_status_t;
