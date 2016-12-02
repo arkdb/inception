@@ -1095,9 +1095,6 @@ begin:
         {
             mysql_mutex_lock(&instance->collector_worker_mutex);
             instance->idle_num++;
-            char idle[10];
-            sprintf(idle, "%d", instance->idle_num);
-            sql_print_information(idle);
             mysql_mutex_unlock(&instance->collector_worker_mutex);
         }
 
