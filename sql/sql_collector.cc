@@ -368,6 +368,25 @@ int clean_field_value(collector_field_list_t* field_list)
     return FALSE;
 }
 
+int clean_table_and_field_flag(collector_instance_t* (&instance))
+{
+    collector_table_t* tmp_table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+    while (tmp_table_info != NULL)
+    {
+        tmp_table_info->done = FALSE;
+        collector_field_t* tmp_field = LIST_GET_FIRST(tmp_table_info->collector_field_list->field_list);
+        while (tmp_field != NULL)
+        {
+            tmp_field->is_beginning = TRUE;
+            tmp_field->is_ending = FALSE;
+            tmp_field->done = FALSE;
+            tmp_field = LIST_GET_NEXT(link, tmp_field);
+        }
+        tmp_table_info = LIST_GET_NEXT(link, tmp_table_info);
+    }
+    return FALSE;
+}
+
 int free_queue(THD* (&thd))
 {
     collector_queue_item_t* item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
@@ -734,10 +753,13 @@ int get_count_process(char* instance_name, char* count_process)
     {
         rows += table->rows;
         collector_field_t* first_field = LIST_GET_FIRST(table->collector_field_list->field_list);
-        if (first_field->count_sended_count == first_field->count_done_count)
+
+        if (first_field->is_ending
+            && first_field->count_sended_count == first_field->count_done_count)
             sended_count += table->rows;
         else
             sended_count += first_field->count_sended_count;
+
         table = LIST_GET_NEXT(link, table);
     }
     if (rows == 0 || instance->on == FALSE)
@@ -746,6 +768,56 @@ int get_count_process(char* instance_name, char* count_process)
         sprintf(count_process, "99");
     else
         sprintf(count_process, "%ld", sended_count * 100 / rows);
+
+    return FALSE;
+}
+
+int get_dist_count_process(char* instance_name, char* dist_count_process)
+{
+    ulong rows = 0;
+    ulong sended_count = 0;
+    collector_instance_t* instance = NULL;
+    collector_instance_t* tmp_instance = LIST_GET_FIRST(global_collector_instance_cache.instance_list);
+
+    while (tmp_instance != NULL)
+    {
+        if (strcasecmp(instance_name, tmp_instance->name) == 0)
+        {
+            instance = tmp_instance;
+            break;
+        }
+        tmp_instance = LIST_GET_NEXT(link, tmp_instance);
+    }
+
+    strcpy(dist_count_process, "NULL");
+    if (instance == NULL)
+        return TRUE;
+
+    collector_table_t* table = LIST_GET_FIRST(instance->collector_table_list->table_list);
+
+    while (table != NULL)
+    {
+        collector_field_t* field = LIST_GET_FIRST(table->collector_field_list->field_list);
+
+        while (field != NULL)
+        {
+            rows += table->rows;
+
+            if (field->is_ending
+                && field->dist_count_sended_count == field->dist_count_done_count)
+                sended_count += table->rows;
+            else
+                sended_count += field->dist_count_sended_count;
+            field = LIST_GET_NEXT(link, field);
+        }
+        table = LIST_GET_NEXT(link, table);
+    }
+    if (rows == 0 || instance->on == FALSE)
+        sprintf(dist_count_process, "NULL");
+    else if (sended_count > rows) //rows是估计出来的，是可能比实际的表行数要小的，不过应该小不了太多
+        sprintf(dist_count_process, "99");
+    else
+        sprintf(dist_count_process, "%ld", sended_count * 100 / rows);
 
     return FALSE;
 }
@@ -805,7 +877,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
         rest = TRUE;
         goto done;
     }
-    
+
     //创建采样count信息存放的表
     sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
              id bigint unsigned  not null primary key auto_increment,\
@@ -837,7 +909,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
         sprintf(tmp, "insert ignore into collector_tmp_data_%s_%d.%s_%s_%s(value) values",
                 host_, item->port, item->db, item->tname, item->field->name);
         str_append(insert_sql, tmp);
-        //这里还没处理完，明天处理， 大字段过滤掉，不做了
+
         while (source_row != NULL)
         {
             if (source_row[0] != NULL)
@@ -992,6 +1064,12 @@ begin:
         item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
         while (item != NULL)
         {
+            if (loop_times > 15)
+            {
+                mysql_mutex_lock(&instance->collector_worker_mutex);
+                instance->idle_num--;
+                mysql_mutex_unlock(&instance->collector_worker_mutex);
+            }
             loop_times = 0;
             if (create_db_table(&mysql_dc, item))
                 goto done;
@@ -1017,6 +1095,9 @@ begin:
         {
             mysql_mutex_lock(&instance->collector_worker_mutex);
             instance->idle_num++;
+            char idle[10];
+            sprintf(idle, "%d", instance->idle_num);
+            sql_print_information(idle);
             mysql_mutex_unlock(&instance->collector_worker_mutex);
         }
 
@@ -1050,6 +1131,46 @@ done_0:
     my_thread_end();
     pthread_exit(0);
     return NULL;
+}
+
+int assemble_item(collector_instance_t* (&instance), collector_table_t* (&table_info),
+                  collector_field_t* (&field), int type, char* tmp)
+{
+    collector_queue_item_t* item =
+        (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
+    strcpy(item->sql, tmp);
+    item->type = type;
+    strcpy(item->host, table_info->host);
+    item->port = table_info->port;
+    strcpy(item->db, table_info->db);
+    strcpy(item->tname, table_info->tname);
+    item->version = instance->version;
+    item->field = field;
+
+    collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
+    while (worker != NULL)
+    {
+        if (!instance->on)
+            return FALSE;
+        if (worker->thread_id == instance->thread_id
+            && worker->thd->collector_queue_item_list != NULL)
+        {
+            while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
+                sleep(THREAD_SLEEP_NSEC);
+
+            LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
+            if (++instance->thread_id > instance->threads_limit)
+                instance->thread_id = 1;
+            if (type == COLLECTOR_RULE_COUNT)
+                field->count_sended_count++;
+            else if (type == COLLECTOR_RULE_DIST_COUNT)
+                field->dist_count_sended_count++;
+            break;
+        }
+        worker = LIST_GET_NEXT(link, worker);
+    }
+
+    return FALSE;
 }
 
 int assemble_fields_value(MYSQL* mysql, collector_table_t* table_info,
@@ -1240,37 +1361,8 @@ int hand_out_count_sql(MYSQL* mysql,
             }
             sprintf(tmp, "%s limit %d", tmp, limits);
             
-            collector_queue_item_t* item =
-            (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
-            strcpy(item->sql, tmp);
-            item->type = COLLECTOR_RULE_COUNT;
-            strcpy(item->host, table_info->host);
-            item->port = table_info->port;
-            strcpy(item->db, table_info->db);
-            strcpy(item->tname, table_info->tname);
-            item->version = instance->version;
-            item->field = field;
-            
-            collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
-            while (worker != NULL)
-            {
-                if (!instance->on)
-                    return FALSE;
-                if (worker->thread_id == instance->thread_id
-                    && worker->thd->collector_queue_item_list != NULL)
-                {
-                    while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
-                        sleep(THREAD_SLEEP_NSEC);
-                    
-                    LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
-                    if (++instance->thread_id > instance->threads_limit)
-                        instance->thread_id = 1;
-                    field->count_sended_count++;
-                    break;
-                }
-                worker = LIST_GET_NEXT(link, worker);
-            }
-            
+            assemble_item(instance, table_info, field, COLLECTOR_RULE_COUNT, tmp);
+
             exchange_field_fore_and_tmp(table_info->collector_field_list);
             table_info = LIST_GET_NEXT(link, table_info);
         }
@@ -1364,36 +1456,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
             }
             sprintf(tmp, "%s group by %s limit %d", tmp, field->name, limits);
             
-            collector_queue_item_t* item =
-            (collector_queue_item_t*)my_malloc(sizeof(collector_queue_item_t), MY_ZEROFILL);
-            strcpy(item->sql, tmp);
-            item->type = COLLECTOR_RULE_DIST_COUNT;
-            strcpy(item->host, table_info->host);
-            item->port = table_info->port;
-            strcpy(item->db, table_info->db);
-            strcpy(item->tname, table_info->tname);
-            item->version = instance->version;
-            item->field = field;
-
-            collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
-            while (worker != NULL)
-            {
-                if (!instance->on)
-                    return FALSE;
-                if (worker->thread_id == instance->thread_id
-                    && worker->thd->collector_queue_item_list != NULL)
-                {
-                    while (worker->thd->collector_queue_item_list->item_list.count >= CACHE_QUEUE_LENGTH)
-                        sleep(THREAD_SLEEP_NSEC);
-
-                    LIST_ADD_LAST(link, worker->thd->collector_queue_item_list->item_list, item);
-                    if (++instance->thread_id > instance->threads_limit)
-                        instance->thread_id = 1;
-                    field->dist_count_sended_count++;
-                    break;
-                }
-                worker = LIST_GET_NEXT(link, worker);
-            }
+            assemble_item(instance, table_info, field, COLLECTOR_RULE_DIST_COUNT, tmp);
 
             exchange_field_fore_and_tmp(table_info->collector_field_list);
             table_info = LIST_GET_NEXT(link, table_info);
@@ -1418,21 +1481,8 @@ int hand_out_item(collector_instance_t* (&instance))
         || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
         hand_out_count_sql(&mysql, instance);
     
-    collector_table_t* tmp_table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-    while (tmp_table_info != NULL)
-    {
-        tmp_table_info->done = FALSE;
-        collector_field_t* tmp_field = LIST_GET_FIRST(tmp_table_info->collector_field_list->field_list);
-        while (tmp_field != NULL)
-        {
-            tmp_field->is_beginning = TRUE;
-            tmp_field->is_ending = FALSE;
-            tmp_field->done = FALSE;
-            tmp_field = LIST_GET_NEXT(link, tmp_field);
-        }
-        tmp_table_info = LIST_GET_NEXT(link, tmp_table_info);
-    }
-    
+    clean_table_and_field_flag(instance);
+
     if ((table_info->rule == COLLECTOR_RULE_ALL
          || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
         hand_out_dist_count_sql(&mysql, instance);
@@ -1623,6 +1673,7 @@ int inception_get_collector_instance_list(THD *thd)
     field_list.push_back(new Item_empty_string("threads_limit", FN_REFLEN));
     field_list.push_back(new Item_empty_string("state", FN_REFLEN));
     field_list.push_back(new Item_empty_string("count_procecss", FN_REFLEN));
+    field_list.push_back(new Item_empty_string("dist_count_procecss", FN_REFLEN));
     field_list.push_back(new Item_empty_string("start_time", FN_REFLEN));
     field_list.push_back(new Item_empty_string("stop_time", FN_REFLEN));
     field_list.push_back(new Item_empty_string("tmp_host", FN_REFLEN));
@@ -1649,14 +1700,21 @@ int inception_get_collector_instance_list(THD *thd)
     while (source_row)
     {
         char count_process[10];
+        char dist_count_process[10];
+        get_dist_count_process(source_row[0], dist_count_process);
+        if (strcasecmp("NULL", dist_count_process) != 0)
+            strcpy(count_process, "100");
+        else
+            get_count_process(source_row[0], count_process);
+
         protocol->prepare_for_resend();
         protocol->store(source_row[0], system_charset_info);
         protocol->store(source_row[1], system_charset_info);
         protocol->store(source_row[2], system_charset_info);
         protocol->store(source_row[3], system_charset_info);
         protocol->store(instance_state(source_row[0])?"on":"off", system_charset_info);
-        get_count_process(source_row[0], count_process);
         protocol->store(count_process, system_charset_info);
+        protocol->store(dist_count_process, system_charset_info);
         protocol->store(source_row[4], system_charset_info);
         protocol->store(source_row[5], system_charset_info);
         protocol->store(source_row[6], system_charset_info);
