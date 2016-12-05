@@ -1167,6 +1167,8 @@ int assemble_item(collector_instance_t* (&instance), collector_table_t* (&table_
         worker = LIST_GET_NEXT(link, worker);
     }
 
+    if (instance->collector_worker_list->worker_list.count == 0)
+        return TRUE;
     return FALSE;
 }
 
@@ -1358,7 +1360,8 @@ int hand_out_count_sql(MYSQL* mysql,
             }
             sprintf(tmp, "%s limit %d", tmp, limits);
             
-            assemble_item(instance, table_info, field, COLLECTOR_RULE_COUNT, tmp);
+            if (assemble_item(instance, table_info, field, COLLECTOR_RULE_COUNT, tmp))
+                return TRUE;
 
             exchange_field_fore_and_tmp(table_info->collector_field_list);
             table_info = LIST_GET_NEXT(link, table_info);
@@ -1453,7 +1456,8 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
             }
             sprintf(tmp, "%s group by %s limit %d", tmp, field->name, limits);
             
-            assemble_item(instance, table_info, field, COLLECTOR_RULE_DIST_COUNT, tmp);
+            if (assemble_item(instance, table_info, field, COLLECTOR_RULE_DIST_COUNT, tmp))
+                return TRUE;
 
             exchange_field_fore_and_tmp(table_info->collector_field_list);
             table_info = LIST_GET_NEXT(link, table_info);
@@ -1476,14 +1480,17 @@ int hand_out_item(collector_instance_t* (&instance))
     
     if ((table_info->rule == COLLECTOR_RULE_ALL
         || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
-        hand_out_count_sql(&mysql, instance);
+        if (hand_out_count_sql(&mysql, instance))
+            goto done;
     
     clean_table_and_field_flag(instance);
 
     if ((table_info->rule == COLLECTOR_RULE_ALL
          || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
-        hand_out_dist_count_sql(&mysql, instance);
- 
+        if (hand_out_dist_count_sql(&mysql, instance))
+            goto done;
+done:
+    clean_table_and_field_flag(instance);
     return FALSE;
 }
 
