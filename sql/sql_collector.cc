@@ -275,20 +275,26 @@ int need_quotation(collector_field_t* field)
         return TRUE;
 }
 
-int instance_state(char* instance_name)
+int instance_state(char* instance_name, char* state)
 {
     collector_instance_t* instance = LIST_GET_FIRST(global_collector_instance_cache.instance_list);
-    
+
     while (instance != NULL)
     {
         if (strcasecmp(instance_name, instance->name) == 0)
         {
             if (instance->on)
+            {
+                if (instance->pause)
+                    strcpy(state, "pause");
+                else
+                    strcpy(state, "on");
                 return TRUE;
+            }
         }
         instance = LIST_GET_NEXT(link, instance);
     }
-    
+    strcpy(state, "off");
     return FALSE;
 }
 
@@ -1063,9 +1069,10 @@ begin:
     if (instance->on)
     {
         if (instance->pause)
+        {
             sleep(THREAD_SLEEP_NSEC);
-        else
             goto begin;
+        }
 
         item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
         while (item != NULL)
@@ -1741,6 +1748,7 @@ int inception_get_collector_instance_list(THD *thd)
     source_row = mysql_fetch_row(source_res);
     while (source_row)
     {
+        char state[10];
         char count_process[10];
         char dist_count_process[10];
         get_dist_count_process(source_row[0], dist_count_process);
@@ -1755,7 +1763,8 @@ int inception_get_collector_instance_list(THD *thd)
         protocol->store(source_row[1], system_charset_info);
         protocol->store(source_row[2], system_charset_info);
         protocol->store(source_row[3], system_charset_info);
-        protocol->store(instance_state(source_row[0])?"on":"off", system_charset_info);
+        instance_state(source_row[0], state);
+        protocol->store(state, system_charset_info);
         protocol->store(count_process, system_charset_info);
         protocol->store(dist_count_process, system_charset_info);
         protocol->store(source_row[4], system_charset_info);
