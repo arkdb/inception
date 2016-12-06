@@ -1706,7 +1706,8 @@ int inception_get_collector_instance_list(THD *thd)
         char count_process[10];
         char dist_count_process[10];
         get_dist_count_process(source_row[0], dist_count_process);
-        if (strcasecmp("NULL", dist_count_process) != 0)
+        if (strcasecmp("NULL", dist_count_process) != 0
+            && strcasecmp("0", dist_count_process) != 0)
             strcpy(count_process, "100");
         else
             get_count_process(source_row[0], count_process);
