@@ -1461,6 +1461,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
 %token  PARTITIONS_SYM
 %token  PARTITIONING_SYM
 %token  PASSWORD
+%token  PAUSE_SYM
 %token  PHASE_SYM
 %token  PLUGIN_DIR_SYM                /* INTERNAL */
 %token  PLUGIN_SYM
@@ -15692,6 +15693,22 @@ inception:
             lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
             lex->inception_cmd_sub_type = INCEPTION_SET_COLLECTOR_INSTANCE_THREADS_LIMIT;
             lex->type= $8;
+            lex->name= $6;
+        }
+        | INCEPTION_SYM PAUSE_SYM COLLECTOR_SYM FOR_SYM INSTANCE_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
+            lex->inception_cmd_sub_type = INCEPTION_PAUSE_COLLECTOR;
+            lex->name= $6;
+        }
+        | INCEPTION_SYM CONTINUE_SYM COLLECTOR_SYM FOR_SYM INSTANCE_SYM ident
+        {
+            LEX *lex=Lex;
+            lex->sql_command = SQLCOM_INCEPTION;
+            lex->inception_cmd_type = INCEPTION_COMMAND_COLLECTOR_EXECUTE;
+            lex->inception_cmd_sub_type = INCEPTION_CONTINUE_COLLECTOR;
             lex->name= $6;
         }
         ;

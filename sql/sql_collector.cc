@@ -699,6 +699,7 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
     strcpy(instance->tmp_host, source_row[3]);
     instance->tmp_port = atoi(source_row[4]);
     instance->on = FALSE;
+    instance->pause = FALSE;
     instance->thread_id = 1;
     instance->idle_num = 0;
     instance->version = t + rand();
@@ -1061,6 +1062,11 @@ pthread_handler_t collector_work_thread(void* arg)
 begin:
     if (instance->on)
     {
+        if (instance->pause)
+            sleep(THREAD_SLEEP_NSEC);
+        else
+            goto begin;
+
         item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
         while (item != NULL)
         {
@@ -1604,6 +1610,38 @@ int inception_collector_stop(THD* thd)
     return FALSE;
 }
 
+int inception_collector_pause(THD* thd)
+{
+    if (validate_instance(thd))
+    {
+        my_error(ER_UNKNOWN_COLLECTOR_INSTANCE,MYF(0),thd->lex->name.str);
+        return TRUE;
+    }
+
+    collector_instance_t* instance = NULL;
+    if (load_instance(thd, instance))
+        return TRUE;
+
+    instance->pause = TRUE;
+    return FALSE;
+}
+
+int inception_collector_continue(THD* thd)
+{
+    if (validate_instance(thd))
+    {
+        my_error(ER_UNKNOWN_COLLECTOR_INSTANCE,MYF(0),thd->lex->name.str);
+        return TRUE;
+    }
+
+    collector_instance_t* instance = NULL;
+    if (load_instance(thd, instance))
+        return TRUE;
+
+    instance->pause = FALSE;
+    return FALSE;
+}
+
 int inception_create_collector_instance(THD *thd)
 {
     MYSQL *mysql;
@@ -1863,6 +1901,10 @@ int inception_collector_execute(THD* thd)
             return inception_get_collector_instance_list(thd);
         case INCEPTION_GET_COLLECTOR_INSTANCE_STATUS:
             return inception_set_collector_instance_status(thd);
+        case INCEPTION_PAUSE_COLLECTOR:
+            return inception_collector_pause(thd);
+        case INCEPTION_CONTINUE_COLLECTOR:
+            return inception_collector_continue(thd);
         default:
             return FALSE;
     }

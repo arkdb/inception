@@ -277,6 +277,8 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 #define INCEPTION_SET_COLLECTOR_INSTANCE_THREADS_LIMIT 4
 #define INCEPTION_GET_COLLECTOR_INSTANCE_LIST          5
 #define INCEPTION_GET_COLLECTOR_INSTANCE_STATUS        6
+#define INCEPTION_PAUSE_COLLECTOR                      7
+#define INCEPTION_CONTINUE_COLLECTOR                   8
 
 // typedef struct datacenter_struct datacenter_t;
 // struct datacenter_struct
@@ -655,6 +657,7 @@ struct collector_instance_struct
     int                    tmp_port;
     int                    threads_limit;
     int                    on;
+    int                    pause;
     int                    thread_id;
     int                    idle_num;
     ulong                  version;
