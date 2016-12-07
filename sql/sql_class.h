@@ -637,6 +637,7 @@ struct collector_table_struct
     int                    key_count;
     int                    rows;
     int                    done;
+    uint                   field_done_count;
     collector_field_list_t *collector_field_list;
     LIST_NODE_T(collector_table_t) link;
 };
@@ -683,6 +684,7 @@ struct collector_queue_item_struct
     char                   sql[512];
     ulong                  version;
     int                    type;
+    collector_table_t*     table;
     collector_field_t*     field;
     LIST_NODE_T(collector_queue_item_struct) link;
 };

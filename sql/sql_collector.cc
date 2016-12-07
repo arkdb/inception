@@ -166,7 +166,8 @@ int inception_collector_init(THD* thd)
            `tmp_host` varchar(20) NOT NULL DEFAULT '', \
            `tmp_port` int(11) NOT NULL DEFAULT '0', \
            PRIMARY KEY (`id`), \
-           UNIQUE KEY `uniq_name` (`name`) \
+           UNIQUE KEY `uniq_name` (`name`), \
+           UNIQUE KEY `uniq_host_port` (`host`, `port`) \
            ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
     if (get_mysql_res(&mysql, mysql_res, tmp))
     {
@@ -185,6 +186,9 @@ int inception_collector_init(THD* thd)
            `priority` int(11) NOT NULL DEFAULT '0', \
            `steps` int(11) NOT NULL DEFAULT '10000', \
            `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
+           `period` int(11) NOT NULL DEFAULT '0', \
+           `count_done` tinyint NOT NULL DEFAULT '0', \
+           `dist_count_done` tinyint NOT NULL DEFAULT '0', \
            PRIMARY KEY (`id`), \
            KEY idx_host_port(`host`,`port`) \
            ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
@@ -380,6 +384,7 @@ int clean_table_and_field_flag(collector_instance_t* (&instance))
     while (tmp_table_info != NULL)
     {
         tmp_table_info->done = FALSE;
+        tmp_table_info->field_done_count = 0;
         collector_field_t* tmp_field = LIST_GET_FIRST(tmp_table_info->collector_field_list->field_list);
         while (tmp_field != NULL)
         {
@@ -604,6 +609,18 @@ int load_field(collector_table_t* (&table_info))
         return TRUE;
 }
 
+int calculate_rule(int rule, int count_done, int dist_count_done)
+{
+    int rest = rule;
+    if (count_done == 0 &&
+        ((rule & COLLECTOR_RULE_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
+        rule = rule | COLLECTOR_RULE_COUNT;
+    if (dist_count_done == 0 &&
+        ((rule & COLLECTOR_RULE_DIST_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
+        rule = rule | COLLECTOR_RULE_DIST_COUNT;
+    return rest;
+}
+
 int load_table(THD *thd, collector_instance_t* (&instance))
 {
     MYSQL* mysql;
@@ -620,10 +637,16 @@ int load_table(THD *thd, collector_instance_t* (&instance))
     }
     
     LIST_INIT(instance->collector_table_list->table_list);
-    
-    sprintf(tmp, "select host,port,db,tname,rule,steps,sample_percent \
-            from `collector_data`.`table_dict` where host='%s' and port=%d and refuse=0",
+
+    sprintf(tmp, "select t.host, t.port, t.db, t.tname, t.rule, t.steps, t.sample_percent, \
+            t.count_done, t.dist_count_done\
+            from `collector_data`.`table_dict` t left join `collector_data`.`instance_dict` i \
+            on t.host=i.host and t.port=i.port where t.host='%s' and t.port=%d and refuse=0\
+            and ((i.stop_time <= DATE_SUB(NOW(), INTERVAL t.period MINUTE)) \
+            or (i.stop_time > DATE_SUB(NOW(), INTERVAL t.period MINUTE) \
+            and (dist_count_done=0 or count_done=0)))",
             instance->host, instance->port);
+
     if (get_mysql_res(mysql, source_res, tmp))
     {
         rest = TRUE;
@@ -640,12 +663,13 @@ int load_table(THD *thd, collector_instance_t* (&instance))
         strcpy(table_info->db, source_row[2]);
         strcpy(table_info->tname, source_row[3]);
         table_info->port = atoi(source_row[1]);
-        table_info->rule = atoi(source_row[4]);
+        table_info->rule = calculate_rule(atoi(source_row[4]), atoi(source_row[7]), atoi(source_row[8]));
         table_info->steps = atoi(source_row[5]);
         table_info->sample_percent = atof(source_row[6]);
         table_info->done = FALSE;
         table_info->key_count = 0;
         table_info->rows = 0;
+        table_info->field_done_count = 0;
         memset(table_info->keys, 0, 256*256);
         table_info->collector_field_list =
         (collector_field_list_t*)my_malloc(sizeof(collector_field_list_t), MY_ZEROFILL);
@@ -655,6 +679,13 @@ int load_table(THD *thd, collector_instance_t* (&instance))
         source_row = mysql_fetch_row(source_res);
     }
     mysql_free_result(source_res);
+
+    sprintf(tmp, "update `collector_data`.`table_dict` t left join `collector_data`.`instance_dict` i \
+            on t.host=i.host and t.port=i.port set t.count_done=0, t.dist_count_done=0 \
+            where t.host='%s' and t.port=%d and (i.stop_time <= DATE_SUB(NOW(), INTERVAL t.period MINUTE))",
+            instance->host, instance->port);
+    get_mysql_res(mysql, source_res, tmp);
+
 done:
     source_res=NULL;
     thd->close_all_connections();
@@ -829,10 +860,12 @@ int get_dist_count_process(char* instance_name, char* dist_count_process)
     return FALSE;
 }
 
-int collect_count(MYSQL* mysql, MYSQL* mysql_dc, collector_queue_item_t* item)
+int collect_count(MYSQL* mysql, MYSQL* mysql_dc,
+                  MYSQL* mysql_collector, collector_queue_item_t* item)
 {
     MYSQL_RES* source_res=NULL;
-    MYSQL_ROW source_row;
+    MYSQL_ROW  source_row;
+    char       tmp[1024];
     
     if (get_mysql_res(mysql, source_res, item->sql))
         return TRUE;
@@ -854,12 +887,21 @@ int collect_count(MYSQL* mysql, MYSQL* mysql_dc, collector_queue_item_t* item)
     
     mysql_mutex_lock(&item->field->count_done_mutex);
     item->field->count_done_count++;
+    if (item->field->is_ending
+        && item->field->count_done_count == item->field->count_sended_count)
+    {
+        item->table->field_done_count = item->table->collector_field_list->field_list.count;
+        sprintf(tmp, "update collector_data.table_dict set count_done=1 \
+                where host='%s' and port=%d and db='%s' and tname='%s'",
+                item->host, item->port, item->db, item->tname);
+        get_mysql_res(mysql_collector, source_res, tmp);
+    }
     mysql_mutex_unlock(&item->field->count_done_mutex);
-
     return FALSE;
 }
 
-int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collector_queue_item_t* item)
+int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
+                       MYSQL* mysql_collector, MYSQL* mysql_tmp, collector_queue_item_t* item)
 {
     MYSQL_RES* source_res=NULL;
     MYSQL_ROW  source_row;
@@ -885,7 +927,6 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
         goto done;
     }
 
-    //创建采样count信息存放的表
     sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
              id bigint unsigned  not null primary key auto_increment,\
              value int unsigned not null default 0, \
@@ -897,7 +938,6 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
         rest = TRUE;
         goto done;
     }
-   
     if (get_mysql_res(mysql, source_res, item->sql))
     {
         rest = TRUE;
@@ -955,22 +995,26 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
         
         mysql_mutex_lock(&item->field->dist_count_done_mutex);
         item->field->dist_count_done_count++;
+
         if (item->field->is_ending
             && item->field->dist_count_done_count == item->field->dist_count_sended_count)
         {
-            ulong count = 0;
+            item->table->field_done_count++;
             
+            ulong count = 0;
             sprintf(tmp, "select count(*) from collector_tmp_data_%s_%d.%s_%s_%s",
                     host_, item->port, item->db, item->tname, item->field->name);
             
             if (get_mysql_res(mysql_tmp, source_res, tmp))
             {
                 rest = TRUE;
+                mysql_mutex_unlock(&item->field->dist_count_done_mutex);
                 goto done;
             }
             if (source_res == NULL)
             {
                 rest = TRUE;
+                mysql_mutex_unlock(&item->field->dist_count_done_mutex);
                 goto done;
             }
             source_row= mysql_fetch_row(source_res);
@@ -979,6 +1023,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
             {
                 mysql_free_result(source_res);
                 rest = TRUE;
+                mysql_mutex_unlock(&item->field->dist_count_done_mutex);
                 goto done;
             }
             
@@ -992,12 +1037,22 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc, MYSQL* mysql_tmp, collecto
             if (get_mysql_res(mysql_dc, source_res, tmp))
             {
                 rest = TRUE;
+                mysql_mutex_unlock(&item->field->dist_count_done_mutex);
                 goto done;
             }
             
             sprintf(tmp, "drop table collector_tmp_data_%s_%d.%s_%s_%s",
                     host_, item->port, item->db, item->tname, item->field->name);
             get_mysql_res(mysql_tmp, source_res, tmp);
+
+            if (item->table->field_done_count ==
+                item->table->collector_field_list->field_list.count)
+            {
+                sprintf(tmp, "update collector_data.table_dict set dist_count_done=1 \
+                        where host='%s' and port=%d and db='%s' and tname='%s'",
+                        item->host, item->port, item->db, item->tname);
+                get_mysql_res(mysql_collector, source_res, tmp);
+            }
         }
         mysql_mutex_unlock(&item->field->dist_count_done_mutex);
     }
@@ -1089,13 +1144,13 @@ begin:
             
             if (item->type == COLLECTOR_RULE_COUNT)
             {
-                if (collect_count(&mysql, &mysql_dc, item))
+                if (collect_count(&mysql, &mysql_dc, &mysql_collector, item))
                     goto done;
             }
             
             if (item->type == COLLECTOR_RULE_DIST_COUNT)
             {
-                if (collect_dist_count(&mysql, &mysql_dc, &mysql_tmp, item))
+                if (collect_dist_count(&mysql, &mysql_dc, &mysql_collector, &mysql_tmp, item))
                     goto done;
             }
             
@@ -1156,6 +1211,7 @@ int assemble_item(collector_instance_t* (&instance), collector_table_t* (&table_
     strcpy(item->tname, table_info->tname);
     item->version = instance->version;
     item->field = field;
+    item->table = table_info;
 
     collector_worker_t* worker = LIST_GET_FIRST(instance->collector_worker_list->worker_list);
     while (worker != NULL)
@@ -1420,7 +1476,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
             {
                 if (assemble_fields_value(mysql, table_info,
                                           table_info->collector_field_list,
-                                          field, true))
+                                          field, TRUE))
                 {
                     clean_field_value(table_info->collector_field_list);
                     table_info = LIST_GET_NEXT(link, table_info);
@@ -1430,7 +1486,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
             }
             assemble_fields_value(mysql, table_info,
                                   table_info->collector_field_list,
-                                  field, false);
+                                  field, FALSE);
 
             if (field->done)
                 continue;
@@ -1495,6 +1551,8 @@ int hand_out_item(collector_instance_t* (&instance))
         || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
         if (hand_out_count_sql(&mysql, instance))
             goto done;
+    while(table_info->field_done_count != table_info->collector_field_list->field_list.count)
+        sleep(THREAD_SLEEP_NSEC);
     
     clean_table_and_field_flag(instance);
 
@@ -1502,6 +1560,8 @@ int hand_out_item(collector_instance_t* (&instance))
          || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
         if (hand_out_dist_count_sql(&mysql, instance))
             goto done;
+    while(table_info->field_done_count != table_info->collector_field_list->field_list.count)
+        sleep(THREAD_SLEEP_NSEC);
 done:
     clean_table_and_field_flag(instance);
     return FALSE;
