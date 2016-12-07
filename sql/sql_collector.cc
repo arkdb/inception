@@ -187,8 +187,8 @@ int inception_collector_init(THD* thd)
            `steps` int(11) NOT NULL DEFAULT '10000', \
            `sample_percent` decimal(5,4) NOT NULL DEFAULT '1.0000', \
            `period` int(11) NOT NULL DEFAULT '0', \
-           `count_done` tinyint NOT NULL DEFAULT '0', \
-           `dist_count_done` tinyint NOT NULL DEFAULT '0', \
+           `count_end_time` timestamp NOT NULL DEFAULT '2000-01-01 00:00:00', \
+           `dist_count_end_time` timestamp NOT NULL DEFAULT '2000-01-01 00:00:00', \
            PRIMARY KEY (`id`), \
            KEY idx_host_port(`host`,`port`) \
            ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;");
@@ -626,7 +626,7 @@ int load_table(THD *thd, collector_instance_t* (&instance))
     MYSQL* mysql;
     MYSQL_RES* source_res=NULL;
     MYSQL_ROW source_row;
-    char tmp[1024];
+    char tmp[2048];
     int rest = FALSE;
     
     mysql = thd->get_collector_connection();
@@ -638,13 +638,23 @@ int load_table(THD *thd, collector_instance_t* (&instance))
     
     LIST_INIT(instance->collector_table_list->table_list);
 
-    sprintf(tmp, "select t.host, t.port, t.db, t.tname, t.rule, t.steps, t.sample_percent, \
-            t.count_done, t.dist_count_done\
-            from `collector_data`.`table_dict` t left join `collector_data`.`instance_dict` i \
-            on t.host=i.host and t.port=i.port where t.host='%s' and t.port=%d and refuse=0\
-            and ((i.stop_time <= DATE_SUB(NOW(), INTERVAL t.period MINUTE)) \
-            or (i.stop_time > DATE_SUB(NOW(), INTERVAL t.period MINUTE) \
-            and (dist_count_done=0 or count_done=0)))",
+    sprintf(tmp, "(select host, port, db, tname, rule, steps, sample_percent, '0', '1' \
+            from `collector_data`.`table_dict` where host='%s' and port=%d and refuse=0\
+            and count_end_time <= DATE_SUB(NOW(), INTERVAL period MINUTE) \
+            and dist_count_end_time > DATE_SUB(NOW(), INTERVAL period MINUTE)) \
+            UNION ALL \
+            (select host, port, db, tname, rule, steps, sample_percent, '1', '0' \
+             from `collector_data`.`table_dict` where host='%s' and port=%d and refuse=0\
+             and count_end_time > DATE_SUB(NOW(), INTERVAL period MINUTE) \
+             and dist_count_end_time <= DATE_SUB(NOW(), INTERVAL period MINUTE))\
+            UNION ALL \
+            (select host, port, db, tname, rule, steps, sample_percent, '0', '0' \
+             from `collector_data`.`table_dict` where host='%s' and port=%d and refuse=0\
+             and count_end_time <= DATE_SUB(NOW(), INTERVAL period MINUTE) \
+             and dist_count_end_time <= DATE_SUB(NOW(), INTERVAL period MINUTE))\
+            ",
+            instance->host, instance->port,
+            instance->host, instance->port,
             instance->host, instance->port);
 
     if (get_mysql_res(mysql, source_res, tmp))
@@ -679,12 +689,6 @@ int load_table(THD *thd, collector_instance_t* (&instance))
         source_row = mysql_fetch_row(source_res);
     }
     mysql_free_result(source_res);
-
-    sprintf(tmp, "update `collector_data`.`table_dict` t left join `collector_data`.`instance_dict` i \
-            on t.host=i.host and t.port=i.port set t.count_done=0, t.dist_count_done=0 \
-            where t.host='%s' and t.port=%d and (i.stop_time <= DATE_SUB(NOW(), INTERVAL t.period MINUTE))",
-            instance->host, instance->port);
-    get_mysql_res(mysql, source_res, tmp);
 
 done:
     source_res=NULL;
@@ -891,7 +895,7 @@ int collect_count(MYSQL* mysql, MYSQL* mysql_dc,
         && item->field->count_done_count == item->field->count_sended_count)
     {
         item->table->field_done_count = item->table->collector_field_list->field_list.count;
-        sprintf(tmp, "update collector_data.table_dict set count_done=1 \
+        sprintf(tmp, "update collector_data.table_dict set count_end_time=now() \
                 where host='%s' and port=%d and db='%s' and tname='%s'",
                 item->host, item->port, item->db, item->tname);
         get_mysql_res(mysql_collector, source_res, tmp);
@@ -1048,7 +1052,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
             if (item->table->field_done_count ==
                 item->table->collector_field_list->field_list.count)
             {
-                sprintf(tmp, "update collector_data.table_dict set dist_count_done=1 \
+                sprintf(tmp, "update collector_data.table_dict set dist_count_end_time=now() \
                         where host='%s' and port=%d and db='%s' and tname='%s'",
                         item->host, item->port, item->db, item->tname);
                 get_mysql_res(mysql_collector, source_res, tmp);
