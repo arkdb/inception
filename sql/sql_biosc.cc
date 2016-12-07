@@ -440,7 +440,7 @@ int mysql_find_all_slaves(
     char*       hostname;
 
     sprintf(hosts_sql, "select left(host, locate(':',HOST)-1) host "
-        "from information_schema.PROCESSLIST where COMMAND='Binlog Dump';");
+        "from information_schema.PROCESSLIST where COMMAND like 'Binlog Dump%';");
     if (mysql_real_query(mysql, hosts_sql, strlen(hosts_sql)) ||
        (source_res1 = mysql_store_result(mysql)) == NULL)
         return true;
@@ -1143,12 +1143,11 @@ retry:
         goto error;
 
     return false;
-error:
-    if (retry_count < 3)
-        goto retry;
 
+error:
     /* 如果连接中断，则重建连接 */
-    if (mysql_tmp ==  NULL && mysql_errno(*mysql) == 1158 /* ER_NET_READ_ERROR */)
+    sql_print_information("mysql_execute_sql_with_retry errcode: %d", mysql_errno(*mysql));
+    if (mysql_tmp ==  NULL && mysql_errno(*mysql) == 1160 /* ER_NET_READ_ERROR */)
     {
         if ((mysql_tmp = inception_init_binlog_connection(thd->thd_sinfo->host, 
                 thd->thd_sinfo->port, thd->thd_sinfo->user, 
@@ -1160,6 +1159,10 @@ error:
         }
     }
 
+    if (retry_count < 3)
+        goto retry;
+
+    thd->clear_error();
     my_message(mysql_errno(*mysql), mysql_error(*mysql), MYF(0));
     mysql_sqlcachenode_errmsg_append(thd, sql_cache_node, INC_ERROR_EXECUTE_STAGE);
 
@@ -1549,7 +1552,7 @@ retry:
     if (Threads_connected > thd->variables.inception_osc_critical_connected)
     {
         sprintf(osc_output, "[Copy thread] Threads_connected is %lu, greater than "
-            "inception_osc_critical_connected: %lu, Alter table abort...", 
+            "inception_osc_critical_thread_connected: %lu, Alter table abort...", 
             Threads_connected, thd->variables.inception_osc_critical_connected);
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         sql_cache_node->osc_abort = true;
@@ -1559,8 +1562,8 @@ retry:
     if (Threads_running > thd->variables.inception_osc_critical_running)
     {
         sprintf(osc_output, "[Copy thread] Threads_running is %lu, greater than "
-            "inception_osc_critical_running: %lu, Alter table abort...", 
-            Threads_connected, thd->variables.inception_osc_critical_connected);
+            "inception_osc_critical_thread_running: %lu, Alter table abort...", 
+            Threads_running, thd->variables.inception_osc_critical_running);
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         sql_cache_node->osc_abort = true;
         return true;

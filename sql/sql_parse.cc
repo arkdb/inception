@@ -11461,6 +11461,7 @@ int mysql_check_alter_use_osc_type(
     field_node = LIST_GET_FIRST(table_info->field_lst);
     while (field_node != NULL)
     {
+        insert_column_name[0] = '\0';
         mysql_select_insert_column(thd, field_node->field_name, 
             &insert_use, &select_use, insert_column_name);
 
