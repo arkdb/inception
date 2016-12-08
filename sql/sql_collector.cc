@@ -933,7 +933,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
 
     sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
              id bigint unsigned  not null primary key auto_increment,\
-             value int unsigned not null default 0, \
+             value varchar(200) not null default '', \
              UNIQUE KEY `uniq_value` (`value`) \
              )engine=innodb default charset=utf8;", host_, item->port,
              item->db, item->tname, item->field->name);
