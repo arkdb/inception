@@ -614,10 +614,10 @@ int calculate_rule(int rule, int count_done, int dist_count_done)
     int rest = rule;
     if (count_done == 0 &&
         ((rule & COLLECTOR_RULE_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
-        rule = rule | COLLECTOR_RULE_COUNT;
+        rest = rule | COLLECTOR_RULE_COUNT;
     if (dist_count_done == 0 &&
         ((rule & COLLECTOR_RULE_DIST_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
-        rule = rule | COLLECTOR_RULE_DIST_COUNT;
+        rest = rule | COLLECTOR_RULE_DIST_COUNT;
     return rest;
 }
 
