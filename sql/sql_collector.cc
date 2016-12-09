@@ -611,14 +611,13 @@ int load_field(collector_table_t* (&table_info))
 
 int calculate_rule(int rule, int count_done, int dist_count_done)
 {
-    int rest = rule;
     if (count_done == 0 &&
         ((rule & COLLECTOR_RULE_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
-        rest = rule | COLLECTOR_RULE_COUNT;
+        rule = rule | COLLECTOR_RULE_COUNT;
     if (dist_count_done == 0 &&
         ((rule & COLLECTOR_RULE_DIST_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
-        rest = rule | COLLECTOR_RULE_DIST_COUNT;
-    return rest;
+        rule = rule | COLLECTOR_RULE_DIST_COUNT;
+    return rule;
 }
 
 int load_table(THD *thd, collector_instance_t* (&instance))
@@ -703,7 +702,7 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
     MYSQL_ROW       source_row;
     char            tmp[1024];
     int             rest = FALSE;
-    clock_t         t = clock();
+    time_t          rawtime;
     
     collector_instance_t* tmp_instance = LIST_GET_FIRST(global_collector_instance_cache.instance_list);
     
@@ -743,7 +742,8 @@ int load_instance(THD* thd, collector_instance_t* (&instance))
     instance->pause = FALSE;
     instance->thread_id = 1;
     instance->idle_num = 0;
-    instance->version = t + rand();
+    time(&rawtime);
+    instance->version = rawtime;
     mysql_free_result(source_res);
     
     instance->collector_table_list =
@@ -1553,19 +1553,25 @@ int hand_out_item(collector_instance_t* (&instance))
     
     if ((table_info->rule == COLLECTOR_RULE_ALL
         || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
+    {
         if (hand_out_count_sql(&mysql, instance))
             goto done;
-    while(table_info->field_done_count != table_info->collector_field_list->field_list.count)
-        sleep(THREAD_SLEEP_NSEC);
-    
+        while(table_info->field_done_count != table_info->collector_field_list->field_list.count
+              && instance->on)
+            sleep(THREAD_SLEEP_NSEC);
+    }
+
     clean_table_and_field_flag(instance);
 
     if ((table_info->rule == COLLECTOR_RULE_ALL
          || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
+    {
         if (hand_out_dist_count_sql(&mysql, instance))
             goto done;
-    while(table_info->field_done_count != table_info->collector_field_list->field_list.count)
-        sleep(THREAD_SLEEP_NSEC);
+        while(table_info->field_done_count != table_info->collector_field_list->field_list.count
+              && instance->on)
+            sleep(THREAD_SLEEP_NSEC);
+    }
 done:
     clean_table_and_field_flag(instance);
     return FALSE;
