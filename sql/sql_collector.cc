@@ -1363,6 +1363,7 @@ int hand_out_count_sql(MYSQL* mysql,
             if (!(table_info->rule == COLLECTOR_RULE_ALL
                  || table_info->rule & COLLECTOR_RULE_COUNT))
             {
+                table_done_count++;
                 table_info->done = TRUE;
                 table_info->field_done_count = table_info->collector_field_list->field_list.count;
                 table_info = LIST_GET_NEXT(link, table_info);
@@ -1468,6 +1469,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
             if (!(table_info->rule == COLLECTOR_RULE_ALL
                   || table_info->rule & COLLECTOR_RULE_DIST_COUNT))
             {
+                table_done_count++;
                 table_info->done = TRUE;
                 table_info->field_done_count = table_info->collector_field_list->field_list.count;
                 table_info = LIST_GET_NEXT(link, table_info);
