@@ -611,11 +611,12 @@ int load_field(collector_table_t* (&table_info))
 
 int calculate_rule(int rule, int count_done, int dist_count_done)
 {
+    int origin_rule = rule;
     if (count_done == 0 &&
-        ((rule & COLLECTOR_RULE_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
+        ((origin_rule & COLLECTOR_RULE_COUNT) > 0 || origin_rule == COLLECTOR_RULE_ALL))
         rule = rule | COLLECTOR_RULE_COUNT;
     if (dist_count_done == 0 &&
-        ((rule & COLLECTOR_RULE_DIST_COUNT) > 0 || rule == COLLECTOR_RULE_ALL))
+        ((origin_rule & COLLECTOR_RULE_DIST_COUNT) > 0 || origin_rule == COLLECTOR_RULE_ALL))
         rule = rule | COLLECTOR_RULE_DIST_COUNT;
     return rule;
 }
@@ -932,10 +933,8 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
     }
 
     sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
-             id bigint unsigned  not null primary key auto_increment,\
-             value varchar(200) not null default '', \
-             UNIQUE KEY `uniq_value` (`value`) \
-             )engine=innodb default charset=utf8;", host_, item->port,
+             value varchar(200) not null default '' primary key\
+             )engine=innodb default charset=utf8mb4;", host_, item->port,
              item->db, item->tname, item->field->name);
     if (get_mysql_res(mysql_tmp, source_res, tmp))
     {
@@ -1358,8 +1357,16 @@ int hand_out_count_sql(MYSQL* mysql,
     while (table_done_count != instance->collector_table_list->table_list.count)
     {
         table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-        while(table_info != NULL)
+        while(table_info != NULL && instance->on)
         {
+            if (!(table_info->rule == COLLECTOR_RULE_ALL
+                 || table_info->rule & COLLECTOR_RULE_COUNT))
+            {
+                table_info->done = TRUE;
+                table_info = LIST_GET_NEXT(link, table_info);
+                continue;
+            }
+
             //判断表是否已做完
             if (table_info->done)
             {
@@ -1452,8 +1459,16 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
     while (table_done_count != instance->collector_table_list->table_list.count)
     {
         table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-        while(table_info != NULL)
+        while(table_info != NULL && instance->on)
         {
+            if (!(table_info->rule == COLLECTOR_RULE_ALL
+                  || table_info->rule & COLLECTOR_RULE_DIST_COUNT))
+            {
+                table_info->done = TRUE;
+                table_info = LIST_GET_NEXT(link, table_info);
+                continue;
+            }
+
             //判断表是否已做完
             if (table_info->done)
             {
@@ -1496,7 +1511,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
                 continue;
 
             int limits = table_info->steps * table_info->sample_percent;
-            sprintf(tmp, "select %s from %s.%s force index(primary) \
+            sprintf(tmp, "select %s, count(*) from %s.%s force index(primary) \
                     where 1=1 and ", field->name, table_info->db, table_info->tname);
             for (int j = table_info->key_count; j > 0; --j)
             {
@@ -1542,7 +1557,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
 int hand_out_item(collector_instance_t* (&instance))
 {
     MYSQL mysql;
-    
+
     collector_table_t *table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
     if (table_info == NULL)
         return TRUE;
@@ -1551,27 +1566,46 @@ int hand_out_item(collector_instance_t* (&instance))
                              remote_system_user, remote_system_password, NULL))
         return TRUE;
     
-    if ((table_info->rule == COLLECTOR_RULE_ALL
-        || table_info->rule & COLLECTOR_RULE_COUNT) && instance->on)
+    if (hand_out_count_sql(&mysql, instance))
+        goto done;
+
+    table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+    while (table_info != NULL)
     {
-        if (hand_out_count_sql(&mysql, instance))
-            goto done;
-        while(table_info->field_done_count != table_info->collector_field_list->field_list.count
-              && instance->on)
+        if (table_info->done)
+        {
+            table_info = LIST_GET_NEXT(link, table_info);
+            continue;
+        }
+        else
+        {
             sleep(THREAD_SLEEP_NSEC);
+            table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+            continue;
+        }
     }
 
     clean_table_and_field_flag(instance);
 
-    if ((table_info->rule == COLLECTOR_RULE_ALL
-         || table_info->rule & COLLECTOR_RULE_DIST_COUNT) && instance->on)
+    if (hand_out_dist_count_sql(&mysql, instance))
+        goto done;
+
+    table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+    while (table_info != NULL)
     {
-        if (hand_out_dist_count_sql(&mysql, instance))
-            goto done;
-        while(table_info->field_done_count != table_info->collector_field_list->field_list.count
-              && instance->on)
+        if (table_info->done)
+        {
+            table_info = LIST_GET_NEXT(link, table_info);
+            continue;
+        }
+        else
+        {
             sleep(THREAD_SLEEP_NSEC);
+            table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+            continue;
+        }
     }
+
 done:
     clean_table_and_field_flag(instance);
     return FALSE;
