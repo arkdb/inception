@@ -25,6 +25,7 @@
 #include "sql_connect.h"
 
 #define CACHE_QUEUE_LENGTH            1000
+#define LOOP_TIMES                    15
 
 #define COLLECTOR_RULE_ALL            0
 #define COLLECTOR_RULE_COUNT          1
@@ -1135,7 +1136,7 @@ begin:
         item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
         while (item != NULL)
         {
-            if (loop_times > 15)
+            if (loop_times > LOOP_TIMES)
             {
                 mysql_mutex_lock(&instance->collector_worker_mutex);
                 instance->idle_num--;
@@ -1162,7 +1163,7 @@ begin:
             my_free(item);
             item = next_item;
         }
-        if (loop_times == 15)
+        if (loop_times == LOOP_TIMES)
         {
             mysql_mutex_lock(&instance->collector_worker_mutex);
             instance->idle_num++;
@@ -1559,6 +1560,26 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
     return FALSE;
 }
 
+int wait_last_time_hand_out(collector_instance_t* (&instance))
+{
+    collector_table_t* table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
+    while (table_info != NULL)
+    {
+        if (table_info->done &&
+            table_info->field_done_count == table_info->collector_field_list->field_list.count)
+        {
+            table_info = LIST_GET_NEXT(link, table_info);
+            continue;
+        }
+        else
+        {
+            sleep(THREAD_SLEEP_NSEC);
+            continue;
+        }
+    }
+    return FALSE;
+}
+
 int hand_out_item(collector_instance_t* (&instance))
 {
     MYSQL mysql;
@@ -1566,50 +1587,20 @@ int hand_out_item(collector_instance_t* (&instance))
     collector_table_t *table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
     if (table_info == NULL)
         return TRUE;
-    
+
     if (get_mysql_connection(&mysql, table_info->host, table_info->port,
                              remote_system_user, remote_system_password, NULL))
         return TRUE;
-    
+
     if (hand_out_count_sql(&mysql, instance))
         goto done;
-
-    table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-    while (table_info != NULL)
-    {
-        if (table_info->done &&
-            table_info->field_done_count == table_info->collector_field_list->field_list.count)
-        {
-            table_info = LIST_GET_NEXT(link, table_info);
-            continue;
-        }
-        else
-        {
-            sleep(THREAD_SLEEP_NSEC);
-            continue;
-        }
-    }
+    wait_last_time_hand_out(instance);
 
     clean_table_and_field_flag(instance);
 
     if (hand_out_dist_count_sql(&mysql, instance))
         goto done;
-
-    table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-    while (table_info != NULL)
-    {
-        if (table_info->done &&
-            table_info->field_done_count == table_info->collector_field_list->field_list.count)
-        {
-            table_info = LIST_GET_NEXT(link, table_info);
-            continue;
-        }
-        else
-        {
-            sleep(THREAD_SLEEP_NSEC);
-            continue;
-        }
-    }
+    wait_last_time_hand_out(instance);
 
 done:
     clean_table_and_field_flag(instance);
