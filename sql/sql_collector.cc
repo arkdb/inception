@@ -933,7 +933,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
     }
 
     sprintf (tmp, "create table collector_tmp_data_%s_%d.%s_%s_%s(\
-             value varchar(200) not null default '' primary key\
+             value varchar(191) not null default '' primary key\
              )engine=innodb default charset=utf8mb4;", host_, item->port,
              item->db, item->tname, item->field->name);
     if (get_mysql_res(mysql_tmp, source_res, tmp))
@@ -978,7 +978,7 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
             }
             else
             {
-                str_append(insert_sql, "('NULL'),");
+                str_append(insert_sql, "(''),");
             }
             source_row= mysql_fetch_row(source_res);
         }
@@ -1363,6 +1363,7 @@ int hand_out_count_sql(MYSQL* mysql,
                  || table_info->rule & COLLECTOR_RULE_COUNT))
             {
                 table_info->done = TRUE;
+                table_info->field_done_count = table_info->collector_field_list->field_list.count;
                 table_info = LIST_GET_NEXT(link, table_info);
                 continue;
             }
@@ -1377,6 +1378,7 @@ int hand_out_count_sql(MYSQL* mysql,
             
             if (field == NULL)
             {
+                table_info->field_done_count = table_info->collector_field_list->field_list.count;
                 table_info->done = TRUE;
                 table_done_count++;
                 continue;
@@ -1389,6 +1391,7 @@ int hand_out_count_sql(MYSQL* mysql,
                                           field, TRUE))
                 {
                     clean_field_value(table_info->collector_field_list);
+                    table_info->field_done_count = table_info->collector_field_list->field_list.count;
                     table_info->done = TRUE;
                     table_done_count++;
                     table_info = LIST_GET_NEXT(link, table_info);
@@ -1465,6 +1468,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
                   || table_info->rule & COLLECTOR_RULE_DIST_COUNT))
             {
                 table_info->done = TRUE;
+                table_info->field_done_count = table_info->collector_field_list->field_list.count;
                 table_info = LIST_GET_NEXT(link, table_info);
                 continue;
             }
@@ -1498,6 +1502,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
                                           field, TRUE))
                 {
                     clean_field_value(table_info->collector_field_list);
+                    table_info->field_done_count++;
                     table_info = LIST_GET_NEXT(link, table_info);
                     continue;
                 }
@@ -1572,7 +1577,8 @@ int hand_out_item(collector_instance_t* (&instance))
     table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
     while (table_info != NULL)
     {
-        if (table_info->done)
+        if (table_info->done &&
+            table_info->field_done_count == table_info->collector_field_list->field_list.count)
         {
             table_info = LIST_GET_NEXT(link, table_info);
             continue;
@@ -1580,7 +1586,6 @@ int hand_out_item(collector_instance_t* (&instance))
         else
         {
             sleep(THREAD_SLEEP_NSEC);
-            table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
             continue;
         }
     }
@@ -1593,7 +1598,8 @@ int hand_out_item(collector_instance_t* (&instance))
     table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
     while (table_info != NULL)
     {
-        if (table_info->done)
+        if (table_info->done &&
+            table_info->field_done_count == table_info->collector_field_list->field_list.count)
         {
             table_info = LIST_GET_NEXT(link, table_info);
             continue;
@@ -1601,7 +1607,6 @@ int hand_out_item(collector_instance_t* (&instance))
         else
         {
             sleep(THREAD_SLEEP_NSEC);
-            table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
             continue;
         }
     }
