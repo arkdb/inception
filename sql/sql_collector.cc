@@ -1049,14 +1049,10 @@ int collect_dist_count(MYSQL* mysql, MYSQL* mysql_dc,
                     host_, item->port, item->db, item->tname, item->field->name);
             get_mysql_res(mysql_tmp, source_res, tmp);
 
-            if (item->table->field_done_count ==
-                item->table->collector_field_list->field_list.count)
-            {
-                sprintf(tmp, "update collector_data.table_dict set dist_count_end_time=now() \
-                        where host='%s' and port=%d and db='%s' and tname='%s'",
-                        item->host, item->port, item->db, item->tname);
-                get_mysql_res(mysql_collector, source_res, tmp);
-            }
+            sprintf(tmp, "update collector_data.table_dict set dist_count_end_time=now() \
+                    where host='%s' and port=%d and db='%s' and tname='%s'",
+                    item->host, item->port, item->db, item->tname);
+            get_mysql_res(mysql_collector, source_res, tmp);
         }
         mysql_mutex_unlock(&item->field->dist_count_done_mutex);
     }
