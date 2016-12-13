@@ -105,7 +105,7 @@ using std::min;
 #endif
 #endif
 
-static ulong start_timer(void)
+ulong start_timer(void)
 {
 #if defined(__WIN__)
     return clock();
@@ -16193,9 +16193,13 @@ int mysql_backup_single_statement(
                 mysql_errno(mysql) == ER_OUT_OF_RESOURCES)
                 goto error;
 
-            if (retrycount++ <= 3)
+            if (++retrycount <= 3)
             {
                 //从当前语句BINLOG位置开始重试3次，如果3次都失败则退出
+                sql_print_warning("Dump binlog error: '%s', retry: %d",
+                    thd->get_stmt_da()->message(), retrycount);
+                thd->clear_error();
+                mysql_get_master_version(mysql, mi);
                 if (mysql_request_binlog_dump(mysql, sql_cache_node->start_binlog_file,
                       sql_cache_node->start_binlog_pos, 0))
                     goto error;
@@ -16987,7 +16991,8 @@ int mysql_execute_all_statement(THD* thd)
     while (!thd->killed && sql_cache_node != NULL)
     {
         if (sql_cache_node->optype != SQLCOM_INCEPTION &&
-            (exe_err = mysql_remote_execute_command(thd, mysql, sql_cache_node)) == TRUE)
+            (exe_err = mysql_remote_execute_command(thd, 
+                  thd->get_audit_connection(), sql_cache_node)) == TRUE)
             break;
 
         mysql_sleep(thd);

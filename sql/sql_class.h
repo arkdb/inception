@@ -282,6 +282,17 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 //     char    datacenter_name[FN_LEN+1];
 // };
 //
+typedef struct inception_conn_struct inception_conn_t;
+struct inception_conn_struct{
+  MYSQL mysql;
+  char  user[USERNAME_CHAR_LENGTH + 1];
+  char  passwd[MAX_PASSWORD_LENGTH + 1];
+  char  host[HOSTNAME_LENGTH + 1];
+  uint port;
+  ulong wait_timeout;
+  ulong start_timer;
+};
+
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
@@ -4635,24 +4646,19 @@ public:
   MYSQL* get_backup_connection();
   MYSQL* get_transfer_connection();
   void close_all_connections();
+  void close_audit_connections();
 
 private:
   bool init_audit_connection();
   bool audit_conn_inited;
-  struct {
-    MYSQL mysql;
-    char  user[USERNAME_CHAR_LENGTH + 1];
-    char  passwd[MAX_PASSWORD_LENGTH + 1];
-    char  host[HOSTNAME_LENGTH + 1];
-    uint port;
-  } audit_conn;
 
+  inception_conn_t audit_conn;
   bool init_backup_connection();
   bool backup_conn_inited;
   bool init_transfer_connection();
   bool transfer_conn_inited;
-  MYSQL backup_conn;
-  MYSQL transfer_conn;
+  inception_conn_t backup_conn;
+  inception_conn_t transfer_conn;
 };
 
 
@@ -5869,6 +5875,7 @@ int truncate_inception_commit(const char* msg, int length);
 int mysql_check_identified(THD* thd, char* name, int len);
 double my_rnd(struct rand_struct *rand_st);
 int handle_fatal_signal_low(THD* thd);
+ulong start_timer(void);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */
