@@ -1151,8 +1151,9 @@ reconnect:
         audit_conn_inited = false;
         /* update the timer */
         audit_conn.start_timer = start_timer();
-        sql_print_information("audit connection closed(timeout: %d), reconnect", 
-            audit_conn.wait_timeout);
+        sql_print_information("audit connection closed (wait_timeout: %d, "
+            "host: %s, user: %s, port: %d), reconnect", 
+            audit_conn.wait_timeout, audit_conn.host, audit_conn.user, audit_conn.port);
         goto reconnect;
     }
     return &audit_conn.mysql;
@@ -1221,7 +1222,7 @@ reconnect:
         backup_conn_inited = false;
         /* update the timer */
         backup_conn.start_timer = start_timer();
-        sql_print_information("backup connection closed(timeout: %d), reconnect", 
+        sql_print_information("backup connection closed (wait_timeout: %d), reconnect", 
             backup_conn.wait_timeout);
         goto reconnect;
     }
@@ -1284,7 +1285,7 @@ reconnect:
         transfer_conn_inited = false;
         /* update the timer */
         transfer_conn.start_timer = start_timer();
-        sql_print_information("transfer connection closed(timeout: %d), reconnect", 
+        sql_print_information("transfer connection closed (wait_timeout: %d), reconnect", 
             transfer_conn.wait_timeout);
         goto reconnect;
     }

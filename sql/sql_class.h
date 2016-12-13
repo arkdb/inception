@@ -54,6 +54,16 @@
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
+
 #define OPTION_CPY(OPTION_TO,OPTION_FROM)\
 do{\
     strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
