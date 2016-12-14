@@ -6360,6 +6360,11 @@ type:
             Lex->type|= (AUTO_INCREMENT_FLAG | NOT_NULL_FLAG | UNSIGNED_FLAG |
               UNIQUE_FLAG);
           }
+        | JSON_SYM
+        {
+            Lex->charset=&my_charset_bin;
+            $$=MYSQL_TYPE_JSON;
+        }
         ;
 
 // spatial_type:
