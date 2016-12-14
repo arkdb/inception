@@ -2726,7 +2726,7 @@ reconnect:
                     (ulonglong)thd->variables.inception_biosc_lock_table_max_time * 10000000)
                 {
                     sprintf(osc_output, "[Master thread] Table locked timeout(%ds), "
-                        "unlock them and retry, wait %d(s) before lock again", 
+                        "unlock them and retry, wait %d(ms) before lock again", 
                         thd->variables.inception_biosc_lock_table_max_time,
                         thd->variables.inception_biosc_retry_wait_time);
                     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
