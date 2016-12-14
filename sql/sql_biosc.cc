@@ -2488,7 +2488,7 @@ int inception_check_biosc_abort(
     int*              asc_count
 )
 {
-    if (first_delay >= delay_time || delay_time > last_delay_time)
+    if (first_delay < delay_time || delay_time > last_delay_time)
     {
         *asc_count = *asc_count + 1;
         if (*asc_count > 20)
@@ -2741,7 +2741,7 @@ reconnect:
                     }
 
                     set_timespec_nsec(abstime, thd->variables.inception_biosc_retry_wait_time*
-                        1000 * 1000000ULL);
+                        1000000ULL);
                     mysql_mutex_lock(&thd->sleep_lock);
                     mysql_cond_timedwait(&thd->sleep_cond, &thd->sleep_lock, &abstime);
                     mysql_mutex_unlock(&thd->sleep_lock);

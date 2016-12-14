@@ -88,8 +88,5 @@ inception get processlist;
 7. state:表示在当前命令下，执行的状态是什么，状态包括INIT（初始阶段），CHECKING（正在审核），EXECUTING（正在执行），DEINIT（退出），BACKUP（正在备份）。
 8. time:表示当前语句执行所用时间。
 9. info:显示当前正在执行的语句。
-10. progress:显示当前执行语句块进度，已执行sql数/sql总数。
-
-
-
-
+10. progress:显示当前执行语句块进度，已执行sql数/sql总数，如果是审核阶段，则只显示当前已经分析了多少行SQL了，因为现在还没有办法知道当前任务总共有多少语句。
+11. current_db：显示当前审核语句所处的数据库名，只针对审核的一个列信息。
