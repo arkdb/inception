@@ -1140,7 +1140,7 @@ begin:
         }
 
         item = LIST_GET_FIRST(thd->collector_queue_item_list->item_list);
-        while (item != NULL)
+        while (item != NULL && instance->on)
         {
             if (loop_times > LOOP_TIMES)
             {
@@ -1361,7 +1361,7 @@ int hand_out_count_sql(MYSQL* mysql,
     uint table_done_count = 0;
     collector_table_t* table_info;
     
-    while (table_done_count != instance->collector_table_list->table_list.count)
+    while (table_done_count != instance->collector_table_list->table_list.count && instance->on)
     {
         table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
         while(table_info != NULL && instance->on)
@@ -1467,7 +1467,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
     uint table_done_count = 0;
     collector_table_t* table_info;
     
-    while (table_done_count != instance->collector_table_list->table_list.count)
+    while (table_done_count != instance->collector_table_list->table_list.count && instance->on)
     {
         table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
         while(table_info != NULL && instance->on)
@@ -1571,7 +1571,7 @@ int hand_out_dist_count_sql(MYSQL *mysql, collector_instance_t* (&instance))
 int wait_last_time_hand_out(collector_instance_t* (&instance))
 {
     collector_table_t* table_info = LIST_GET_FIRST(instance->collector_table_list->table_list);
-    while (table_info != NULL)
+    while (table_info != NULL && instance->on)
     {
         if (table_info->done &&
             table_info->field_done_count == table_info->collector_field_list->field_list.count)
