@@ -1110,7 +1110,7 @@ static Sys_var_int32 Sys_inception_biosc_retry_wait_time(
     "inception_biosc_retry_wait_time",
     "the wait timeout period when rename table, when timeout, then alter table retry ",
     SESSION_VAR(inception_biosc_retry_wait_time), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(1, 1024), DEFAULT(1), BLOCK_SIZE(1));
+    VALID_RANGE(1, 100000), DEFAULT(100), BLOCK_SIZE(1));
 
 static Sys_var_int32 Sys_inception_biosc_min_delay_time(
     "inception_biosc_min_delay_time",
