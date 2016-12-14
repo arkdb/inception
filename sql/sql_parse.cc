@@ -17165,8 +17165,11 @@ int mysql_execute_commit(THD *thd)
 
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
                     if(mysql_backup_sql(thd, mi, mysql, sql_cache_node) && next_sql_cache_node)
+                    {
+                        mysql_get_master_version(mysql, mi);
                         mysql_request_binlog_dump(mysql, next_sql_cache_node->start_binlog_file,
                           next_sql_cache_node->start_binlog_pos, 0);
+                    }
 
                     sql_cache_node = next_sql_cache_node;
                 }

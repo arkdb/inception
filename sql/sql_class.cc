@@ -1146,12 +1146,13 @@ reconnect:
       && !strcmp(audit_conn.host, thd_sinfo->host)
       && audit_conn.port == thd_sinfo->port)
   {
-    if (start_timer() - audit_conn.start_timer > audit_conn.wait_timeout * CLOCKS_PER_SEC)
+    if (start_timer() - audit_conn.start_timer > 
+        (audit_conn.wait_timeout * CLOCKS_PER_SEC - 10))
     {
         audit_conn_inited = false;
         /* update the timer */
         audit_conn.start_timer = start_timer();
-        sql_print_information("audit connection closed (wait_timeout: %d, "
+        sql_print_information("audit connection closed (wait_timeout: %ld, "
             "host: %s, user: %s, port: %d), reconnect", 
             audit_conn.wait_timeout, audit_conn.host, audit_conn.user, audit_conn.port);
         goto reconnect;
@@ -1217,7 +1218,8 @@ reconnect:
   }
   else
   {
-    if (start_timer() - backup_conn.start_timer > backup_conn.wait_timeout * CLOCKS_PER_SEC)
+    if (start_timer() - backup_conn.start_timer > 
+        (backup_conn.wait_timeout * CLOCKS_PER_SEC - 10))
     {
         backup_conn_inited = false;
         /* update the timer */
@@ -1280,7 +1282,8 @@ reconnect:
   }
   else
   {
-    if (start_timer() - transfer_conn.start_timer > transfer_conn.wait_timeout * CLOCKS_PER_SEC)
+    if (start_timer() - transfer_conn.start_timer > 
+        (transfer_conn.wait_timeout * CLOCKS_PER_SEC - 10))
     {
         transfer_conn_inited = false;
         /* update the timer */
