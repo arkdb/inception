@@ -125,6 +125,10 @@ int get_mysql_connection(MYSQL* conn, char* host, uint port, char* user, char* p
 
 int get_mysql_res(MYSQL* conn, MYSQL_RES* (&mysql_res), char* sql)
 {
+    int retry_times = 0;
+retry:
+    if (retry_times == 3)
+        return TRUE;
     if (mysql_real_query(conn, sql, strlen(sql)))
     {
         if (mysql_errno(conn) != 1050 && mysql_errno(conn) != 1007/*ER_TABLE_EXISTS_ERROR*/)
@@ -132,6 +136,12 @@ int get_mysql_res(MYSQL* conn, MYSQL_RES* (&mysql_res), char* sql)
             if (mysql_errno(conn) == 1062)
                 my_error(ER_DUP_KEY, MYF(0), mysql_error(conn));
             sql_print_information(mysql_error(conn));
+            if (mysql_errno(conn) == 1213/*ER_Deadlock*/)
+            {
+                sleep(THREAD_SLEEP_NSEC);
+                retry_times++;
+                goto retry;
+            }
             return TRUE;
         }
     }
