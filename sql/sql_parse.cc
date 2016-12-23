@@ -9317,6 +9317,9 @@ mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field)
     case MYSQL_TYPE_BLOB:
         strcpy(field_info->data_type, "BLOB");
         break;
+    case MYSQL_TYPE_JSON:
+        strcpy(field_info->data_type, "JSON");
+        break;
     default:
         strcpy(field_info->data_type, "UNKNOWN");
         break;
@@ -9765,7 +9768,8 @@ int mysql_field_is_blob(
     if (real_type== MYSQL_TYPE_BLOB ||
       real_type== MYSQL_TYPE_TINY_BLOB ||
       real_type== MYSQL_TYPE_MEDIUM_BLOB ||
-      real_type== MYSQL_TYPE_LONG_BLOB)
+      real_type== MYSQL_TYPE_LONG_BLOB ||
+      real_type== MYSQL_TYPE_JSON)
     {
         return TRUE;
     }
@@ -14925,6 +14929,7 @@ int mysql_get_field_string_for_tranfer(
         case MYSQL_TYPE_MEDIUM_BLOB://16m
         case MYSQL_TYPE_LONG_BLOB://4G
         case MYSQL_TYPE_BLOB://65K
+        case MYSQL_TYPE_JSON:
         case MYSQL_TYPE_STRING:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_VARCHAR:
@@ -15073,6 +15078,7 @@ int mysql_get_field_string(
         case MYSQL_TYPE_MEDIUM_BLOB://16m
         case MYSQL_TYPE_LONG_BLOB://4G
         case MYSQL_TYPE_BLOB://65K
+        case MYSQL_TYPE_JSON:
         case MYSQL_TYPE_STRING:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_VARCHAR:
@@ -15848,6 +15854,7 @@ int mysql_prepare_field(
     }
 
     switch (sql_field->real_type) {
+    case MYSQL_TYPE_JSON:
     case MYSQL_TYPE_BLOB:
     case MYSQL_TYPE_MEDIUM_BLOB:
     case MYSQL_TYPE_TINY_BLOB:

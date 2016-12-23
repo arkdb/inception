@@ -1951,7 +1951,8 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
         if (sql_field->charset && sql_field->sql_type != MYSQL_TYPE_BLOB && 
                 sql_field->sql_type != MYSQL_TYPE_LONG_BLOB &&
                 sql_field->sql_type != MYSQL_TYPE_TINY_BLOB && 
-                sql_field->sql_type != MYSQL_TYPE_MEDIUM_BLOB)
+                sql_field->sql_type != MYSQL_TYPE_MEDIUM_BLOB &&
+                sql_field->sql_type != MYSQL_TYPE_JSON)
         {
             my_error(ER_CHARSET_ON_COLUMN, MYF(0), sql_field->field_name, tablename);
             mysql_errmsg_append(thd);
