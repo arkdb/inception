@@ -8642,8 +8642,8 @@ int inception_stop_transfer(
 
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
-    inception_cut_master_positions(thd, datacenter);
     inception_wait_and_free_mts(datacenter, false);
+    inception_cut_master_positions(thd, datacenter);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
