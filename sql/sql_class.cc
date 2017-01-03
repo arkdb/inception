@@ -1098,6 +1098,25 @@ ulong mysql_fetch_wait_timeout(
     DBUG_RETURN(wait_timeout);
 }
 
+int restore_connection_context(THD* thd, MYSQL* mysql)
+{
+    char sql[1024];
+
+    if (strlen(thd->thd_sinfo->db) == 0)
+        return false;
+
+    sprintf(sql, "USE `%s`", thd->thd_sinfo->db);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(thd);
+        return true; 
+    }
+
+    sql_print_information("Restore connection context, Database: `%s`", thd->thd_sinfo->db);
+    return false;
+}
+
 bool THD::init_audit_connection()
 {
   MYSQL *mysql = &audit_conn.mysql;
@@ -1128,7 +1147,8 @@ bool THD::init_audit_connection()
   audit_conn_inited= TRUE;
   audit_conn.wait_timeout  = mysql_fetch_wait_timeout(mysql);
   audit_conn.start_timer = start_timer();
-  return TRUE;
+
+  return !restore_connection_context(this, mysql);
 }
 
 MYSQL* THD::get_audit_connection()
