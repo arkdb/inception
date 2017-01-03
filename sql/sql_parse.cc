@@ -8685,8 +8685,22 @@ inception_cut_master_positions(
         return true;
 
     if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        sql_print_information("[%s] inception master position cut error: %s",
+            datacenter->datacenter_name, mysql_error(mysql));
+        thd->close_all_connections();
         return true;
+    }
 
+    if (mysql_real_query(mysql, "Commit", strlen("Commit")))
+    {
+        sql_print_information("[%s] inception master position cut error: %s",
+            datacenter->datacenter_name, mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
+
+    thd->close_all_connections();
     return false;
 }
 
@@ -17748,9 +17762,10 @@ int handle_fatal_signal_low(THD* thd)
     sql_cache_node = thd->current_execute;
     my_safe_printf_stderr("Query (%p): ", thd->query());
     my_safe_printf_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
+    my_safe_printf_stderr("\n ");
 
     if (sql_cache_node)
-        my_safe_printf_stderr("\nCurrent DB Name: %s\n", sql_cache_node->env_dbname); 
+        my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
 
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE || 
         inception_get_type(thd) == INCEPTION_TYPE_CHECK ||
