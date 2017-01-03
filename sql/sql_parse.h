@@ -238,5 +238,6 @@ int mysql_extract_update_tables( THD* thd, sql_cache_node_t* sql_cache_node);
 int mysql_check_dml_query_tables(THD* thd);
 uint mysql_get_explain_info(THD* thd, MYSQL*  mysql, char*  select_sql, explain_info_t** explain_ret, int report_err, char* dbname);
 int mysql_anlyze_explain(THD* thd, explain_info_t* explain);
+int inception_transfer_write_table_map( Master_info* mi, transfer_cache_t* datacenter, table_info_t*     table_info);
 
 #endif /* SQL_PARSE_INCLUDED */
