@@ -4376,6 +4376,7 @@ inception_transfer_load_datacenter(
     mysql_free_result(source_res);
     datacenter->checkpoint_running=false;
     datacenter->ddl_cache = (ddl_cache_t*)my_malloc(sizeof(ddl_cache_t), MY_ZEROFILL);
+    datacenter->slave_first_set = false;
 
     mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
     mysql_mutex_init(NULL, &datacenter->checkpoint_lock, MY_MUTEX_INIT_FAST);
@@ -7187,9 +7188,14 @@ inception_transfer_get_slaves_position(
     datacenter = mi->datacenter;
     thd = mi->thd;
 
-    if (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[SLAVE_SYNC_POSITION]) != 0)
+    /* set the slaves position first time */
+    if (datacenter->slave_first_set == true &&
+        (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[SLAVE_SYNC_POSITION]) != 0))
+    {
         return false;
+    }
 
+    datacenter->slave_first_set = true;
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while (slave)
     {
@@ -7959,10 +7965,18 @@ inception_transfer_delete(
     //fetch the min id for faster delete
     sprintf(sql_select, "SELECT id FROM `%s`.`%s` limit 1", datacenter_name, tablename);
     if (mysql_real_query(mysql, sql_select, strlen(sql_select)))
+    {
+        sql_print_information("[%s] Background delete error(id delimitation): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     if ((source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        sql_print_information("[%s] Background delete error(store result): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     source_row = mysql_fetch_row(source_res1);
     if (source_row != NULL)
@@ -7975,7 +7989,11 @@ inception_transfer_delete(
         datacenter_name, tablename, period, minid);
 
     if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        sql_print_information("[%s] Background delete error(real delete): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     affected_rows = mysql_affected_rows(mysql);
     if (affected_rows == 0)
@@ -8535,6 +8553,29 @@ retry0:
 }
 
 int
+inception_cut_master_positions(
+    THD* thd,
+    transfer_cache_t* datacenter
+)
+{
+    char sql[1024];
+    MYSQL* mysql;
+
+    sprintf(sql, "UPDATE `%s`.master_positions set binlog_file = '%s', "
+        " binlog_position = %d where datacenter_epoch = '%s'",
+        datacenter->datacenter_name, datacenter->cbinlog_file, 
+        datacenter->cbinlog_position, datacenter->datacenter_epoch);
+    mysql = thd->get_transfer_connection();
+    if (mysql == NULL)
+        return true;
+
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+        return true;
+
+    return false;
+}
+
+int
 inception_wait_and_free_mts(
     transfer_cache_t* datacenter,
     int need_lock
@@ -8601,6 +8642,7 @@ int inception_stop_transfer(
 
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
+    inception_cut_master_positions(thd, datacenter);
     inception_wait_and_free_mts(datacenter, false);
 
     mysql_mutex_unlock(&datacenter->run_lock);

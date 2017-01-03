@@ -654,6 +654,7 @@ struct transfer_cache_struct
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+    int slave_first_set; // if false, then set not consider the option_list, only once
     
     //for row event primary key columns
     ddl_cache_t* ddl_cache;
