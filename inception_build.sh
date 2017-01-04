@@ -20,7 +20,7 @@ if [ $platform == "Xcode" ]
 then
     Gplatform="-G Xcode"
 else
-    makerule="make -j 23 install"
+    makerule="make install -j 24"
 fi
 
 if [ -d $debug_dir ]
