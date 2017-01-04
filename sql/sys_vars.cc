@@ -963,7 +963,7 @@ static Sys_var_ulong Sys_inception_osc_chunk_size(
     "explicitly, however, then it disables the dynamic adjustment behavior and tries "
     "to make all chunks exactly the specified number of rows.",
     SESSION_VAR(inception_osc_chunk_size), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(1, 1024*1024), DEFAULT(1000), BLOCK_SIZE(1));
+    VALID_RANGE(0, 1024*1024), DEFAULT(1000), BLOCK_SIZE(1));
 
 static Sys_var_double Sys_inception_osc_chunk_size_limit(
     "inception_osc_chunk_size_limit",
