@@ -1068,6 +1068,56 @@ THD::THD(bool enable_plugins)
 #endif
 }
 
+ulong mysql_fetch_wait_timeout(
+    MYSQL* mysql
+)
+{
+    char set_format[64];
+    MYSQL_RES * source_res;
+    MYSQL_ROW source_row;
+    int wait_timeout = 0;
+
+    DBUG_ENTER("mysql_fetch_wait_timeout");
+
+    sprintf(set_format, "show variables like 'wait_timeout';");
+    if (mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+
+    if ((source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+
+    source_row = mysql_fetch_row(source_res);
+    wait_timeout = strtoll(source_row[1], NULL, 10);
+
+    mysql_free_result(source_res);
+    DBUG_RETURN(wait_timeout);
+}
+
+int restore_connection_context(THD* thd, MYSQL* mysql)
+{
+    char sql[1024];
+
+    if (strlen(thd->thd_sinfo->db) == 0)
+        return false;
+
+    sprintf(sql, "USE `%s`", thd->thd_sinfo->db);
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        mysql_errmsg_append(thd);
+        return true; 
+    }
+
+    sql_print_information("Restore connection context, Database: `%s`", thd->thd_sinfo->db);
+    return false;
+}
+
 bool THD::init_audit_connection()
 {
   MYSQL *mysql = &audit_conn.mysql;
@@ -1096,11 +1146,15 @@ bool THD::init_audit_connection()
   strcpy(audit_conn.host, thd_sinfo->host);
   audit_conn.port= thd_sinfo->port;
   audit_conn_inited= TRUE;
-  return TRUE;
+  audit_conn.wait_timeout  = mysql_fetch_wait_timeout(mysql);
+  audit_conn.start_timer = start_timer();
+
+  return !restore_connection_context(this, mysql);
 }
 
 MYSQL* THD::get_audit_connection()
 {
+reconnect:
   if (!audit_conn_inited)
   {
     if (init_audit_connection() == FALSE)
@@ -1113,6 +1167,17 @@ MYSQL* THD::get_audit_connection()
       && !strcmp(audit_conn.host, thd_sinfo->host)
       && audit_conn.port == thd_sinfo->port)
   {
+    if (start_timer() - audit_conn.start_timer > 
+        (audit_conn.wait_timeout * CLOCKS_PER_SEC - 10))
+    {
+        audit_conn_inited = false;
+        /* update the timer */
+        audit_conn.start_timer = start_timer();
+        sql_print_information("audit connection closed (wait_timeout: %ld, "
+            "host: %s, user: %s, port: %d), reconnect", 
+            audit_conn.wait_timeout, audit_conn.host, audit_conn.user, audit_conn.port);
+        goto reconnect;
+    }
     return &audit_conn.mysql;
   }
   else
@@ -1127,7 +1192,7 @@ MYSQL* THD::get_audit_connection()
 
 bool THD::init_backup_connection()
 {
-  MYSQL *mysql = &backup_conn;
+  MYSQL *mysql = &backup_conn.mysql;
   ulong client_flag= CLIENT_REMEMBER_OPTIONS;
   uint net_timeout= 3600*24;
   uint connect_timeout= 5;
@@ -1150,11 +1215,14 @@ bool THD::init_backup_connection()
   }
 
   backup_conn_inited= TRUE;
+  backup_conn.wait_timeout  = mysql_fetch_wait_timeout(mysql);
+  backup_conn.start_timer = start_timer();
   return TRUE;
 }
 
 MYSQL* THD::get_backup_connection()
 {
+reconnect:
   if (!backup_conn_inited)
   {
     if (remote_backup_host == NULL || remote_backup_port == 0 ||
@@ -1167,17 +1235,28 @@ MYSQL* THD::get_backup_connection()
     if (init_backup_connection() == FALSE)
       return NULL;
     else
-      return &backup_conn;
+      return &backup_conn.mysql;
   }
   else
   {
-    return &backup_conn;
+    if (start_timer() - backup_conn.start_timer > 
+        (backup_conn.wait_timeout * CLOCKS_PER_SEC - 10))
+    {
+        backup_conn_inited = false;
+        /* update the timer */
+        backup_conn.start_timer = start_timer();
+        sql_print_information("backup connection closed (wait_timeout: %d), reconnect", 
+            backup_conn.wait_timeout);
+        goto reconnect;
+    }
+
+    return &backup_conn.mysql;
   }
 }
 
 bool THD::init_transfer_connection()
 {
-  MYSQL *mysql = &transfer_conn;
+  MYSQL *mysql = &transfer_conn.mysql;
   ulong client_flag= CLIENT_REMEMBER_OPTIONS ;
   uint net_timeout= 3600*24;
   bool reconnect= TRUE;
@@ -1199,11 +1278,14 @@ bool THD::init_transfer_connection()
   }
 
   transfer_conn_inited= TRUE;
+  transfer_conn.wait_timeout  = mysql_fetch_wait_timeout(mysql);
+  transfer_conn.start_timer = start_timer();
   return TRUE;
 }
 
 MYSQL* THD::get_transfer_connection()
 {
+reconnect:
   if (!transfer_conn_inited)
   {
     if (inception_datacenter_port== 0 ||
@@ -1217,30 +1299,53 @@ MYSQL* THD::get_transfer_connection()
     if (init_transfer_connection() == FALSE)
       return NULL;
     else
-      return &transfer_conn;
+      return &transfer_conn.mysql;
   }
   else
   {
-    return &transfer_conn;
+    if (start_timer() - transfer_conn.start_timer > 
+        (transfer_conn.wait_timeout * CLOCKS_PER_SEC - 10))
+    {
+        transfer_conn_inited = false;
+        /* update the timer */
+        transfer_conn.start_timer = start_timer();
+        sql_print_information("transfer connection closed (wait_timeout: %d), reconnect", 
+            transfer_conn.wait_timeout);
+        goto reconnect;
+    }
+    return &transfer_conn.mysql;
   }
 }
 
-void THD::close_all_connections()
+void THD::close_audit_connections()
 {
   if (audit_conn_inited)
   {
     mysql_close(&audit_conn.mysql);
     audit_conn_inited= false;
   }
+}
 
-  if (backup_conn_inited)
+void THD::close_all_connections()
+{
+  if (audit_conn_inited && (start_timer() - audit_conn.start_timer < 
+        audit_conn.wait_timeout * CLOCKS_PER_SEC))
   {
-    mysql_close(&backup_conn);
+    mysql_close(&audit_conn.mysql);
+    audit_conn_inited= false;
+  }
+
+  if (backup_conn_inited && (start_timer() - backup_conn.start_timer < 
+        backup_conn.wait_timeout * CLOCKS_PER_SEC))
+  {
+    mysql_close(&backup_conn.mysql);
     backup_conn_inited= false;
   }
-  if (transfer_conn_inited)
+
+  if (transfer_conn_inited && (start_timer() - transfer_conn.start_timer < 
+        transfer_conn.wait_timeout * CLOCKS_PER_SEC))
   {
-    mysql_close(&transfer_conn);
+    mysql_close(&transfer_conn.mysql);
     transfer_conn_inited= false;
   }
 }

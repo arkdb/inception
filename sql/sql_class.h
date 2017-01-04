@@ -54,6 +54,16 @@
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
+
 #define OPTION_CPY(OPTION_TO,OPTION_FROM)\
 do{\
     strcpy((OPTION_TO)->variable,(OPTION_FROM)->variable);\
@@ -282,6 +292,17 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 //     char    datacenter_name[FN_LEN+1];
 // };
 //
+typedef struct inception_conn_struct inception_conn_t;
+struct inception_conn_struct{
+  MYSQL mysql;
+  char  user[USERNAME_CHAR_LENGTH + 1];
+  char  passwd[MAX_PASSWORD_LENGTH + 1];
+  char  host[HOSTNAME_LENGTH + 1];
+  uint port;
+  ulong wait_timeout;
+  ulong start_timer;
+};
+
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
@@ -494,6 +515,7 @@ struct sql_cache_node_struct
     int         stage;//±Ì æµΩƒƒ∏ˆΩ◊∂Œ¡À
     int         errlevel;
     int         use_osc;
+    int         alter_table_method;
     str_t*      stagereport;
     my_ulonglong   affected_rows;
     char        execute_time[NAME_CHAR_LEN]; //执行所用时间 
@@ -680,6 +702,7 @@ struct transfer_cache_struct
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+    int slave_first_set; // if false, then set not consider the option_list, only once
     
     //for row event primary key columns
     ddl_cache_t* ddl_cache;
@@ -891,6 +914,7 @@ class thread_info
     int dest_port;
     int state;
     char progress[64];
+    char current_db[64];
     CSET_STRING query_string;
     CSET_STRING query_string_e;
 };
@@ -3601,6 +3625,7 @@ public:
   longlong last_update_event_id;
   THD* query_thd;
   sinfo_space_t* thd_sinfo;
+  int galera_node;/* galera cluster node */
   int timestamp_count;//timestamp column count in one table
   uint have_error_before;
   uint check_error_before;//÷¥–– ±£¨ºÏ≤ÈΩ◊∂Œ «≤ª «”–¥ÌŒÛ
@@ -4691,24 +4716,19 @@ public:
   MYSQL* get_backup_connection();
   MYSQL* get_transfer_connection();
   void close_all_connections();
+  void close_audit_connections();
 
 private:
   bool init_audit_connection();
   bool audit_conn_inited;
-  struct {
-    MYSQL mysql;
-    char  user[USERNAME_CHAR_LENGTH + 1];
-    char  passwd[MAX_PASSWORD_LENGTH + 1];
-    char  host[HOSTNAME_LENGTH + 1];
-    uint port;
-  } audit_conn;
 
+  inception_conn_t audit_conn;
   bool init_backup_connection();
   bool backup_conn_inited;
   bool init_transfer_connection();
   bool transfer_conn_inited;
-  MYSQL backup_conn;
-  MYSQL transfer_conn;
+  inception_conn_t backup_conn;
+  inception_conn_t transfer_conn;
 };
 
 
@@ -5925,6 +5945,7 @@ int truncate_inception_commit(const char* msg, int length);
 int mysql_check_identified(THD* thd, char* name, int len);
 double my_rnd(struct rand_struct *rand_st);
 int handle_fatal_signal_low(THD* thd);
+ulong start_timer(void);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

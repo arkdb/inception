@@ -271,5 +271,7 @@ int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglon
 ulong start_timer(void);
 void mysql_errmsg_append_sql_cache( THD * thd, sql_cache_node_t* sql_cache);
 void mysql_sqlcachenode_errmsg_append(THD* thd, sql_cache_node_t* node, int type) ;
+int inception_transfer_write_table_map( Master_info* mi, transfer_cache_t* datacenter, table_info_t*     table_info);
+int mysql_osc_execute_abort_check(THD* thd, sql_cache_node_t* sql_cache_node);
 
 #endif /* SQL_PARSE_INCLUDED */

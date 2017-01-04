@@ -950,3 +950,5 @@
 #define  ER_OSC_RENAME_TABLE                                                  1949
 #define  ER_OSC_ABORT                                                         1950
 #define  ER_ERROR_LAST                                                        1951
+#define  ER_TOO_MANY_STATEMENTS                                               1945
+#define  ER_ERROR_LAST                                                        1946

@@ -1124,4 +1124,10 @@ static Sys_var_int32 Sys_inception_biosc_check_delay_period(
     "the numbers of events to apply between two checks of delay time",
     SESSION_VAR(inception_biosc_check_delay_period), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, 1024*1024), DEFAULT(10000), BLOCK_SIZE(1));
+static Sys_var_ulong Sys_inception_max_allowed_statements(
+    "inception_max_allowed_statements",
+    "the max statements allowed when check",
+    GLOBAL_VAR(inception_max_allowed_statements), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 204800), DEFAULT(100000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
 
