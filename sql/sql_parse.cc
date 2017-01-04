@@ -8725,6 +8725,7 @@ inception_wait_and_free_mts(
     {
         mysql_cond_broadcast(&datacenter->mts->mts_cond);
         inception_free_mts(datacenter);
+        inception_cut_master_positions(datacenter->thd, datacenter);
     }
 
     if (need_lock)
@@ -8772,7 +8773,6 @@ int inception_stop_transfer(
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
     inception_wait_and_free_mts(datacenter, false);
-    inception_cut_master_positions(thd, datacenter);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
