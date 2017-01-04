@@ -8,7 +8,7 @@ Inception已经支持Percon ToolKit工具**`pt-online-schema-change`**，这样�
 |:-----------------------------------------------|:---------|:-------------------|:-------|
 |inception_osc_bin_dir                   	| GLOBAL  	 |无     	 |用于指定pt-online-schema-change脚本的位置，不可修改，在配置文件中设置|
 |inception_osc_check_interval            	| SESSION 	 |5秒    	 |对应参数--check-interval，意义是Sleep time between checks for --max-lag.|
-|inception_osc_chunk_size                	| SESSION 	 |1000   	 |对应参数--chunk-size|
+|inception_osc_chunk_size                	| SESSION 	 |1000   	 |对应参数--chunk-size, 可以通过指定这个参数值为0让其失效，这样在osc中体现出来的就是没有明确指定了，这样起作用的就是参数inception_osc_chunk_time了|
 |inception_osc_chunk_size_limit          	| SESSION 	 |4      	 |对应参数--chunk-size-limit|
 |inception_osc_chunk_time                	| SESSION 	 |1      	 |对应参数--chunk-time|
 |inception_osc_critical_thread_connected 	| SESSION 	 |1000   	 |对应参数--critical-load中的thread_connected部分|
