@@ -601,17 +601,7 @@ int mysql_execute_alter_table_biosc(
     inception_cleanup_biosc(thd, sql_cache_node);
 
     /* 如果出错了，就把详细信息打印出来 */
-    if (sql_cache_node->osc_abort || !inception_osc_print_none)
-    {
-        if (!sql_cache_node->errmsg)
-        {
-            sql_cache_node->errmsg = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
-            str_init(sql_cache_node->errmsg);
-        }
-        str_append(sql_cache_node->errmsg, str_get(sql_cache_node->oscoutput));
-        if (sql_cache_node->osc_abort)
-            ret = true;
-    }
+    ret = mysql_osc_execute_abort_check(thd, sql_cache_node);
 
 error:
     mysql_mutex_destroy(&sql_cache_node->osc_lock);

@@ -704,7 +704,6 @@ int mysql_cache_one_sql(THD* thd)
         strcat(sql_cache_node->sql_statement, str_get(thd->show_result));
     }
 
-    sql_cache_node->use_osc = thd->use_osc;
     sql_cache_node->thd = thd;
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
@@ -3393,6 +3392,19 @@ int mysql_check_insert(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_check_version_57(THD* thd)
+{
+    MYSQL* mysql;
+    mysql = thd->get_audit_connection();
+    if (!mysql)
+        return false;
+
+    if (mysql && strncmp(mysql->server_version, "5.7", 3) < 0)
+        return false;
+
+    return true;
+}
+
 int mysql_check_version_56(THD* thd)
 {
     MYSQL* mysql;
@@ -4036,6 +4048,10 @@ int mysql_execute_inception_osc_abort(THD* thd)
     LEX *lex= thd->lex;
     const char *wild= lex->wild ? lex->wild->ptr() : NullS;
     osc_percent_cache_t* osc_percent_node;
+    sql_cache_node_t* sql_cache_node;
+
+
+    sql_cache_node= osc_percent_node->sql_cache_node;
 
     mysql_mutex_lock(&osc_mutex); 
     osc_percent_node = LIST_GET_FIRST(global_osc_cache.osc_lst);
@@ -4046,10 +4062,22 @@ int mysql_execute_inception_osc_abort(THD* thd)
         osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
     }
 
-    if (osc_percent_node && osc_percent_node->proc && osc_percent_node->percent != 100)
+    if (osc_percent_node)
     {
-        osc_percent_node->killed= 1;
-        osc_percent_node->proc->killpid();
+        if (sql_cache_node->alter_table_method == osc_method_build_in_osc
+            && osc_percent_node->percent != 100)
+        {
+            osc_percent_node->killed= 1;
+            sql_cache_node->osc_abort = true;
+        }
+        else if (sql_cache_node->alter_table_method == osc_method_pt_osc && 
+            osc_percent_node->proc && osc_percent_node->percent != 100)
+        {
+            osc_percent_node->killed= 1;
+            osc_percent_node->proc->killpid();
+        }
+        else
+            my_error(ER_OSC_KILL_FAILED, MYF(0));
     }
     else
         my_error(ER_OSC_KILL_FAILED, MYF(0));
@@ -9998,10 +10026,11 @@ mysql_check_index_attribute(
             my_error(ER_FOREIGN_KEY, MYF(0), table_name);
             mysql_errmsg_append(thd);
             if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
-                thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+                thd->current_sql_cache_node->alter_table_method == osc_method_build_in_osc)
             {
-                my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
-                mysql_errmsg_append(thd);
+                thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc;
+                // my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+                // mysql_errmsg_append(thd);
             }
         }
         else if (key->type == Key::UNIQUE)
@@ -11454,7 +11483,7 @@ int mysql_check_alter_table_execute_direct(
         {
             /* 不能通过 osc来改表名 */
             tmp_flags &= ~Alter_info::ALTER_RENAME;
-            if (thd->use_osc)
+            if (thd->current_sql_cache_node->use_osc)
             {
                 my_error(ER_OSC_RENAME_TABLE, MYF(0));
                 mysql_errmsg_append(thd);
@@ -11554,10 +11583,10 @@ int mysql_get_alter_table_new_primary_key(
     sql_cache_node_t* sql_cache_node;
     int pkcount = 0;
 
-    if (!thd->use_osc)
+    if (!thd->current_sql_cache_node->use_osc)
         return false;
 
-    if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
+    if (thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc)
         return false;
 
     sql_cache_node = thd->current_sql_cache_node;
@@ -11634,10 +11663,10 @@ int mysql_check_alter_use_osc_type(
     int               first = true;
     sql_cache_node_t* sql_cache_node;
 
-    if (!thd->use_osc)
+    if (!thd->current_sql_cache_node->use_osc)
         return false;
 
-    if (thd->variables.inception_alter_table_method == osc_method_pt_osc ||
+    if (thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc ||
         inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
         return false;
 
@@ -11688,23 +11717,31 @@ int mysql_check_alter_use_osc(
     //如果inception_osc_min_table_size设置为0，或者表大小大于
     //这个参数，就用OSC，如果直接设置为0的话，下面2个参数都满足，但为了
     //代码上看起来清楚，还是写了第二个条件
+    thd->current_sql_cache_node->alter_table_method = thd->variables.inception_alter_table_method;
+
     if (inception_osc_on && 
-        thd->variables.inception_alter_table_method != osc_method_direct_alter &&
+        thd->current_sql_cache_node->alter_table_method != osc_method_direct_alter &&
         (table_info->table_size >= (int)thd->variables.inception_osc_min_table_size ||
         !thd->variables.inception_osc_min_table_size))
-        thd->use_osc = TRUE;
+        thd->current_sql_cache_node->use_osc = TRUE;
     else
-        thd->use_osc = FALSE; 
+        thd->current_sql_cache_node->use_osc = FALSE; 
        
     /* 如果改表操作中，涉及到的修改都可以直接改表而不需要锁表的话，则不做OSC */
     if ((ret = mysql_check_alter_table_execute_direct(thd)) == true)
-        thd->use_osc = FALSE;
+        thd->current_sql_cache_node->use_osc = FALSE;
+
     if (ret == 2 && inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
-        thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+        thd->current_sql_cache_node->alter_table_method == osc_method_build_in_osc)
     {
-        my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
-        mysql_errmsg_append(thd);
+        thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
+        // my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+        // mysql_errmsg_append(thd);
     }
+
+    /* 目前如果是5.7及以上版本，或者是PXC节点，就还是用PT工具改表 */
+    if (mysql_check_version_57(thd) || thd->galera_node)
+        thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
 
     inception_get_table_primary_keys(thd, thd->current_sql_cache_node);
     mysql_check_alter_use_osc_type(thd, table_info);
@@ -17582,7 +17619,7 @@ int mysql_execute_statement(
 
     if (sql_cache_node->use_osc)
     {
-        if (thd->variables.inception_alter_table_method == osc_method_build_in_osc)
+        if (sql_cache_node->alter_table_method == osc_method_build_in_osc)
         {
             if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
             {
@@ -17591,7 +17628,7 @@ int mysql_execute_statement(
                 DBUG_RETURN(true);
             }
         }
-        else if (thd->variables.inception_alter_table_method == osc_method_pt_osc)
+        else if (sql_cache_node->alter_table_method == osc_method_pt_osc)
         {
             if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
             {
@@ -18166,7 +18203,7 @@ int mysql_get_remote_variables(THD* thd)
         DBUG_RETURN(ER_NO);
 
     sprintf(set_format, "show variables where \
-        Variable_name in ('explicit_defaults_for_timestamp', 'sql_mode');");
+        Variable_name in ('explicit_defaults_for_timestamp', 'sql_mode', 'wsrep_on');");
     if (mysql_real_query(mysql, set_format, strlen(set_format)))
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
@@ -18179,6 +18216,7 @@ int mysql_get_remote_variables(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
+    thd->galera_node = false;
     source_row = mysql_fetch_row(source_res);
     while(source_row)
     {
@@ -18186,6 +18224,8 @@ int mysql_get_remote_variables(THD* thd)
             thd->variables.explicit_defaults_for_timestamp=strcmp("OFF", source_row[1]) ? 1 : 0;
         else if (strcasecmp(source_row[0], "sql_mode") == 0)
             get_sql_mode(thd, source_row[1]);
+        else if (strcasecmp(source_row[0], "wsrep_on") == 0)
+            thd->galera_node = true;// strcmp("OFF", source_row[1]) ? false: true;
 
         source_row = mysql_fetch_row(source_res);
     }

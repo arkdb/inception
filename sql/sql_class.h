@@ -515,6 +515,7 @@ struct sql_cache_node_struct
     int         stage;//±Ì æµΩƒƒ∏ˆΩ◊∂Œ¡À
     int         errlevel;
     int         use_osc;
+    int         alter_table_method;
     str_t*      stagereport;
     my_ulonglong   affected_rows;
     char        execute_time[NAME_CHAR_LEN]; //执行所用时间 
@@ -3624,6 +3625,7 @@ public:
   longlong last_update_event_id;
   THD* query_thd;
   sinfo_space_t* thd_sinfo;
+  int galera_node;/* galera cluster node */
   int timestamp_count;//timestamp column count in one table
   uint have_error_before;
   uint check_error_before;//÷¥–– ±£¨ºÏ≤ÈΩ◊∂Œ «≤ª «”–¥ÌŒÛ
