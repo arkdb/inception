@@ -440,7 +440,7 @@ int mysql_find_all_slaves(
     char*       hostname;
 
     sprintf(hosts_sql, "select left(host, locate(':',HOST)-1) host "
-        "from information_schema.PROCESSLIST where COMMAND like 'Binlog Dump%';");
+        "from information_schema.PROCESSLIST where COMMAND like 'Binlog Dump%%'");
     if (mysql_real_query(mysql, hosts_sql, strlen(hosts_sql)) ||
        (source_res1 = mysql_store_result(mysql)) == NULL)
         return true;

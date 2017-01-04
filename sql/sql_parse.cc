@@ -4162,7 +4162,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
                 sprintf(thd_info->progress,"%d", LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
 
-            sprintf(thd_info->current_db, tmp->thd_sinfo->db);
+            strcpy(thd_info->current_db, tmp->thd_sinfo->db);
 
             //info
             if (tmp->query())
@@ -6896,7 +6896,6 @@ int inception_transfer_write_DDL(
     THD* thd;
     THD* query_thd;
     table_info_t* table_info;
-    field_info_t* field_info;
     int optype=0;
     int first=1;
     int switch_flag=1;
@@ -10026,7 +10025,7 @@ mysql_check_index_attribute(
             if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
                 thd->current_sql_cache_node->alter_table_method == osc_method_build_in_osc)
             {
-                thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc;
+                thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
                 // my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
                 // mysql_errmsg_append(thd);
             }
@@ -10885,7 +10884,7 @@ int mysql_check_change_column(THD *thd)
             field_info->nullable = field->flags & NOT_NULL_FLAG ? 0 : 1;
             field_info->auto_increment = field->flags & AUTO_INCREMENT_FLAG ? 1 : 0;
             /* primary_key 标记保持原样即可 */
-            field_info->primary_key; 
+            // field_info->primary_key; 
             
             field->charset = system_charset_info;
             mysql_field_check(thd, field, table_info->table_name);
@@ -11201,9 +11200,7 @@ int mysql_drop_column_select(
     char*             column_name
 )
 {
-    table_info_t* table_info;
     Alter_drop*  field;
-    field_info_t* field_info;
     int    found = FALSE;
 
     DBUG_ENTER("mysql_drop_column_select");
@@ -11274,13 +11271,6 @@ int mysql_check_create_primary_key(
     field_info_t*   field_node;
     table_info_t*   table_info;
     int             found;
-    char            tmp_buf[256];
-    MYSQL*          mysql;
-    MYSQL_RES *     source_res;
-    char            sql[1024];
-    MYSQL_ROW       source_row;
-    uint            key_count;
-    char*           tablename;
 
     HA_CREATE_INFO create_info(thd->lex->create_info);
     Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
