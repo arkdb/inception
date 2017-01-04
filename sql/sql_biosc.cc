@@ -83,7 +83,7 @@ int inception_stop_dump(
         return false;
 
     mysql_mutex_lock(&sql_cache_node->osc_lock);
-    sql_cache_node->osc_complete = true;
+    // sql_cache_node->osc_complete = true;
     while (sql_cache_node->dump_on)                        // Should always be true
     {
         int error;

@@ -4050,9 +4050,6 @@ int mysql_execute_inception_osc_abort(THD* thd)
     osc_percent_cache_t* osc_percent_node;
     sql_cache_node_t* sql_cache_node;
 
-
-    sql_cache_node= osc_percent_node->sql_cache_node;
-
     mysql_mutex_lock(&osc_mutex); 
     osc_percent_node = LIST_GET_FIRST(global_osc_cache.osc_lst);
     while(osc_percent_node)
@@ -4064,6 +4061,7 @@ int mysql_execute_inception_osc_abort(THD* thd)
 
     if (osc_percent_node)
     {
+        sql_cache_node= osc_percent_node->sql_cache_node;
         if (sql_cache_node->alter_table_method == osc_method_build_in_osc
             && osc_percent_node->percent != 100)
         {
@@ -17436,6 +17434,17 @@ int mysql_execute_alter_table_osc(
 
     oscargv[count++] = strdup("--chunk-time");
     sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_time);
+    oscargv[count++] = strdup(cmd_line);
+
+    if (thd->variables.inception_osc_chunk_size)
+    {
+        oscargv[count++] = strdup("--chunk-size");
+        sprintf(cmd_line, "%d", thd->variables.inception_osc_chunk_size);
+        oscargv[count++] = strdup(cmd_line);
+    }
+
+    oscargv[count++] = strdup("--chunk-size-limit");
+    sprintf(cmd_line, "%d", thd->variables.inception_osc_chunk_size_limit);
     oscargv[count++] = strdup(cmd_line);
 
     oscargv[count++] = strdup("--critical-load");
