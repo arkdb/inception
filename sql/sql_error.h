@@ -35,6 +35,11 @@ class my_decimal;
 class Sql_condition : public Sql_alloc
 {
 public:
+  /**
+   Enumeration value describing the severity of the condition.
+   */
+  enum enum_severity_level
+  { SL_NOTE, SL_WARNING, SL_ERROR, SEVERITY_END};
   /*
     Enumeration value describing the severity of the error.
 

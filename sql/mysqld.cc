@@ -621,6 +621,8 @@ osc_cache_t global_osc_cache;
 task_cache_t global_task_cache;
 transfer_t global_transfer_cache;
 
+PSI_memory_key key_memory_JSON;
+
 /**
   Soft upper limit for number of sp_head objects that can be stored
   in the sp_cache for one connection.

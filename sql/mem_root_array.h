@@ -70,6 +70,9 @@ public:
     return m_array[n];
   }
 
+  Element_type &operator[](size_t n) { return at(n); }
+  const Element_type &operator[](size_t n) const { return at(n); }
+
   // Returns a pointer to the first element in the array.
   Element_type *begin() { return &m_array[0]; }
 

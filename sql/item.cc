@@ -6565,6 +6565,7 @@ bool Item::send(Protocol *protocol, String *buffer)
   case MYSQL_TYPE_VARCHAR:
   case MYSQL_TYPE_BIT:
   case MYSQL_TYPE_NEWDECIMAL:
+  case MYSQL_TYPE_JSON:
   {
     String *res;
     if ((res=val_str(buffer)))

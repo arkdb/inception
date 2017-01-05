@@ -25,6 +25,7 @@
 #include "field.h"                              /* Derivation */
 #include "sql_array.h"
 
+class Json_wrapper;
 class Protocol;
 struct TABLE_LIST;
 void item_init(void);			/* Init item functions */
@@ -654,6 +655,17 @@ class Item
   int8 is_expensive_cache;
   virtual bool is_expensive_processor(uchar *arg) { return 0; }
 
+protected:
+    /**
+     Sets the result value of the function an empty string, using the current
+     character set. No memory is allocated.
+     @retval A pointer to the str_value member.
+     */
+    String *make_empty_result() {
+        str_value.set("", 0, collation.collation);
+        return &str_value;
+    }
+    
 public:
   static void *operator new(size_t size) throw ()
   { return sql_alloc(size); }
@@ -1062,6 +1074,19 @@ public:
   */
   virtual bool val_bool();
   virtual String *val_nodeset(String*) { return 0; }
+    
+    bool error_json()
+    {
+        null_value= maybe_null;
+        return true;
+    }
+    
+    virtual bool val_json(Json_wrapper *result)
+    {
+        DBUG_ABORT();
+        my_error(ER_NOT_SUPPORTED_YET, MYF(0), "item type for JSON");
+        return error_json();
+    }
 
 protected:
   /* Helper functions, see item_sum.cc */
@@ -1081,6 +1106,46 @@ protected:
   longlong val_int_from_time();
   longlong val_int_from_datetime();
   double val_real_from_decimal();
+    
+    /**
+     Get the value to return from val_int() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_int() should return.
+     */
+    int error_int()
+    {
+        null_value= maybe_null;
+        return 0;
+    }
+    
+    /**
+     Get the value to return from val_real() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_real() should return.
+     */
+    double error_real()
+    {
+        null_value= maybe_null;
+        return 0.0;
+    }
+    
+    
+    /**
+     Get the value to return from val_str() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_str() should return.
+     */
+    String *error_str()
+    {
+        null_value= maybe_null;
+        return null_value ? NULL : make_empty_result();
+    }
 
   /**
     Convert val_str() to date in MYSQL_TIME

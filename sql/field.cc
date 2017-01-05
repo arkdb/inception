@@ -8304,6 +8304,379 @@ uint Field_geom::is_equal(Create_field *new_field)
          new_field->pack_length == pack_length();
 }
 
+/**
+ Get the type of this field (json).
+ @param str  the string that receives the type
+ */
+void Field_json::sql_type(String &str) const
+{
+    str.set_ascii(STRING_WITH_LEN("json"));
+}
+
+
+/// Create a shallow clone of this field in the specified MEM_ROOT.
+Field_json *Field_json::clone(MEM_ROOT *mem_root) const
+{
+    DBUG_ASSERT(type() == MYSQL_TYPE_JSON);
+    return new (mem_root) Field_json(*this);
+}
+
+
+/// Create a shallow clone of this field.
+Field_json *Field_json::clone() const
+{
+    DBUG_ASSERT(type() == MYSQL_TYPE_JSON);
+    return new Field_json(*this);
+}
+
+
+/**
+ Check if a new field is compatible with this one.
+ @param new_field  the new field
+ @return true if new_field is compatible with this field, false otherwise
+ */
+uint Field_json::is_equal(Create_field *new_field)
+{
+    // All JSON fields are compatible with each other.
+    return (new_field->sql_type == real_type());
+}
+
+
+/**
+ Store data in this JSON field.
+ 
+ JSON data is usually stored using store(Field_json*) or store_json(), so this
+ function will only be called if non-JSON data is attempted stored in a JSON
+ field. This results in an error in most cases.
+ 
+ It will attempt to parse the string (unless it's binary) as JSON text, and
+ store a binary representation of JSON document if the string could be parsed.
+ 
+ Note that we override store() and not store_internal() because
+ Field_blob::store() contains logic that bypasses store_internal() in
+ some cases we care about. In particular:
+ 
+ - When supplied an empty string, we want to raise a JSON syntax
+ error instead of silently inserting an empty byte string.
+ 
+ - When called from GROUP_CONCAT with ORDER BY or DISTINCT, we want
+ to do the same data conversion as usual, whereas
+ Field_blob::store() jumps directly to Field_blob::store_to_mem()
+ with the unprocessed input data.
+ 
+ @param from   the start of the data to be stored
+ @param length the length of the data
+ @param cs     the character set of the data
+ @return zero on success, non-zero on failure
+ */
+type_conversion_status
+Field_json::store(const char *from, size_t length, const CHARSET_INFO *cs)
+{
+    ASSERT_COLUMN_MARKED_FOR_WRITE;
+    
+    /*
+     First clear the field so that it doesn't contain garbage if we
+     return with an error. Some callers continue for a while even after
+     an error has been raised, and they could get into trouble if the
+     field contains garbage.
+     */
+    reset();
+    
+    const char *s;
+    size_t ss;
+    String v(from, length, cs);
+    
+    if (ensure_utf8mb4(&v, &value, &s, &ss, true))
+    {
+        return TYPE_ERR_BAD_VALUE;
+    }
+    
+    const char *parse_err;
+    size_t err_offset;
+    std::auto_ptr<Json_dom> dom(Json_dom::parse(s, ss, &parse_err, &err_offset));
+    
+    if (dom.get() == NULL)
+    {
+        if (parse_err != NULL)
+        {
+            // Syntax error.
+            invalid_text(parse_err, err_offset);
+        }
+        return TYPE_ERR_BAD_VALUE;
+    }
+    
+    if (json_binary::serialize(dom.get(), &value))
+        return TYPE_ERR_BAD_VALUE;
+    
+    return store_binary(value.ptr(), value.length());
+}
+
+
+/**
+ Helper function for raising an error when trying to store a value
+ into a JSON column, and that value needs to be cast to JSON before
+ it can be stored.
+ */
+type_conversion_status Field_json::unsupported_conversion()
+{
+    ASSERT_COLUMN_MARKED_FOR_WRITE;
+    invalid_text("not a JSON text, may need CAST", 0);
+    return TYPE_ERR_BAD_VALUE;
+}
+
+
+/**
+ Store the provided JSON binary data in this field.
+ 
+ @param[in] ptr     pointer to JSON binary data
+ @param[in] length  the length of the binary data
+ @return zero on success, non-zero on failure
+ */
+type_conversion_status Field_json::store_binary(const char *ptr, size_t length)
+{
+    /*
+     We expect that a valid binary representation of a JSON document is
+     passed to us.
+     
+     We make an exception for the case of an empty binary string. Even
+     though an empty binary string is not a valid representation of a
+     JSON document, we might be served one as a result of inserting
+     NULL or DEFAULT into a not nullable JSON column using INSERT
+     IGNORE, or inserting DEFAULT into a not nullable JSON column in
+     non-strict SQL mode.
+     
+     We accept an empty binary string in those cases. Such values will
+     be converted to the JSON null literal when they are read with
+     Field_json::val_json().
+     */
+    DBUG_ASSERT(length == 0 || json_binary::parse_binary(ptr, length).is_valid());
+    
+    if (value.length() > UINT_MAX32)
+    {
+        /* purecov: begin inspected */
+        my_error(ER_JSON_VALUE_TOO_BIG, MYF(0));
+        return TYPE_ERR_BAD_VALUE;
+        /* purecov: end */
+    }
+    
+    return Field_blob::store(ptr, length, field_charset);
+}
+
+
+/// Store a double in a JSON field. Will raise an error for now.
+type_conversion_status Field_json::store(double nr)
+{
+    return unsupported_conversion();
+}
+
+
+/// Store an integer in a JSON field. Will raise an error for now.
+type_conversion_status Field_json::store(longlong nr, bool unsigned_val)
+{
+    return unsupported_conversion();
+}
+
+
+/// Store a decimal in a JSON field. Will raise an error for now.
+type_conversion_status Field_json::store_decimal(const my_decimal *)
+{
+    return unsupported_conversion();
+}
+
+
+/// Store a TIME value in a JSON field. Will raise an error for now.
+type_conversion_status Field_json::store_time(MYSQL_TIME *ltime, uint8 dec_arg)
+{
+    return unsupported_conversion();
+}
+
+
+/**
+ Store a JSON value as binary.
+ 
+ @param json  the JSON value to store
+ @return zero on success, non-zero otherwise
+ */
+type_conversion_status Field_json::store_json(Json_wrapper *json)
+{
+    ASSERT_COLUMN_MARKED_FOR_WRITE;
+    
+    json_binary::Value json_val= json->to_value();
+    if (json_val.type() == json_binary::Value::ERROR ||
+        json_val.raw_binary(&value))
+        return TYPE_ERR_BAD_VALUE;
+    
+    return store_binary(value.ptr(), value.length());
+}
+
+
+/**
+ Copy the contents of a non-null JSON field into this field.
+ 
+ @param[in] field the field to copy data from
+ @return zero on success, non-zero on failure
+ */
+type_conversion_status Field_json::store(Field_json *field)
+{
+    /*
+     The callers of this function have already checked for null, so we
+     don't need to handle it here for now. Assert that field is not
+     null.
+     */
+    DBUG_ASSERT(!field->is_null());
+    
+    String tmp;
+    String *s= field->Field_blob::val_str(&tmp, &tmp);
+    return store_binary(s->ptr(), s->length());
+}
+
+
+bool Field_json::val_json(Json_wrapper *wr)
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    DBUG_ASSERT(!is_null());
+    
+    String tmp;
+    String *s= Field_blob::val_str(&tmp, &tmp);
+    
+    /*
+     The empty string is not a valid JSON binary representation, so we
+     should have returned an error. However, sometimes an empty
+     Field_json object is created in order to retrieve meta-data.
+     Return a dummy value instead of raising an error. Bug#21104470.
+     
+     The field could also contain an empty string after forcing NULL or
+     DEFAULT into a not nullable JSON column using lax error checking
+     (such as INSERT IGNORE or non-strict SQL mode). The JSON null
+     literal is used to represent the empty value in this case.
+     Bug#21437989.
+     */
+    if (s->length() == 0)
+    {
+        Json_wrapper w(new (std::nothrow) Json_null());
+        wr->steal(&w);
+        return false;
+    }
+    
+    json_binary::Value v(json_binary::parse_binary(s->ptr(), s->length()));
+    if (v.type() == json_binary::Value::ERROR)
+    {
+        /* purecov: begin inspected */
+        my_error(ER_INVALID_JSON_BINARY_DATA, MYF(0));
+        return true;
+        /* purecov: end */
+    }
+    
+    Json_wrapper w(v);
+    wr->steal(&w);
+    return false;
+}
+
+longlong Field_json::val_int()
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    
+    Json_wrapper wr;
+    if (is_null() || val_json(&wr))
+        return 0;                                   /* purecov: inspected */
+    
+    return wr.coerce_int(field_name);
+}
+
+
+double Field_json::val_real()
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    
+    Json_wrapper wr;
+    if (is_null() || val_json(&wr))
+        return 0.0;                                 /* purecov: inspected */
+    
+    return wr.coerce_real(field_name);
+}
+
+
+String *Field_json::val_str(String *buf1, String *buf2 MY_ATTRIBUTE((unused)))
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    
+    /*
+     Per contract of Field::val_str(String*,String*), buf1 should be
+     used if the value needs to be converted to string, and buf2 should
+     be used if the string value is already known. We need to convert,
+     so use buf1.
+     */
+    buf1->length(0);
+    
+    Json_wrapper wr;
+    if (is_null() || val_json(&wr) || wr.to_string(buf1, true, field_name))
+        buf1->length(0);
+    
+    return buf1;
+}
+
+my_decimal *Field_json::val_decimal(my_decimal *decimal_value)
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    
+    Json_wrapper wr;
+    if (is_null() || val_json(&wr))
+    {
+        /* purecov: begin inspected */
+        my_decimal_set_zero(decimal_value);
+        return decimal_value;
+        /* purecov: end */
+    }
+    
+    return wr.coerce_decimal(decimal_value, field_name);
+}
+
+
+bool Field_json::get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate)
+{
+    bool result= get_time(ltime);
+    if (!result && ltime->time_type == MYSQL_TIMESTAMP_TIME)
+    {
+        MYSQL_TIME tmp= *ltime;
+        time_to_datetime(current_thd, &tmp, ltime);
+    }
+    return result;
+}
+
+
+bool Field_json::get_time(MYSQL_TIME *ltime)
+{
+    ASSERT_COLUMN_MARKED_FOR_READ;
+    
+    Json_wrapper wr;
+    bool result= is_null() || val_json(&wr) || wr.coerce_time(ltime, field_name);
+    if (result)
+        set_zero_time(ltime, MYSQL_TIMESTAMP_DATETIME); /* purecov: inspected */
+    return result;
+}
+
+
+void Field_json::make_sort_key(uchar *to, size_t length)
+{
+    Json_wrapper wr;
+    if (val_json(&wr))
+    {
+        /* purecov: begin inspected */
+        memset(to, 0, length);
+        return;
+        /* purecov: end */
+    }
+    wr.make_sort_key(to, length);
+}
+
+
+ulonglong Field_json::make_hash_key(ulonglong *hash_val)
+{
+    Json_wrapper wr;
+    if (val_json(&wr))
+        return *hash_val;                         /* purecov: inspected */
+    return wr.make_hash_key(hash_val);
+}
 
 #endif /*HAVE_SPATIAL*/
 
