@@ -27,6 +27,7 @@
 #include "sql_priv.h"
 #include "sql_class.h"                          // THD
 #include "sql_time.h"
+#include "template_utils.h"
 #include <m_ctype.h>
 
 static void do_field_eq(Copy_field *copy)
@@ -96,7 +97,6 @@ static void do_field_to_null_str(Copy_field *copy)
     memcpy(copy->to_ptr,copy->from_ptr,copy->from_length);
   }
 }
-
 
 type_conversion_status set_field_to_null(Field *field)
 {
@@ -286,6 +286,15 @@ static void do_save_blob(Copy_field *copy)
 					 copy->tmp.charset());
 }
 
+/**
+ Copy the contents of one Field_json into another Field_json.
+ */
+static void do_save_json(Copy_field *copy)
+{
+    Field_json *from= down_cast<Field_json *>(copy->from_field);
+    Field_json *to= down_cast<Field_json *>(copy->to_field);
+    to->store(from);
+}
 
 static void do_field_string(Copy_field *copy)
 {
@@ -626,7 +635,13 @@ void Copy_field::set(Field *to,Field *from,bool save)
    do_copy=0;
 
   if ((to->flags & BLOB_FLAG) && save)
-    do_copy2= do_save_blob;
+  {
+      if (to->real_type() == MYSQL_TYPE_JSON &&
+          from->real_type() == MYSQL_TYPE_JSON)
+          do_copy2= do_save_json;
+      else
+          do_copy2= do_save_blob;
+  }
   else
     do_copy2= get_copy_func(to,from);
   if (!do_copy)					// Not null
@@ -641,7 +656,8 @@ Copy_field::get_copy_func(Field *to,Field *from)
                                      from->table->s->db_low_byte_first);
   if (to->flags & BLOB_FLAG)
   {
-    if (!(from->flags & BLOB_FLAG) || from->charset() != to->charset())
+      if (!(from->flags & BLOB_FLAG) || from->charset() != to->charset() ||
+          ((to->type() == MYSQL_TYPE_JSON) != (from->type() == MYSQL_TYPE_JSON)))
       return do_conv_blob;
     if (from_length != to_length || !compatible_db_low_byte_first)
     {
@@ -778,6 +794,14 @@ Copy_field::get_copy_func(Field *to,Field *from)
 
 type_conversion_status field_conv(Field *to,Field *from)
 {
+    
+  if ((to->type() == MYSQL_TYPE_JSON) && (from->type() == MYSQL_TYPE_JSON))
+  {
+      Field_json *to_json= down_cast<Field_json*>(to);
+      Field_json *from_json= down_cast<Field_json*>(from);
+      return to_json->store(from_json);
+  }
+    
   if (to->real_type() == from->real_type() &&
       !(to->type() == MYSQL_TYPE_BLOB && to->table->copy_blobs) &&
       to->charset() == from->charset())
@@ -852,6 +876,35 @@ type_conversion_status field_conv(Field *to,Field *from)
       nr= TIME_to_ulonglong_datetime_round(&ltime);
     }
     return to->store(ltime.neg ? -nr : nr, 0);
+  }
+  else if (from->type() == MYSQL_TYPE_JSON &&
+           (to->type() == MYSQL_TYPE_TINY ||
+            to->type() == MYSQL_TYPE_SHORT ||
+            to->type() == MYSQL_TYPE_INT24 ||
+            to->type() == MYSQL_TYPE_LONG ||
+            to->type() == MYSQL_TYPE_LONGLONG))
+  {
+      return to->store(from->val_int(), from->flags & UNSIGNED_FLAG);
+  }
+  else if (from->type() == MYSQL_TYPE_JSON &&
+           to->type() == MYSQL_TYPE_NEWDECIMAL)
+  {
+      my_decimal buff;
+      return to->store_decimal(from->val_decimal(&buff));
+  }
+  else if (from->type() == MYSQL_TYPE_JSON &&
+           (to->type() == MYSQL_TYPE_FLOAT ||
+            to->type() == MYSQL_TYPE_DOUBLE))
+  {
+      return to->store(from->val_real());
+  }
+  else if (from->type() == MYSQL_TYPE_JSON &&
+           to->is_temporal())
+  {
+      MYSQL_TIME ltime;
+      if (from->get_time(&ltime))
+          return TYPE_ERR_BAD_VALUE;
+      return to->store_time(&ltime);
   }
   else if (from->is_temporal() &&
            (to->result_type() == REAL_RESULT ||

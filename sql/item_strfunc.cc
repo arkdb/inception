@@ -47,7 +47,7 @@
 
 #include "sql_time.h"
 #include "json_dom.h"
-
+#include "template_utils.h"
 #include "crypt_genhash_impl.h"
 #include <m_ctype.h>
 #include <base64.h>
@@ -4377,17 +4377,6 @@ String *Item_func_uuid::val_str(String *str)
 
 // Used by the Json_path_cache
 #define JPC_UNINITIALIZED -1
-
-/**
- Casts from one pointer type to another in a type hierarchy.
- In debug mode, we verify the cast is indeed legal.
- */
-template<typename Target, typename Source>
-inline Target down_cast(Source arg)
-{
-    DBUG_ASSERT(NULL != dynamic_cast<Target>(arg));
-    return static_cast<Target>(arg);
-}
 
 /** Helper routines */
 

@@ -15848,13 +15848,13 @@ int mysql_prepare_field(
     charset = get_charset(sql_field->charsetnr, MYF(0));
     if (f_is_blob(sql_field->pack_flag) ||
         f_is_enum(sql_field->pack_flag) ||
+        f_is_json(sql_field->pack_flag) ||
         sql_field->real_type == MYSQL_TYPE_SET)
     {
         pack_length = calc_pack_length(sql_field->real_type, sql_field->max_length);
     }
 
     switch (sql_field->real_type) {
-    case MYSQL_TYPE_JSON:
     case MYSQL_TYPE_BLOB:
     case MYSQL_TYPE_MEDIUM_BLOB:
     case MYSQL_TYPE_TINY_BLOB:
@@ -15864,6 +15864,15 @@ int mysql_prepare_field(
         if (charset->state & MY_CS_BINSORT)
             sql_field->pack_flag|=FIELDFLAG_BINARY;
         sql_field->length=8;   // Unireg field length
+        sql_field->unireg_check=Field::BLOB_FIELD;
+        break;
+    case MYSQL_TYPE_JSON:
+        // JSON fields are stored as BLOBs.
+        sql_field->pack_flag=FIELDFLAG_JSON |
+        pack_length_to_packflag(pack_length - portable_sizeof_char_ptr);
+        if (charset->state & MY_CS_BINSORT)
+            sql_field->pack_flag|=FIELDFLAG_BINARY;
+        sql_field->length=8;                        // Unireg field length
         sql_field->unireg_check=Field::BLOB_FIELD;
         break;
     case MYSQL_TYPE_VARCHAR:
@@ -15968,6 +15977,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
     if (LIST_GET_LEN(table_info->field_lst) != source_res->field_count)
     {
         table_info->doignore = INCEPTION_DO_IGNORE;
+        mysql_free_result(source_res);//出错释放资源
         DBUG_RETURN(true);
     }
 
@@ -16009,7 +16019,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
 
         field_info = LIST_GET_NEXT(link, field_info);
     }
-
+    
     table_info->record = (uchar*)my_malloc(ALIGN_SIZE(max_length), MY_ZEROFILL);
     table_info->null_arr = (char*)my_malloc(mysql_num_fields(source_res) + 1, MY_ZEROFILL);
 
@@ -17173,9 +17183,12 @@ int mysql_execute_commit(THD *thd)
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
                     if(mysql_backup_sql(thd, mi, mysql, sql_cache_node) && next_sql_cache_node)
                     {
-                        mysql_get_master_version(mysql, mi);
-                        mysql_request_binlog_dump(mysql, next_sql_cache_node->start_binlog_file,
-                          next_sql_cache_node->start_binlog_pos, 0);
+                        //清理第一次dump binlog留下的资源
+                        thd->close_audit_connections();
+                        mysql_get_master_version(thd->get_audit_connection(), mi);
+                        mysql_request_binlog_dump(thd->get_audit_connection(),
+                                                  next_sql_cache_node->start_binlog_file,
+                                                  next_sql_cache_node->start_binlog_pos, 0);
                     }
 
                     sql_cache_node = next_sql_cache_node;

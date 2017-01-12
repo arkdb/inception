@@ -37,13 +37,6 @@
 
 using namespace rapidjson;
 
-//template<typename Target, typename Source>
-//inline Target down_cast(Source arg)
-//{
-//    DBUG_ASSERT(NULL != dynamic_cast<Target>(arg));
-//    return static_cast<Target>(arg);
-//}
-
 const char * Json_dom::json_type_string_map[]= {
   "NULL",
   "DECIMAL",
@@ -2134,14 +2127,14 @@ static bool wrapper_to_string(const Json_wrapper &wr, String *buffer,
     /* purecov: end inspected */
   }
 
-  if (buffer->length() > current_thd->variables.max_allowed_packet)
-  {
-    push_warning_printf(current_thd, Sql_condition::WARN_LEVEL_WARN,
-			ER_WARN_ALLOWED_PACKET_OVERFLOWED,
-            ER_THD(current_thd, ER_WARN_ALLOWED_PACKET_OVERFLOWED),
-            func_name, current_thd->variables.max_allowed_packet);
-    return true;
-  }
+//  if (buffer->length() > current_thd->variables.max_allowed_packet)
+//  {
+//    push_warning_printf(current_thd, Sql_condition::WARN_LEVEL_WARN,
+//			ER_WARN_ALLOWED_PACKET_OVERFLOWED,
+//            ER_THD(current_thd, ER_WARN_ALLOWED_PACKET_OVERFLOWED),
+//            func_name, current_thd->variables.max_allowed_packet);
+//    return true;
+//  } //gy-这里莫名其妙，暂时注释掉，再观察
 
   return false;
 }

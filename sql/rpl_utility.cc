@@ -542,6 +542,10 @@ static void show_sql_type(enum_field_types type, uint16 metadata, String *str,
   case MYSQL_TYPE_GEOMETRY:
     str->set_ascii(STRING_WITH_LEN("geometry"));
     break;
+          
+  case MYSQL_TYPE_JSON:
+      str->set_ascii(STRING_WITH_LEN("json"));
+      break;
 
   default:
     str->set_ascii(STRING_WITH_LEN("<unknown type>"));
@@ -843,6 +847,7 @@ table_def::create_conversion_table(
     case MYSQL_TYPE_MEDIUM_BLOB:
     case MYSQL_TYPE_LONG_BLOB:
     case MYSQL_TYPE_BLOB:
+    case MYSQL_TYPE_JSON:
     case MYSQL_TYPE_GEOMETRY:
       pack_length= field_metadata(col) & 0x00ff;
       break;
@@ -911,6 +916,7 @@ table_def::table_def(unsigned char *types, ulong size,
       case MYSQL_TYPE_DOUBLE:
       case MYSQL_TYPE_FLOAT:
       case MYSQL_TYPE_GEOMETRY:
+      case MYSQL_TYPE_JSON:
       {
         /*
           These types store a single byte.

@@ -2228,6 +2228,7 @@ public:
   longlong val_date_temporal();
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*);
+  bool val_json(Json_wrapper *result);
   double val_result();
   longlong val_int_result();
   longlong val_time_temporal_result();
@@ -3822,6 +3823,25 @@ public:
   type_conversion_status save_in_field(Field *field, bool no_conversions);
 };
 
+class Item_copy_json : public Item_copy
+{
+    Json_wrapper *m_value;
+protected:
+    virtual type_conversion_status save_in_field_inner(Field *field,
+                                                       bool no_conversions);
+public:
+    explicit Item_copy_json(Item *item);
+    virtual ~Item_copy_json();
+    virtual void copy();
+    virtual bool val_json(Json_wrapper *);
+    virtual String *val_str(String*);
+    virtual my_decimal *val_decimal(my_decimal *);
+    virtual double val_real();
+    virtual longlong val_int();
+    virtual bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate);
+    virtual bool get_time(MYSQL_TIME *ltime);
+    type_conversion_status save_in_field(Field *field, bool no_conversions);
+};
 
 class Item_copy_int : public Item_copy
 {
@@ -3950,6 +3970,16 @@ public:
   ~Cached_item_str();                           // Deallocate String:s
 };
 
+/// Cached_item subclass for JSON values.
+class Cached_item_json : public Cached_item
+{
+    Item *m_item;              ///< The item whose value to cache.
+    Json_wrapper *m_value;     ///< The cached JSON value.
+public:
+    explicit Cached_item_json(Item *item);
+    ~Cached_item_json();
+    bool cmp();
+};
 
 class Cached_item_real :public Cached_item
 {
@@ -4498,6 +4528,29 @@ public:
   void clear() { Item_cache::clear(); str_value_cached= FALSE; }
 };
 
+/// An item cache for values of type JSON.
+class Item_cache_json: public Item_cache
+{
+    Json_wrapper *m_value;
+public:
+    Item_cache_json();
+    ~Item_cache_json();
+    bool cache_value();
+    bool val_json(Json_wrapper *wr);
+    longlong val_int();
+    String *val_str(String *str);
+    Item_result result_type() const
+    {
+        if (!example)
+            return STRING_RESULT; // override default int
+        return Field::result_merge_type(example->field_type());
+    }
+    
+    double val_real();
+    my_decimal *val_decimal(my_decimal *val);
+    bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate);
+    bool get_time(MYSQL_TIME *ltime);
+};
 
 /*
   Item_type_holder used to store type. name, length of Item for UNIONS &

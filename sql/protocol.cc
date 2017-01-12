@@ -970,6 +970,7 @@ bool Protocol_text::store(const char *from, size_t length,
 	      field_types[field_pos] == MYSQL_TYPE_DECIMAL ||
               field_types[field_pos] == MYSQL_TYPE_BIT ||
               field_types[field_pos] == MYSQL_TYPE_NEWDECIMAL ||
+              field_types[field_pos] == MYSQL_TYPE_JSON ||
 	      (field_types[field_pos] >= MYSQL_TYPE_ENUM &&
 	       field_types[field_pos] <= MYSQL_TYPE_GEOMETRY));
   field_pos++;
@@ -991,6 +992,7 @@ bool Protocol_text::store(const char *from, size_t length,
               field_types[field_pos] == MYSQL_TYPE_BIT ||
               field_types[field_pos] == MYSQL_TYPE_NEWDECIMAL ||
               field_types[field_pos] == MYSQL_TYPE_NEWDATE ||
+              field_types[field_pos] == MYSQL_TYPE_JSON ||
 	      (field_types[field_pos] >= MYSQL_TYPE_ENUM &&
 	       field_types[field_pos] <= MYSQL_TYPE_GEOMETRY));
   field_pos++;

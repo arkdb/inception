@@ -1550,6 +1550,17 @@ int prepare_create_field(
 		sql_field->unireg_check=Field::BLOB_FIELD;
 		(*blob_columns)++;
 		break;
+    case MYSQL_TYPE_JSON:
+        // JSON fields are stored as BLOBs.
+        sql_field->pack_flag=FIELDFLAG_JSON |
+        pack_length_to_packflag(sql_field->pack_length -
+                                portable_sizeof_char_ptr);
+        if (sql_field->charset->state & MY_CS_BINSORT)
+            sql_field->pack_flag|=FIELDFLAG_BINARY;
+        sql_field->length=8;                        // Unireg field length
+        sql_field->unireg_check=Field::BLOB_FIELD;
+        (*blob_columns)++;
+        break;
 	case MYSQL_TYPE_VARCHAR:
 		/* fall through */
 	case MYSQL_TYPE_STRING:

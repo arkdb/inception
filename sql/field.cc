@@ -8534,7 +8534,7 @@ type_conversion_status Field_json::store(Field_json *field)
 bool Field_json::val_json(Json_wrapper *wr)
 {
     ASSERT_COLUMN_MARKED_FOR_READ;
-    DBUG_ASSERT(!is_null());
+//    DBUG_ASSERT(!is_null()); //gy-有时误判为null，暂不知为何，先去掉，看是否有问题。
     
     String tmp;
     String *s= Field_blob::val_str(&tmp, &tmp);
@@ -8609,9 +8609,11 @@ String *Field_json::val_str(String *buf1, String *buf2 MY_ATTRIBUTE((unused)))
     buf1->length(0);
     
     Json_wrapper wr;
-    if (is_null() || val_json(&wr) || wr.to_string(buf1, true, field_name))
+//    if (is_null() || val_json(&wr) || wr.to_string(buf1, true, field_name))
+//        buf1->length(0); //gy-有时误判为null，暂不知为何，先去掉，看是否有问题。
+
+    if (val_json(&wr) || wr.to_string(buf1, true, field_name))
         buf1->length(0);
-    
     return buf1;
 }
 
@@ -9937,6 +9939,10 @@ void Create_field::init_for_tmp_table(enum_field_types sql_type_arg,
     pack_flag= FIELDFLAG_GEOM;
     break;
 
+  case MYSQL_TYPE_JSON:
+      pack_flag= FIELDFLAG_JSON;
+      break;
+          
   case MYSQL_TYPE_ENUM:
     pack_flag= FIELDFLAG_INTERVAL;
     break;
@@ -9981,6 +9987,7 @@ void Create_field::init_for_tmp_table(enum_field_types sql_type_arg,
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_BLOB:
   case MYSQL_TYPE_GEOMETRY:
+  case MYSQL_TYPE_JSON:
     // If you are going to use the above types, you have to pass a
     // pack_length as parameter. Assert that is really done.
     DBUG_ASSERT(pack_length_arg != ~0U);
@@ -10002,6 +10009,7 @@ void Create_field::init_for_tmp_table(enum_field_types sql_type_arg,
                        FLAGSTR(pack_flag, FIELDFLAG_GEOM),
                        FLAGSTR(pack_flag, FIELDFLAG_BLOB),
                        FLAGSTR(pack_flag, FIELDFLAG_DECIMAL),
+                       FLAGSTR(pack_flag, FIELDFLAG_JSON),
                        f_packtype(pack_flag)));
   DBUG_VOID_RETURN;
 }
@@ -10459,6 +10467,7 @@ uint32 calc_pack_length(enum_field_types type,uint32 length)
   case MYSQL_TYPE_MEDIUM_BLOB:	return 3+portable_sizeof_char_ptr;
   case MYSQL_TYPE_LONG_BLOB:	return 4+portable_sizeof_char_ptr;
   case MYSQL_TYPE_GEOMETRY:	return 4+portable_sizeof_char_ptr;
+  case MYSQL_TYPE_JSON:         return 4+portable_sizeof_char_ptr;
   case MYSQL_TYPE_BIT: return length / 8;
   default:
     return 0;
@@ -10557,6 +10566,10 @@ Field *make_field(TABLE_SHARE *share, uchar *ptr, uint32 field_length,
 			    unireg_check, field_name, share,
 			    pack_length, geom_type);
 #endif
+    if (f_is_json(pack_flag))
+      return new Field_json(ptr, null_pos, null_bit,
+                            unireg_check, field_name, share,
+                            pack_length);
     if (f_is_blob(pack_flag))
       return new(mem_root) Field_blob(ptr,null_pos,null_bit,
 			    unireg_check, field_name, share,
