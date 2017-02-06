@@ -48,9 +48,7 @@
 #include "mysql.h"
 #include <functional>
 
-// Added by michael.li
 #include <string>
-
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
@@ -4714,7 +4712,7 @@ private:
 public:
   MYSQL* get_audit_connection();
   MYSQL* get_backup_connection();
-  MYSQL* get_transfer_connection();
+  MYSQL* get_transfer_connection(char* datacenter_name);
   void close_all_connections();
   void close_audit_connections();
 

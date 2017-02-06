@@ -4328,7 +4328,7 @@ inception_transfer_load_datacenter(
         return datacenter;
 
     //not found in global transfer cache
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         return NULL;
 
@@ -4856,7 +4856,7 @@ int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int ty
 
     sprintf(tmp, "select db_name, table_name from `%s`.transfer_filter \
            where type = '%s'", datacenter_name, type == DO_SYM ? "Do" : "Ignore");
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         DBUG_RETURN(true);
 
@@ -4908,7 +4908,7 @@ int mysql_show_datacenter_list(THD* thd)
     }
 
     sprintf(tmp, "SHOW DATABASES");
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(NULL);
     if (mysql == NULL)
         DBUG_RETURN(true);
 
@@ -5199,13 +5199,6 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     transfer_option_t* default_option = NULL;
     Item_int* it= (Item_int*)thd->lex->value_dc;
     
-    mysql= thd->get_transfer_connection();
-    if (mysql == NULL)
-    {
-        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-        return false;
-    }
-    
     if(strcmp("", thd->lex->value_dc->str_value.c_ptr()))
     {
         int error=0;
@@ -5246,6 +5239,13 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     }
     
     mysql_mutex_lock(&transfer_mutex);
+    
+    mysql= thd->get_transfer_connection(thd->lex->ident.str);
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return false;
+    }
     
     sql= &sql_space;
     sql= str_init(sql);
@@ -5302,10 +5302,10 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     return false;
 };
 
-int inception_transfer_execute_sql(THD* thd, char* sql)
+int inception_transfer_execute_sql(THD* thd, char* sql, char* datacenter_name)
 {
     MYSQL* mysql;
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         return true;
 
@@ -5328,7 +5328,7 @@ int inception_transfer_instance_table_create(
     str_t* create_sql;
     MYSQL* mysql;
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -5695,7 +5695,7 @@ int inception_transfer_add_do_ignore(
         return true;
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -5773,7 +5773,7 @@ int inception_transfer_add_instance(
         }
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -5915,7 +5915,7 @@ int inception_get_table_do_ignore(
 
     if ((tableinfo && tableinfo->doignore == INCEPTION_DO_UNKNOWN) || !tableinfo)
     {
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter->datacenter_name);
         if (mysql == NULL)
         {
             thd->clear_error();
@@ -6267,7 +6267,7 @@ int inception_transfer_next_sequence(
     {
         sprintf(sql, "select * from `%s`.`transfer_sequence` where idname='%s' or idname='%s'", 
             datacenter_name, INCEPTION_TRANSFER_EIDNAME, INCEPTION_TRANSFER_TIDNAME);
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter_name);
         if (mysql == NULL)
         {
             my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -6318,7 +6318,7 @@ int inception_transfer_next_sequence(
             thd->event_id = eventid;
         if (thd->event_id % OPTION_GET_VALUE(&datacenter->option_list[EVENT_SEQUENCE_SYNC]) ==0)
         {
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(datacenter_name);
             if (mysql == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -6343,7 +6343,7 @@ int inception_transfer_next_sequence(
             thd->transaction_id = trxid;
         if (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[TRX_SEQUENCE_SYNC]) ==0)
         {
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(datacenter_name);
             if (mysql == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -7056,7 +7056,7 @@ int inception_transfer_write_table_map(
     str_append(&create_json2, str_get(&create_json));
     str_append(&create_json2, "'");
 
-    if (inception_transfer_execute_sql(thd, str_get(&create_json2)))
+    if (inception_transfer_execute_sql(thd, str_get(&create_json2), datacenter->datacenter_name))
     {
         str_deinit(&create_json);
         str_deinit(&create_json2);
@@ -7483,7 +7483,7 @@ retry_fetch2:
             slave->mysql_port, slave->cbinlog_file, slave->cbinlog_position);
 retry_write:
         retry_count+=1;
-        if (inception_transfer_execute_sql(thd, tmp))
+        if (inception_transfer_execute_sql(thd, tmp, datacenter->datacenter_name))
         {
             if (retry_count <= 2)
                 goto retry_write;
@@ -7617,7 +7617,7 @@ int inception_transfer_execute_sql_with_retry(
 
 retry:
     retry_count++;
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
     if (mysql == NULL)
     {
         errcode = ER_INVALID_TRANSFER_INFO;
@@ -7853,14 +7853,15 @@ int inception_transfer_failover(Master_info* mi)
     //the failed instance will been omit in new instance table
     thd = mi->thd;
     thd->clear_error();
-    mysql = thd->get_transfer_connection();
+    datacenter = mi->datacenter;
+
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
         return NULL;
     }
 
-    datacenter = mi->datacenter;
     inception_wait_mts_threads_finish(datacenter);
     mysql_mutex_lock(&transfer_mutex);
     slave = LIST_GET_FIRST(datacenter->slave_lst);
@@ -8015,7 +8016,7 @@ pthread_handler_t inception_mts_thread(void* arg)
 
     while (true)
     {
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter->datacenter_name);
         if (mysql == NULL)
         {
             inception_transfer_set_errmsg(thd, datacenter, 
@@ -8164,7 +8165,7 @@ inception_transfer_delete(
     MYSQL_RES *     source_res1=NULL;
     MYSQL_ROW       source_row;
 
-    if ((mysql = thd->get_transfer_connection()) == NULL)
+    if ((mysql = thd->get_transfer_connection(datacenter_name)) == NULL)
         return false;
 
     //fetch the min id for faster delete
@@ -8262,7 +8263,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     MYSQL* mysql;
     char tmp[1024];
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -8335,7 +8336,7 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name, int mp_tr
     MYSQL* mysql;
     char tmp[1024];
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -8772,7 +8773,7 @@ inception_cut_master_positions(
         " binlog_position = %d where datacenter_epoch = '%s'",
         datacenter->datacenter_name, datacenter->cbinlog_file, 
         datacenter->cbinlog_position, datacenter->datacenter_epoch);
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
     if (mysql == NULL)
         return true;
 
@@ -8939,7 +8940,7 @@ int inception_transfer_start_replicate(
     sprintf(tmp, "select id,tid from `%s`.transfer_data where id > "
         "(select id from `%s`.transfer_checkpoint limit 1) limit 1;", datacenter_name,
         datacenter_name);
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res1 = mysql_store_result(mysql)) == NULL)
     {
@@ -8959,7 +8960,7 @@ int inception_transfer_start_replicate(
     {
         MYSQL mysql_space;
             
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter_name);
         sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
             where datacenter_epoch=(select datacenter_epoch from \
               `%s`.master_positions where id=(select max(id) from \
@@ -9079,7 +9080,7 @@ int inception_transfer_set_instance_position(
         return true;
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter);
     if (mysql == NULL)
     {
         mysql_mutex_unlock(&transfer_mutex); 
@@ -9231,7 +9232,7 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
         {
             char sql[1024];
             sprintf(sql, "CREATE DATABASE `%s` default charset utf8", thd->lex->name.str);
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(thd->lex->name.str);
             if (mysql == NULL)
                 return true;
 
@@ -14344,7 +14345,7 @@ int inception_transfer_execute_store_simple(
 
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(mi->datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
@@ -14379,7 +14380,7 @@ int inception_mts_insert_commit_positions(
     DBUG_ENTER("inception_mts_insert_commit_positions");
 
     thd = datacenter->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
@@ -14477,7 +14478,7 @@ int inception_transfer_execute_store_with_transaction(
 
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());

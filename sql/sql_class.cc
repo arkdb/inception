@@ -1176,6 +1176,7 @@ reconnect:
         sql_print_information("audit connection closed (wait_timeout: %ld, "
             "host: %s, user: %s, port: %d), reconnect", 
             audit_conn.wait_timeout, audit_conn.host, audit_conn.user, audit_conn.port);
+        mysql_close(&audit_conn.mysql);
         goto reconnect;
     }
     return &audit_conn.mysql;
@@ -1247,6 +1248,7 @@ reconnect:
         backup_conn.start_timer = start_timer();
         sql_print_information("backup connection closed (wait_timeout: %d), reconnect", 
             backup_conn.wait_timeout);
+        mysql_close(&backup_conn.mysql);
         goto reconnect;
     }
 
@@ -1283,7 +1285,7 @@ bool THD::init_transfer_connection()
   return TRUE;
 }
 
-MYSQL* THD::get_transfer_connection()
+MYSQL* THD::get_transfer_connection(char* datacenter_name)
 {
 reconnect:
   if (!transfer_conn_inited)
@@ -1309,10 +1311,19 @@ reconnect:
         transfer_conn_inited = false;
         /* update the timer */
         transfer_conn.start_timer = start_timer();
-        sql_print_information("transfer connection closed (wait_timeout: %d), reconnect", 
-            transfer_conn.wait_timeout);
+        if (datacenter_name)
+            sql_print_information("datacenter [%s] connection closed "
+                "(wait_timeout: %d), reconnect", 
+                datacenter_name, transfer_conn.wait_timeout);
+        else
+            sql_print_information("datacenter connection closed "
+                "(wait_timeout: %d), reconnect", 
+                transfer_conn.wait_timeout);
+
+        mysql_close(&transfer_conn.mysql);
         goto reconnect;
     }
+
     return &transfer_conn.mysql;
   }
 }
