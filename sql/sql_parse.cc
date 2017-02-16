@@ -8145,7 +8145,7 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
 
     DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
 
-    if (sql_cache_node->table_info->remote_existed)
+    if (sql_cache_node->table_info == NULL || sql_cache_node->table_info->remote_existed)
         DBUG_RETURN(FALSE);
 
     if (mysql_get_remote_backup_dbname(thd->thd_sinfo->host, thd->thd_sinfo->port,
@@ -10898,6 +10898,9 @@ mysql_backup_sql(
     sql_cache_node_t* sql_cache_node
 )
 {
+    if (sql_cache_node->table_info == NULL)
+        return FALSE;
+
     if (mysql_sql_cache_is_valid_for_ddl(sql_cache_node) &&
         mysql_backup_single_ddl_statement(thd, mi, mysql, sql_cache_node))
     {
