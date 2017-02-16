@@ -10898,6 +10898,9 @@ mysql_backup_sql(
     sql_cache_node_t* sql_cache_node
 )
 {
+    if (sql_cache_node->table_info == NULL)
+        return FALSE;
+
     if (mysql_sql_cache_is_valid_for_ddl(sql_cache_node) &&
         mysql_backup_single_ddl_statement(thd, mi, mysql, sql_cache_node))
     {
@@ -11011,7 +11014,7 @@ int mysql_execute_commit(THD *thd)
                 while (sql_cache_node != NULL)
                 {
                     next_sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
-                    if ((mysql = thd->get_audit_connection()) == NULL || sql_cache_node->table_info == NULL)
+                    if ((mysql = thd->get_audit_connection()) == NULL)
                         goto error;
 
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
