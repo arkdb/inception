@@ -10639,7 +10639,7 @@ int mysql_check_rename_table(THD *thd)
 
 int mysql_drop_column_rollback(THD* thd, table_info_t* table_info, char* columnname)
 {
-    char        tmp_buf[256];
+    char        tmp_buf[4096];
     MYSQL_RES *     source_res;
     MYSQL_ROW       source_row;
     MYSQL*          mysql;
