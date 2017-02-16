@@ -128,7 +128,10 @@
 #define ER_NET_PACKETS_OUT_OF_ORDER         2625
 #define ER_NOT_SUPPORTED_ITEM_TYPE          2626
 #define ER_INVALID_IDENT                    2627
-#define ER_ERROR_LAST                       2628
+#define ER_INCEPTION_EMPTY_QUERY            2628
+#define ER_PK_COLS_NOT_INT                  2629
+#define ER_PK_TOO_MANY_PARTS                2630 
+#define ER_ERROR_LAST                       2631
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001
