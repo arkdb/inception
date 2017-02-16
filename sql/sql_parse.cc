@@ -8090,7 +8090,7 @@ int mysql_make_sure_backupdb_table_exist(THD *thd, sql_cache_node_t* sql_cache_n
 
     DBUG_ENTER("mysql_make_sure_backupdb_table_exist");
 
-    if (sql_cache_node->table_info->remote_existed)
+    if (sql_cache_node->table_info == NULL || sql_cache_node->table_info->remote_existed)
         DBUG_RETURN(FALSE);
 
     if (mysql_get_remote_backup_dbname(thd->thd_sinfo->host, thd->thd_sinfo->port,
@@ -10943,7 +10943,7 @@ int mysql_execute_commit(THD *thd)
                 while (sql_cache_node != NULL)
                 {
                     next_sql_cache_node = LIST_GET_NEXT(link, sql_cache_node);
-                    if ((mysql = thd->get_audit_connection()) == NULL)
+                    if ((mysql = thd->get_audit_connection()) == NULL || sql_cache_node->table_info == NULL)
                         goto error;
 
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
