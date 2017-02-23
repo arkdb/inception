@@ -1022,7 +1022,36 @@ bool init_errmessage(void)
         "osc(build-in-osc, pt-osc), please use rename table statement directly");
     SERVER_SETMSG(ER_OSC_ABORT, "Alter table abort: %s");
     SERVER_SETMSG(ER_TOO_MANY_STATEMENTS, "There is too many statements in one task, max %d allowed.");
-
+    SERVER_SETMSG(ER_INVALID_JSON_CHARSET, "Invalid json charset. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_TEXT_IN_PARAM, "Invalid json text in parm. %d, %d, \'%s\' , %d, \'%s\'");
+    SERVER_SETMSG(ER_INVALID_TYPE_FOR_JSON, "Invalid type for json. %d, \'%s\'");
+    SERVER_SETMSG(ER_JSON_VALUE_TOO_BIG, "Json value is too big.");
+    SERVER_SETMSG(ER_JSON_DOCUMENT_TOO_DEEP, "Json document is too deep.");
+    SERVER_SETMSG(ER_JSON_KEY_TOO_BIG, "Json key is too big.");
+    SERVER_SETMSG(ER_INVALID_JSON_BINARY_DATA, "Invalid json binary data.");
+    SERVER_SETMSG(ER_NUMERIC_JSON_VALUE_OUT_OF_RANGE, "Numeric json value out of range. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_VALUE_FOR_CAST, "Invalid json value for cast. \'%s\'");
+    SERVER_SETMSG(ER_STD_BAD_ALLOC_ERROR, "STD bad alloc error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_DOMAIN_ERROR, "STD domain error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_LENGTH_ERROR, "STD length error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_INVALID_ARGUMENT, "STD invalid argument. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_OUT_OF_RANGE_ERROR, "STD out of range error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_OVERFLOW_ERROR, "STD overflow error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_RANGE_ERROR, "STD range error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_UNDERFLOW_ERROR, "STD underflow error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_LOGIC_ERROR, "STD logic error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_RUNTIME_ERROR, "STD runtime error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_UNKNOWN_EXCEPTION, "STD unknown exception. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH, "Invalid json path. %d， \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH_WILDCARD, "Invalid json path wildcard. ");
+    SERVER_SETMSG(ER_JSON_BAD_ONE_OR_ALL_ARG, "Json bad one or all arg. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_TEXT, "Invalid json text. \'%s\', %d, \'%s\'");
+    SERVER_SETMSG(ER_INVALID_CAST_TO_JSON, "Invalid cast tp json. ");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH_ARRAY_CELL, "Invalid json path array cell. ");
+    SERVER_SETMSG(ER_JSON_DOCUMENT_NULL_KEY, "Json document null key. ");
+    SERVER_SETMSG(ER_JSON_VACUOUS_PATH, "Json vacuous path. ");
+    SERVER_SETMSG(ER_INCORRECT_TYPE, "Incorrect type. \'%s\', \'%s\'");
+    
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))
     {

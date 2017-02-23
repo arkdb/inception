@@ -994,6 +994,18 @@ int Arg_comparator::set_cmp_func(Item_result_field *owner_arg,
   a= a1;
   b= a2;
 
+    if (type != ROW_RESULT &&
+        (((*a)->result_type() == STRING_RESULT &&
+          (*a)->field_type() == MYSQL_TYPE_JSON) ||
+         ((*b)->result_type() == STRING_RESULT &&
+          (*b)->field_type() == MYSQL_TYPE_JSON)))
+    {
+        // Use the JSON comparator if at least one of the arguments is JSON.
+        is_nulls_eq= is_owner_equal_func();
+        func= &Arg_comparator::compare_json;
+        return 0;
+    }
+
   if (can_compare_as_dates(*a, *b, &const_value))
   {
     a_type= (*a)->field_type();
@@ -1364,6 +1376,116 @@ int Arg_comparator::compare_datetime()
   return a_value < b_value ? -1 : (a_value > b_value ? 1 : 0);
 }
 
+/**
+ Get one of the arguments to the comparator as a JSON value.
+ 
+ @param[in]     arg     pointer to the argument
+ @param[in,out] value   buffer used for reading the JSON value
+ @param[in,out] tmp     buffer used for converting string values to the
+ correct charset, if necessary
+ @param[out]    result  where to store the result
+ @param[in,out] scalar  pointer to a location with pre-allocated memory
+ used for JSON scalars that are converted from
+ SQL scalars
+ 
+ @retval false on success
+ @retval true on failure
+ */
+static bool get_json_arg(Item* arg, String *value, String *tmp,
+                         Json_wrapper *result, Json_scalar_holder **scalar)
+{
+    Json_scalar_holder *holder= NULL;
+    
+    /*
+     If the argument is a non-JSON type, it gets converted to a JSON
+     scalar. Use the pre-allocated memory passed in via the "scalar"
+     argument. Note, however, that geometry types are not converted
+     to scalars. They are converted to JSON objects by get_json_atom_wrapper().
+     */
+    if ((arg->field_type() != MYSQL_TYPE_JSON) &&
+        (arg->field_type() != MYSQL_TYPE_GEOMETRY))
+    {
+        /*
+         If it's a constant item, and we've already read it, just return
+         the value that's cached in the pre-allocated memory.
+         */
+        if (*scalar && arg->const_item())
+        {
+            Json_wrapper tmp(get_json_scalar_from_holder(*scalar));
+            tmp.set_alias();
+            result->steal(&tmp);
+            return false;
+        }
+        
+        /*
+         Allocate memory to hold the scalar, if we haven't already done
+         so. Otherwise, we reuse the previously allocated memory.
+         */
+        if (!*scalar)
+            *scalar= create_json_scalar_holder();
+        
+        holder= *scalar;
+    }
+    
+    return get_json_atom_wrapper(&arg, 0, "<=", value, tmp, result, holder, true);
+}
+
+int Arg_comparator::compare_json()
+{
+    char buf[STRING_BUFFER_USUAL_SIZE];
+    String tmp(buf, sizeof(buf), &my_charset_bin);
+    
+    // Get the JSON value in the a Item.
+    Json_wrapper aw;
+    if (get_json_arg(*a, &value1, &tmp, &aw, &json_scalar))
+        return 1;
+    
+    bool a_is_null= (*a)->null_value;
+    if (a_is_null)
+    {
+        if (!is_nulls_eq)
+        {
+            if (set_null)
+                owner->null_value= true;
+            return -1;
+        }
+    }
+    
+    // Get the JSON value in the b Item.
+    Json_wrapper bw;
+    if (get_json_arg(*b, &value1, &tmp, &bw, &json_scalar))
+        return 1;
+    
+    bool b_is_null= (*b)->null_value;
+    if (b_is_null)
+    {
+        if (!is_nulls_eq)
+        {
+            if (set_null)
+                owner->null_value= true;
+            return -1;
+        }
+    }
+    
+    if (set_null)
+        owner->null_value= false;
+    
+    /*
+     If we were called by the <=> operator, we should return 0/1
+     instead of -1/0/1. 0 means not equal, 1 means equal. The <=>
+     operator considers two NULLs equal.
+     */
+    if (is_nulls_eq)
+    {
+        if (a_is_null || b_is_null)
+            return a_is_null == b_is_null;
+        else
+            return aw.compare(bw) == 0;
+    }
+    
+    // Otherwise, return -1/0/1.
+    return aw.compare(bw);
+}
 
 int Arg_comparator::compare_string()
 {

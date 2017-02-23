@@ -36,6 +36,8 @@ struct scheduler_functions;
 typedef struct st_mysql_const_lex_string LEX_CSTRING;
 typedef struct st_mysql_show_var SHOW_VAR;
 
+extern PSI_memory_key key_memory_JSON;
+
 /*
   This forward declaration is used from C files where the real
   definition is included before.  Since C does not allow repeated

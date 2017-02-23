@@ -67,6 +67,16 @@ typedef long my_time_t;
 #endif
 
 /* Flags to str_to_datetime and number_to_datetime */
+typedef uint my_time_flags_t;
+static const my_time_flags_t TIME_FUZZY_DATE=         1;
+static const my_time_flags_t TIME_DATETIME_ONLY=      2;
+static const my_time_flags_t TIME_NO_NSEC_ROUNDING=   4;
+static const my_time_flags_t TIME_NO_DATE_FRAC_WARN=  8;
+static const my_time_flags_t TIME_NO_ZERO_IN_DATE=   16;
+static const my_time_flags_t TIME_NO_ZERO_DATE=      32;
+static const my_time_flags_t TIME_INVALID_DATES=     64;
+
+/* Flags to str_to_datetime and number_to_datetime */
 #define TIME_FUZZY_DATE         1
 #define TIME_DATETIME_ONLY      2
 #define TIME_NO_NSEC_ROUNDING   4

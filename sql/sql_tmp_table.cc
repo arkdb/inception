@@ -134,7 +134,9 @@ static Field *create_tmp_field_from_item(THD *thd, Item *item, TABLE *table,
       DATE/TIME and GEOMETRY fields have STRING_RESULT result type. 
       To preserve type they needed to be handled separately.
     */
-    if (item->is_temporal() || item->field_type() == MYSQL_TYPE_GEOMETRY)
+    if (item->is_temporal() ||
+        item->field_type() == MYSQL_TYPE_GEOMETRY ||
+        item->field_type() == MYSQL_TYPE_JSON)
       new_field= item->tmp_table_field_from_field_type(table, 1);
     else
       new_field= item->make_string_field(table);
