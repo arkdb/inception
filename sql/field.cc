@@ -32,6 +32,7 @@
 #include <m_ctype.h>
 #include <errno.h>
 #include "sql_join_buffer.h"             // CACHE_FIELD
+#include <memory>
 
 using std::max;
 using std::min;
