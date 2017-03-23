@@ -4398,7 +4398,7 @@ bool ensure_utf8mb4(String *val, String *buf,
     
     if (my_charset_same(cs, &my_charset_utf8mb4_bin) ||
         my_charset_same(cs, &my_charset_utf8_bin) ||
-        !std::strcmp(cs->csname, "ascii"))
+        !strcmp(cs->csname, "ascii"))
     {
         /*
          Character data is directly converted to JSON if the character
@@ -4585,66 +4585,11 @@ static bool get_json_string(Item *arg_item,
 }
 
 #define CATCH_ALL(funcname, expr) \
-catch (const std::bad_alloc &e)\
-{\
-my_error(ER_STD_BAD_ALLOC_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::domain_error &e)\
-{\
-my_error(ER_STD_DOMAIN_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::length_error &e)\
-{\
-my_error(ER_STD_LENGTH_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::invalid_argument &e)\
-{\
-my_error(ER_STD_INVALID_ARGUMENT, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::out_of_range &e)\
-{\
-my_error(ER_STD_OUT_OF_RANGE_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::overflow_error &e)\
-{\
-my_error(ER_STD_OVERFLOW_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::range_error &e)\
-{\
-my_error(ER_STD_RANGE_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::underflow_error &e)\
-{\
-my_error(ER_STD_UNDERFLOW_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::logic_error &e)\
-{\
-my_error(ER_STD_LOGIC_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::runtime_error &e)\
-{\
-my_error(ER_STD_RUNTIME_ERROR, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (const std::exception &e)\
-{\
-my_error(ER_STD_UNKNOWN_EXCEPTION, MYF(0), e.what(), (funcname));\
-expr;\
-}\
-catch (...)\
-{\
-my_error(ER_STD_UNKNOWN_EXCEPTION, MYF(0), (funcname));\
-expr;\
-}
+    catch (...)\
+    {\
+        my_error(ER_STD_UNKNOWN_EXCEPTION, MYF(0), (funcname));\
+        expr;\
+    }
 
 /**
  Helper method for Item_func_json_* methods. Check if a JSON item or
@@ -4979,6 +4924,7 @@ Item_json_func::save_in_field_inner(Field *field, bool no_conversions)
         field->set_notnull();
         return f->store_json(&wr);
     }
+    return TYPE_ERR_BAD_VALUE;
 }
 
 

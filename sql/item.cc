@@ -4379,7 +4379,7 @@ Item_copy_json::~Item_copy_json()
 void Item_copy_json::copy()
 {
     if (item->val_json(m_value))
-        return true;
+        return;
     
     null_value= item->null_value;
     
@@ -4388,7 +4388,7 @@ void Item_copy_json::copy()
         m_value->to_dom(); // need own copy, cf. also Item_cache_json::cache_value
     }
     
-    return false;
+    return;
 }
 
 /**
