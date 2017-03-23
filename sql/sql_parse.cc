@@ -7867,8 +7867,9 @@ int inception_transfer_failover(Master_info* mi)
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while(slave)
     {
-        if (strcasecmp(slave->hostname, datacenter->hostname) ||
-            slave->mysql_port != datacenter->mysql_port)
+        /* find a node, which is running, and not itself, then make it master */
+        if (slave->valid && (strcasecmp(slave->hostname, datacenter->hostname) ||
+            slave->mysql_port != datacenter->mysql_port))
         {
             //the new master node
             break;
