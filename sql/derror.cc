@@ -197,6 +197,8 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_NOT_SUPPORTED_ITEM_TYPE, "Not supported expression type \'%s\'.");
   SERVER_SETMSG(ER_INVALID_IDENT, "Identifier \'%s\' is invalid, valid options: [a-z|A-Z|0-9|_].");
   SERVER_SETMSG(ER_INCEPTION_EMPTY_QUERY, "Inception error, Query was empty.");
+  SERVER_SETMSG(ER_PK_COLS_NOT_INT, "Primary key column \'%s\' is not int or bigint type in table \'%s\'.\'%s\'.");
+  SERVER_SETMSG(ER_PK_TOO_MANY_PARTS, "Too many primary key part in table \'%s\'.\'%s\', max parts: %d");
   SERVER_SETMSG(ER_REMOVED_SPACES, "Leading spaces are removed from name \'%s\'");
   SERVER_SETMSG(ER_ERROR_LAST, "TheLastError,ByeBye");
 
