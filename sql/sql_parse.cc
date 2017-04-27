@@ -17666,6 +17666,7 @@ int mysql_execute_statement(
             my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
             DBUG_RETURN(true);
         }
+        sql_cache_node->exe_complete = TRUE;
     }
 
     sprintf(sql_cache_node->execute_time, "%.3f",  
@@ -17680,7 +17681,6 @@ int mysql_execute_statement(
             DBUG_RETURN(true);
     }
 
-    sql_cache_node->exe_complete = TRUE;
     time(&sql_cache_node->exec_time);
 
     DBUG_RETURN(false);
