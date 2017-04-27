@@ -3845,6 +3845,7 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "key") == 0)
                 {
+                    select_info->key = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
                     strcpy(select_info->key, field_value);
                 }
                 else if (strcmpi(field->name, "key_len") == 0)
@@ -3853,7 +3854,8 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "ref") == 0)
                 {
-                    strcpy(select_info->key, field_value);
+                    select_info->ref = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
+                    strcpy(select_info->ref, field_value);
                 }
                 else if (strcmpi(field->name, "rows") == 0)
                 {
@@ -3861,7 +3863,7 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "Extra") == 0)
                 {
-                    select_info->extra = (char*)malloc(strlen(field_value) + 1);
+                    select_info->extra = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
                     strcpy(select_info->extra, field_value);
                 }
             }
@@ -3891,10 +3893,6 @@ void mysql_free_explain_info(explain_info_t* explain)
     {
         i = 0;
         select_info_next = LIST_GET_NEXT(link, select_info);
-        if (select_info->extra != NULL)
-        {
-            free(select_info->extra);
-        }
 
         if (select_info->possible_keys != NULL)
         {
@@ -3904,6 +3902,12 @@ void mysql_free_explain_info(explain_info_t* explain)
             select_info->possible_keys = NULL;
         }
 
+        if (select_info->extra)
+            my_free(select_info->extra);
+        if (select_info->key)
+            my_free(select_info->key);
+        if (select_info->ref)
+            my_free(select_info->ref);
         my_free(select_info);
         select_info = select_info_next;
     }
