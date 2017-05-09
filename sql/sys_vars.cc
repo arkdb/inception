@@ -1098,7 +1098,7 @@ static Sys_var_int32 Sys_inception_biosc_rename_wait_timeout(
     SESSION_VAR(inception_biosc_lock_wait_timeout), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
 
-const char *osc_method[]= {"build-in-osc", "pt-osc", "direct-alter", NullS};
+const char *osc_method[]= {"build_in_osc", "pt_osc", "direct_alter", NullS};
 static Sys_var_enum Sys_inception_alter_table_method(
     "inception_alter_table_method",
     "alter table methods.",
