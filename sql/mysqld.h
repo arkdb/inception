@@ -76,7 +76,7 @@ void kill_blocked_pthreads();
 void refresh_status(THD *thd);
 bool is_secure_file_path(char *path);
 void dec_connection_count();
-
+const char *get_columns_delimiters(const char* value_str);
 // These are needed for unit testing.
 void set_remaining_args(int argc, char **argv);
 int init_common_variables();
@@ -190,6 +190,8 @@ extern bool inception_read_only;
 extern bool inception_check_identifier;
 extern bool inception_ddl_support;
 extern bool inception_osc_on;
+extern char* inception_result_columns_delimiters;
+extern const char *inception_result_columns_delimiter_chars;
 // extern ulong inception_osc_critical_connected;
 // extern ulong inception_osc_critical_running;
 // extern ulong inception_osc_max_connected;

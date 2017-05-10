@@ -1018,3 +1018,79 @@ static Sys_var_enum Sys_inception_osc_recursion_method(
     osc_recursion_method, DEFAULT(recursion_method_processlist), 
     NO_MUTEX_GUARD, NOT_IN_BINLOG);
 
+static bool check_inception_result_columns_delimiters(sys_var *self, THD *thd, set_var *var)
+{
+    int chr = 0;
+    const char *value_str = var->save_result.string_value.str;
+    int comma_count = 0;
+    for(int i = 0; i < var->save_result.string_value.length; i++)
+    {
+        if(value_str[i] == ',')
+        {
+            if(chr == 0 || chr >= 256 || comma_count > 10)
+            {
+                my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
+                         var->save_result.string_value.str,
+                         var->save_result.string_value.length);
+                return true;
+            }
+            comma_count++;
+            chr = 0;
+        }
+        else if(value_str[i] > '9' || value_str[i] < '0')
+        {
+            my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
+                     var->save_result.string_value.str,
+                     var->save_result.string_value.length);
+            return true;
+        }
+        else
+        {
+            chr = chr*10 + (value_str[i] - '0');
+        }
+    }
+    if(chr == 0 || chr >= 256)
+    {
+        my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
+                 var->save_result.string_value.str,
+                 var->save_result.string_value.length);
+        return true;
+    }
+
+    return false;
+}
+
+static bool update_inception_result_columns_delimiters(sys_var *self, THD *thd, enum_var_type type)
+{
+    static char delimeters[10] = "";
+    int chr = 0;
+    int str_size = 0;
+    const char* value_str = inception_result_columns_delimiters;
+    for(int i = 0; value_str[i] != 0; i++)
+    {
+        if(value_str[i] == ',')
+        {
+            delimeters[str_size++] = chr;
+            chr = 0;
+        }
+        else
+        {
+            chr = chr*10 + (value_str[i] - '0');
+        }
+    }
+    delimeters[str_size++] = chr;
+    delimeters[str_size++] = 0;
+    inception_result_columns_delimiter_chars = delimeters;
+    return false;
+}
+
+static Sys_var_charptr Sys_inception_result_columns_delimiters(
+    "inception_result_columns_delimiters",
+    "used for seperating the result columns return to user, "
+    "the values should be oct ascii values sperate by comma, each value should between 0 and 256"
+    "the default is 10(\\n)",
+    GLOBAL_VAR(inception_result_columns_delimiters),
+    CMD_LINE(REQUIRED_ARG), IN_FS_CHARSET, DEFAULT("10"),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(check_inception_result_columns_delimiters),
+    ON_UPDATE(update_inception_result_columns_delimiters));

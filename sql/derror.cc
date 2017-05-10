@@ -198,6 +198,7 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_INVALID_IDENT, "Identifier \'%s\' is invalid, valid options: [a-z|A-Z|0-9|_].");
   SERVER_SETMSG(ER_INCEPTION_EMPTY_QUERY, "Inception error, Query was empty.");
   SERVER_SETMSG(ER_REMOVED_SPACES, "Leading spaces are removed from name \'%s\'");
+  SERVER_SETMSG(ER_INVALID_RESULT_DELIMITERS, "invalid delimiters value \'%*s\'");
   SERVER_SETMSG(ER_ERROR_LAST, "TheLastError,ByeBye");
 
 	/* Register messages for use with my_error(). */

@@ -130,7 +130,8 @@
 #define ER_INVALID_IDENT                    2627
 #define ER_INCEPTION_EMPTY_QUERY            2628
 #define ER_REMOVED_SPACES                   2629
-#define ER_ERROR_LAST                       2630
+#define ER_INVALID_RESULT_DELIMITERS        2630
+#define ER_ERROR_LAST                       2631
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

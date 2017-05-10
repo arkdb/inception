@@ -915,7 +915,7 @@ int mysql_send_all_results(THD* thd)
             if (sql_cache_node->errmsg == NULL)
                 protocol->store("None", thd->charset());
             else
-                protocol->store(str_get(str_truncate(sql_cache_node->errmsg, 1)), thd->charset());
+                protocol->store(str_get(str_truncate(sql_cache_node->errmsg, strlen(inception_result_columns_delimiter_chars))), thd->charset());
 
             protocol->store(sql_cache_node->sql_statement, system_charset_info);
 
@@ -2195,7 +2195,7 @@ mysql_errmsg_append(
                 str_init(thd->errmsg);
             }
             str_append(thd->errmsg, thd->get_stmt_da()->message());
-            str_append(thd->errmsg, "\n");
+            str_append(thd->errmsg, inception_result_columns_delimiter_chars);
             thd->err_level |= mysql_get_err_level_by_errno(thd);
             thd->check_error_before = TRUE;
         }
@@ -5135,7 +5135,7 @@ int mysql_check_column_default(
                 str_to_time(system_charset_info, res->ptr(), res->length(), &ltime, 0, &status);
             else
                 str_to_datetime(system_charset_info, res->ptr(), res->length(), &ltime, 
-                    MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE, &status);
+                    thd->variables.sql_mode & (MODE_NO_ZERO_DATE|MODE_NO_ZERO_IN_DATE), &status);
             //在上面没有检查出来的情况下，还需要对范围溢出做检查
             if (status.warnings == 0)
             {
