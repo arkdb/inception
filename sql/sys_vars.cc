@@ -1042,8 +1042,8 @@ static bool check_inception_result_columns_delimiters(sys_var *self, THD *thd, s
             if(chr == 0 || chr >= 256 || comma_count > 10)
             {
                 my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
-                         var->save_result.string_value.str,
-                         var->save_result.string_value.length);
+                         var->save_result.string_value.length,
+                         var->save_result.string_value.str);
                 return true;
             }
             comma_count++;
@@ -1052,8 +1052,8 @@ static bool check_inception_result_columns_delimiters(sys_var *self, THD *thd, s
         else if(value_str[i] > '9' || value_str[i] < '0')
         {
             my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
-                     var->save_result.string_value.str,
-                     var->save_result.string_value.length);
+                     var->save_result.string_value.length,
+                     var->save_result.string_value.str);
             return true;
         }
         else
@@ -1064,8 +1064,8 @@ static bool check_inception_result_columns_delimiters(sys_var *self, THD *thd, s
     if(chr == 0 || chr >= 256)
     {
         my_error(ER_INVALID_RESULT_DELIMITERS, MYF(0),
-                 var->save_result.string_value.str,
-                 var->save_result.string_value.length);
+                 var->save_result.string_value.length,
+                 var->save_result.string_value.str);
         return true;
     }
 
