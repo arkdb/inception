@@ -200,6 +200,7 @@ bool init_errmessage(void)
   SERVER_SETMSG(ER_PK_COLS_NOT_INT, "Primary key column \'%s\' is not int or bigint type in table \'%s\'.\'%s\'.");
   SERVER_SETMSG(ER_PK_TOO_MANY_PARTS, "Too many primary key part in table \'%s\'.\'%s\', max parts: %d");
   SERVER_SETMSG(ER_REMOVED_SPACES, "Leading spaces are removed from name \'%s\'");
+  SERVER_SETMSG(ER_INVALID_RESULT_DELIMITERS, "invalid delimiters value \'%*s\'");
   SERVER_SETMSG(ER_ERROR_LAST, "TheLastError,ByeBye");
 
 	/* Register messages for use with my_error(). */

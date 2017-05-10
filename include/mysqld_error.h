@@ -132,7 +132,8 @@
 #define ER_PK_COLS_NOT_INT                  2629
 #define ER_PK_TOO_MANY_PARTS                2630 
 #define ER_REMOVED_SPACES                   2631
-#define ER_ERROR_LAST                       2632
+#define ER_INVALID_RESULT_DELIMITERS        2632
+#define ER_ERROR_LAST                       2633
 
 #define ER_WARNING 1000
 #define ER_NISAMCHK 1001

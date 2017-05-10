@@ -597,6 +597,8 @@ bool inception_read_only=0;
 bool inception_check_identifier=0;
 bool inception_ddl_support=0;
 bool inception_osc_on=0;
+char *inception_result_columns_delimiters = 0;
+const char *inception_result_columns_delimiter_chars = "\n";
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
 // ulong inception_osc_max_connected=0;
@@ -2418,7 +2420,6 @@ void dec_connection_count()
   --connection_count;
   mysql_mutex_unlock(&LOCK_connection_count);
 }
-
 
 /**
   Delete the THD object.
