@@ -1136,7 +1136,8 @@ retry:
 
 error:
     /* 如果连接中断，则重建连接 */
-    sql_print_information("mysql_execute_sql_with_retry errcode: %d", mysql_errno(*mysql));
+    sql_print_information("mysql_execute_sql_with_retry errcode: %d, message: %s", 
+        mysql_errno(*mysql), mysql_error(*mysql));
     if (mysql_tmp ==  NULL && mysql_errno(*mysql) == 1160 /* ER_NET_READ_ERROR */)
     {
         if ((mysql_tmp = inception_init_binlog_connection(thd->thd_sinfo->host, 
@@ -1635,7 +1636,8 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     lesser_cond_sql = &behind_sql;
     memcpy(thd->thd_sinfo, query_thd->thd_sinfo, sizeof (sinfo_space_t));
 
-    sprintf(osc_output, "[Copy thread] Start to Copy rows, batch size: %d", 200);
+    sprintf(osc_output, "[Copy thread] Start to Copy rows, batch size: %d", 
+        thd->variables.inception_osc_chunk_size);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sprintf(osc_output, "[Copy thread] Start to get connection, retry: %d/3", retrycount++);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
@@ -2240,14 +2242,15 @@ int inception_catch_rename_blocked_in_processlist(
     int       first_time = true;
     char      osc_output[1024];
 
-    /* SLEEP 100ms and then retry */
-    set_timespec_nsec(abstime, 100 * 1000000ULL);
-
-    sprintf(osc_output, "[Master thread] Try to catch connection_id");
+    sprintf(osc_output, "[Master thread] Try to catch connection with id: %d", 
+        sql_cache_node->rename_connectionid);
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
     while(!inception_biosc_abort(thd, sql_cache_node))
     {
+        /* SLEEP 100ms and then retry */
+        set_timespec_nsec(abstime, 100 * 1000000ULL);
+
         if (sql_cache_node->rename_timeout)
             return 2;
 
@@ -2255,10 +2258,16 @@ int inception_catch_rename_blocked_in_processlist(
         {
             if (first_time)
             {
-                sprintf(osc_output, "[Master thread] Get the rename connection_id: %d", 
+                sprintf(osc_output, "[Master thread] Get the rename connection: %d", 
                     sql_cache_node->rename_connectionid);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 first_time = false;
+            }
+            else
+            {
+                sprintf(osc_output, "[Master thread] try again to catch connection: %d", 
+                    sql_cache_node->rename_connectionid);
+                mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             }
 
             if (!(mysql = inception_get_connection_with_retry(thd)))
@@ -2303,6 +2312,9 @@ int inception_catch_rename_blocked_in_processlist(
         mysql_mutex_unlock(&thd->sleep_lock);
     }
 
+    sprintf(osc_output, "[Master thread] Can not to catch connection_id: %d", 
+        sql_cache_node->rename_connectionid);
+    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     /* 中止了 */
     return 1;
 }
@@ -2357,7 +2369,11 @@ int inception_catch_blocked_rename(
 
 retry:
     if (inception_biosc_abort(thd, sql_cache_node) || retry_count++ > 3)
+    {
+        sprintf(osc_output, "[Master thread] Blocked rename thread can not find, give up");
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         return 1;
+    }
 
     /* 出错了，这里有两种可能：
      * 1. 已经阻塞，但这个函数失败了，出错了，或者连不上
@@ -2389,6 +2405,9 @@ retry:
         /* inception_catch_rename_blocked_in_processlist 本身出错了
          * 解决办法是等待超时，然后放弃改表 */
         not_found = true;
+        sprintf(osc_output, "[Master thread] try again(%d) to catch the rename connection",
+            retry_count);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         goto retry;
     }
 
