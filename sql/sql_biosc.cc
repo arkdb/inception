@@ -162,6 +162,7 @@ int mysql_update_biosc_progress(
     if (sql_cache_node->osc_complete)
     {
         osc_percent_node->percent = 100;
+        sql_cache_node->oscpercent = 100;
         sprintf(osc_percent_node->remaintime, "0(s)");
     }
     else if (sum_affected_rows < sql_cache_node->total_rows)
@@ -1746,8 +1747,10 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     }
 
     sql_cache_node->biosc_copy_complete = true;
-    sprintf(osc_output, "[Copy thread] Copy rows completely, copy rows: %lld", sum_affected_rows);
+    sprintf(osc_output, "[Copy thread] Copy rows completely, copy rows: %lld, copy time: %lld(ms)", 
+        sum_affected_rows,  (my_getsystime() - start_lock_time)/10000);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
+
     sprintf(osc_output, "[Copy thread] Copy thread exit");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
@@ -1860,6 +1863,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
     THD*      query_thd;
     THD*      thd;
     char      osc_output[1024];
+    ulonglong start_catch_time = 0;
 
     my_thread_init();
 
@@ -1892,6 +1896,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
         "events and produce the increament SQL(s)");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
+    start_catch_time = my_getsystime();
 reconnect:
     sprintf(osc_output, "[Binlog thread] Get the connection and "
         "Dump binlog, retry: %d/3", retrycount);
@@ -1962,6 +1967,9 @@ reconnect:
     }
 
 error:
+    sprintf(osc_output, "[Binlog thread] Binlog process for %lld(ms)", 
+        (my_getsystime() - start_catch_time)/10000);
+    mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sprintf(osc_output, "[Binlog thread] Binlog catch thread exit");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sql_cache_node->dump_on = false;
