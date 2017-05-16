@@ -981,12 +981,26 @@ static Sys_var_mybool Sys_inception_osc_drop_new_table(
     "Drop the new table if copying the original table fails.",
     SESSION_VAR(inception_osc_drop_new_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+static Sys_var_mybool Sys_inception_biosc_drop_new_table(
+    "inception_biosc_drop_new_table",
+    "Drop the new table if copying the original table fails.",
+    SESSION_VAR(inception_biosc_drop_new_table),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_osc_print_sql(
     "inception_osc_print_sql",
     "Print SQL statements to STDOUT. Specifying this option allows you to see "
     "most of the statements that the tool executes",
     GLOBAL_VAR(inception_osc_print_sql),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
+static Sys_var_mybool Sys_inception_biosc_drop_old_table(
+    "inception_biosc_drop_old_table",
+    "Drop the original table after renaming it. After the original table has been "
+    "successfully renamed to let the new table take its place, and if there are no "
+    "errors, the tool drops the original table by default. If there are any errors, "
+    "the tool leaves the original table in place.",
+    SESSION_VAR(inception_biosc_drop_old_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_osc_drop_old_table(

@@ -2446,7 +2446,7 @@ int inception_cleanup_biosc(
         str_get(&sql_cache_node->tables.db_names), 
         sql_cache_node->biosc_old_tablename);
 
-    if (thd->variables.inception_osc_drop_old_table)
+    if (thd->variables.inception_biosc_drop_old_table)
     {
         sprintf(osc_output, "[Master thread] Drop old table `%s`.`%s`",
             str_get(&sql_cache_node->tables.db_names), 
@@ -2454,11 +2454,11 @@ int inception_cleanup_biosc(
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     }
 
-    if (!thd->variables.inception_osc_drop_old_table || 
+    if (!thd->variables.inception_biosc_drop_old_table || 
         mysql_execute_sql_with_retry(thd, &mysql, old_tablename, NULL, sql_cache_node))
         return true;
 
-    if (thd->variables.inception_osc_drop_new_table)
+    if (thd->variables.inception_biosc_drop_new_table)
     {
         sprintf(osc_output, "[Master thread] Drop new table `%s`.`%s`",
             str_get(&sql_cache_node->tables.db_names), 
@@ -2466,7 +2466,7 @@ int inception_cleanup_biosc(
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     }
 
-    if (!thd->variables.inception_osc_drop_new_table || 
+    if (!thd->variables.inception_biosc_drop_new_table || 
         mysql_execute_sql_with_retry(thd, &mysql, new_tablename, NULL, sql_cache_node))
         return true;
 
