@@ -121,9 +121,9 @@ struct select_info_struct
 	*/
 	char	join_type[NAME_CHAR_LEN];
 	char**	possible_keys;
-	char	key[NAME_CHAR_LEN];
+	char*	key;
 	int		key_len;
-	char	ref[NAME_CHAR_LEN];
+	char*	ref;
 	int		rows;
 	char*	extra;
 

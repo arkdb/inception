@@ -162,6 +162,7 @@ int mysql_update_biosc_progress(
     if (sql_cache_node->osc_complete)
     {
         osc_percent_node->percent = 100;
+        sql_cache_node->oscpercent = 100;
         sprintf(osc_percent_node->remaintime, "0(s)");
     }
     else if (sum_affected_rows < sql_cache_node->total_rows)
@@ -1136,7 +1137,8 @@ retry:
 
 error:
     /* 如果连接中断，则重建连接 */
-    sql_print_information("mysql_execute_sql_with_retry errcode: %d", mysql_errno(*mysql));
+    sql_print_information("mysql_execute_sql_with_retry errcode: %d, message: %s", 
+        mysql_errno(*mysql), mysql_error(*mysql));
     if (mysql_tmp ==  NULL && mysql_errno(*mysql) == 1160 /* ER_NET_READ_ERROR */)
     {
         if ((mysql_tmp = inception_init_binlog_connection(thd->thd_sinfo->host, 
@@ -1635,7 +1637,8 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     lesser_cond_sql = &behind_sql;
     memcpy(thd->thd_sinfo, query_thd->thd_sinfo, sizeof (sinfo_space_t));
 
-    sprintf(osc_output, "[Copy thread] Start to Copy rows, batch size: %d", 200);
+    sprintf(osc_output, "[Copy thread] Start to Copy rows, batch size: %d", 
+        thd->variables.inception_osc_chunk_size);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sprintf(osc_output, "[Copy thread] Start to get connection, retry: %d/3", retrycount++);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
@@ -1744,8 +1747,10 @@ pthread_handler_t inception_move_rows_thread(void* arg)
     }
 
     sql_cache_node->biosc_copy_complete = true;
-    sprintf(osc_output, "[Copy thread] Copy rows completely, copy rows: %lld", sum_affected_rows);
+    sprintf(osc_output, "[Copy thread] Copy rows completely, copy rows: %lld, copy time: %lld(ms)", 
+        sum_affected_rows,  (my_getsystime() - start_lock_time)/10000);
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
+
     sprintf(osc_output, "[Copy thread] Copy thread exit");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
@@ -1858,6 +1863,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
     THD*      query_thd;
     THD*      thd;
     char      osc_output[1024];
+    ulonglong start_catch_time = 0;
 
     my_thread_init();
 
@@ -1890,6 +1896,7 @@ pthread_handler_t inception_catch_binlog_thread(void* arg)
         "events and produce the increament SQL(s)");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
 
+    start_catch_time = my_getsystime();
 reconnect:
     sprintf(osc_output, "[Binlog thread] Get the connection and "
         "Dump binlog, retry: %d/3", retrycount);
@@ -1960,6 +1967,9 @@ reconnect:
     }
 
 error:
+    sprintf(osc_output, "[Binlog thread] Binlog process for %lld(ms)", 
+        (my_getsystime() - start_catch_time)/10000);
+    mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sprintf(osc_output, "[Binlog thread] Binlog catch thread exit");
     mysql_analyze_biosc_output(query_thd, osc_output, sql_cache_node);
     sql_cache_node->dump_on = false;
@@ -2240,14 +2250,15 @@ int inception_catch_rename_blocked_in_processlist(
     int       first_time = true;
     char      osc_output[1024];
 
-    /* SLEEP 100ms and then retry */
-    set_timespec_nsec(abstime, 100 * 1000000ULL);
-
-    sprintf(osc_output, "[Master thread] Try to catch connection_id");
+    sprintf(osc_output, "[Master thread] Try to catch connection with id: %d", 
+        sql_cache_node->rename_connectionid);
     mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
 
     while(!inception_biosc_abort(thd, sql_cache_node))
     {
+        /* SLEEP 100ms and then retry */
+        set_timespec_nsec(abstime, 100 * 1000000ULL);
+
         if (sql_cache_node->rename_timeout)
             return 2;
 
@@ -2255,10 +2266,16 @@ int inception_catch_rename_blocked_in_processlist(
         {
             if (first_time)
             {
-                sprintf(osc_output, "[Master thread] Get the rename connection_id: %d", 
+                sprintf(osc_output, "[Master thread] Get the rename connection: %d", 
                     sql_cache_node->rename_connectionid);
                 mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
                 first_time = false;
+            }
+            else
+            {
+                sprintf(osc_output, "[Master thread] try again to catch connection: %d", 
+                    sql_cache_node->rename_connectionid);
+                mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
             }
 
             if (!(mysql = inception_get_connection_with_retry(thd)))
@@ -2303,6 +2320,9 @@ int inception_catch_rename_blocked_in_processlist(
         mysql_mutex_unlock(&thd->sleep_lock);
     }
 
+    sprintf(osc_output, "[Master thread] Can not to catch connection_id: %d", 
+        sql_cache_node->rename_connectionid);
+    mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     /* 中止了 */
     return 1;
 }
@@ -2357,7 +2377,11 @@ int inception_catch_blocked_rename(
 
 retry:
     if (inception_biosc_abort(thd, sql_cache_node) || retry_count++ > 3)
+    {
+        sprintf(osc_output, "[Master thread] Blocked rename thread can not find, give up");
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         return 1;
+    }
 
     /* 出错了，这里有两种可能：
      * 1. 已经阻塞，但这个函数失败了，出错了，或者连不上
@@ -2389,6 +2413,9 @@ retry:
         /* inception_catch_rename_blocked_in_processlist 本身出错了
          * 解决办法是等待超时，然后放弃改表 */
         not_found = true;
+        sprintf(osc_output, "[Master thread] try again(%d) to catch the rename connection",
+            retry_count);
+        mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
         goto retry;
     }
 
@@ -2419,7 +2446,7 @@ int inception_cleanup_biosc(
         str_get(&sql_cache_node->tables.db_names), 
         sql_cache_node->biosc_old_tablename);
 
-    if (thd->variables.inception_osc_drop_old_table)
+    if (thd->variables.inception_biosc_drop_old_table)
     {
         sprintf(osc_output, "[Master thread] Drop old table `%s`.`%s`",
             str_get(&sql_cache_node->tables.db_names), 
@@ -2427,11 +2454,11 @@ int inception_cleanup_biosc(
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     }
 
-    if (!thd->variables.inception_osc_drop_old_table || 
+    if (!thd->variables.inception_biosc_drop_old_table || 
         mysql_execute_sql_with_retry(thd, &mysql, old_tablename, NULL, sql_cache_node))
         return true;
 
-    if (thd->variables.inception_osc_drop_new_table)
+    if (thd->variables.inception_biosc_drop_new_table)
     {
         sprintf(osc_output, "[Master thread] Drop new table `%s`.`%s`",
             str_get(&sql_cache_node->tables.db_names), 
@@ -2439,7 +2466,7 @@ int inception_cleanup_biosc(
         mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
     }
 
-    if (!thd->variables.inception_osc_drop_new_table || 
+    if (!thd->variables.inception_biosc_drop_new_table || 
         mysql_execute_sql_with_retry(thd, &mysql, new_tablename, NULL, sql_cache_node))
         return true;
 

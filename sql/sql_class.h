@@ -1308,6 +1308,8 @@ typedef struct system_variables
   double inception_osc_chunk_time;
   bool inception_osc_drop_old_table;
   bool inception_osc_drop_new_table;
+  bool inception_biosc_drop_old_table;
+  bool inception_biosc_drop_new_table;
   bool inception_osc_check_replication_filters;
   bool inception_osc_check_alter;
   ulong inception_alter_foreign_keys_method;

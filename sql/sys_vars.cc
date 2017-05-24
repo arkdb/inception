@@ -981,12 +981,26 @@ static Sys_var_mybool Sys_inception_osc_drop_new_table(
     "Drop the new table if copying the original table fails.",
     SESSION_VAR(inception_osc_drop_new_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+static Sys_var_mybool Sys_inception_biosc_drop_new_table(
+    "inception_biosc_drop_new_table",
+    "Drop the new table if copying the original table fails.",
+    SESSION_VAR(inception_biosc_drop_new_table),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_osc_print_sql(
     "inception_osc_print_sql",
     "Print SQL statements to STDOUT. Specifying this option allows you to see "
     "most of the statements that the tool executes",
     GLOBAL_VAR(inception_osc_print_sql),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
+static Sys_var_mybool Sys_inception_biosc_drop_old_table(
+    "inception_biosc_drop_old_table",
+    "Drop the original table after renaming it. After the original table has been "
+    "successfully renamed to let the new table take its place, and if there are no "
+    "errors, the tool drops the original table by default. If there are any errors, "
+    "the tool leaves the original table in place.",
+    SESSION_VAR(inception_biosc_drop_old_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_osc_drop_old_table(
@@ -1098,7 +1112,7 @@ static Sys_var_int32 Sys_inception_biosc_rename_wait_timeout(
     SESSION_VAR(inception_biosc_lock_wait_timeout), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
 
-const char *osc_method[]= {"build-in-osc", "pt-osc", "direct-alter", NullS};
+const char *osc_method[]= {"build_in_osc", "pt_osc", "direct_alter", NullS};
 static Sys_var_enum Sys_inception_alter_table_method(
     "inception_alter_table_method",
     "alter table methods.",
