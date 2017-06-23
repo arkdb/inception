@@ -7263,7 +7263,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                 query_thd->get_stmt_da()->message(), query_thd->query());
             inception_transfer_set_errmsg(thd, mi->datacenter, 
                 ER_TRANSFER_INTERRUPT, query_thd->get_stmt_da()->message());
-            DBUG_RETURN(true);
+            err = true;
+            goto error;
         }
         else
         {
@@ -7303,9 +7304,12 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         }
     }
 
-    query_thd->end_statement();
-    query_thd->cleanup_after_query();
-    free_root(query_thd->mem_root,MYF(MY_KEEP_PREALLOC));
+error:
+    delete query_thd;
+    thd->query_thd = NULL;
+    // query_thd->end_statement();
+    // query_thd->cleanup_after_query();
+    // free_root(query_thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
     DBUG_RETURN(err);
 }
