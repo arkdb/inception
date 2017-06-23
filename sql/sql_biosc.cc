@@ -2479,9 +2479,9 @@ int inception_wait_biosc_complete(
 )
 {
     struct    timespec abstime;
-    set_timespec_nsec(abstime, 200 * 1000000ULL);
     while (true)
     {
+        set_timespec_nsec(abstime, 200 * 1000000ULL);
         mysql_mutex_lock(&sql_cache_node->osc_lock);
         mysql_cond_timedwait(&sql_cache_node->alter_status, 
             &sql_cache_node->osc_lock, &abstime);
@@ -2809,7 +2809,15 @@ reconnect:
                         if (inception_wait_biosc_complete(thd, sql_cache_node))
                             break;
                         else
-                            goto reconnect;
+                        {
+                            /* 这里存在问题，不能直接reconnect，因为表已经被删除
+                             * 可以直接abort */
+                            sprintf(osc_output, "[Master thread] Can not wait"
+                                "the rename thread completed");
+                            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+                            sql_cache_node->osc_abort = true;
+                            break;
+                        }
                     }
                 }
             }

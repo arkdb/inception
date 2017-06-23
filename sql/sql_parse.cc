@@ -5874,6 +5874,22 @@ MYSQL* inception_get_connection(
     return mysql;
 }
 
+int inception_transfer_free_table_object(
+    transfer_cache_t* datacenter
+)
+{
+    table_info_t* tableinfo = NULL;
+
+    for (uint i=0; i < datacenter->table_cache.records; i++)
+    {
+        tableinfo = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
+        my_hash_delete(&datacenter->table_cache, (uchar*)tableinfo);
+        mysql_table_info_free(tableinfo);
+    }
+
+    return false;
+}
+
 int inception_transfer_delete_table_object(
     THD*  thd,
     transfer_cache_t* datacenter
@@ -7289,6 +7305,7 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
 
     query_thd->end_statement();
     query_thd->cleanup_after_query();
+    free_root(query_thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
     DBUG_RETURN(err);
 }
@@ -8871,6 +8888,7 @@ int inception_stop_transfer(
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
     inception_wait_and_free_mts(datacenter, false);
+    inception_transfer_free_table_object(datacenter);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
