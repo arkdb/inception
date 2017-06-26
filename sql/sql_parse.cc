@@ -7236,17 +7236,9 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
     thd = mi->thd;
 
     DBUG_ENTER("inception_transfer_sql_parse");
-    if (!thd->query_thd)
-    {
-        query_thd = new THD;
-        query_thd->thread_stack= (char*) &query_thd;
-        setup_connection_thread_globals(query_thd);
-        thd->query_thd = query_thd;
-    }
-    else
-    {
-        query_thd = thd->query_thd;
-    }
+    query_thd = new THD;
+    query_thd->thread_stack= (char*) &query_thd;
+    thd->query_thd = query_thd;
 
     lex_start(query_thd);
     mysql_reset_thd_for_next_command(query_thd);
@@ -7307,9 +7299,6 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
 error:
     delete query_thd;
     thd->query_thd = NULL;
-    // query_thd->end_statement();
-    // query_thd->cleanup_after_query();
-    // free_root(query_thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
     DBUG_RETURN(err);
 }
