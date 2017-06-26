@@ -220,6 +220,8 @@ const char* transfer_stage_type_array[]=
 
 extern const char *osc_recursion_method[];
 extern const char *osc_alter_foreign_keys_method[];
+void mysql_dup_char_with_escape( char* src, str_t* dest, char* chr, char* escape_char);
+void mysql_char_escape( char* src, str_t* dest, char* escape_char);
 
 ulong start_timer(void)
 {
@@ -12834,7 +12836,10 @@ print_item(
             sprintf(fieldname, "\"%s\"", stringval->ptr());
             str_append(print_str, "\"type\":\"STRING_ITEM\",");
             str_append(print_str, "\"value\":");
-            str_append(print_str, fieldname);
+            // str_append(print_str, fieldname);
+            str_append(print_str, "\"");
+            mysql_char_escape(stringval->c_ptr(), print_str, (char*)"\"");
+            str_append(print_str, "\"");
             str_append(print_str, "}");
         }
         break;
@@ -15716,6 +15721,31 @@ mysql_dup_char(
 
     dest[0] = '\0';
     return ret;
+}
+
+void
+mysql_char_escape(
+    char* src,
+    str_t* dest,
+    char* escape_char
+)
+{
+    char* p = src;
+    while (*src)
+    {
+        if ((*src == escape_char[0] && (p == src || *(src-1)!='\\')) ||
+           (*src == escape_char[0] && (src > p && *(src-1)=='\\')))
+        {
+            // str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, escape_char);
+        }
+        else
+        {
+            str_append_1(dest, src);
+        }
+        src++;
+    }
 }
 
 void
