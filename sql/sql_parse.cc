@@ -4607,7 +4607,8 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
     field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
-    field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Table_Cache_Elements", FN_REFLEN));
+    // field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Parallel_Workers", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Worker_Queue_Length", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
@@ -4688,7 +4689,11 @@ int mysql_master_transfer_status(
 
     protocol->store(str_get(str), system_charset_info);
     protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
-    protocol->store((longlong)osc_percent_node->table_cache.records);
+
+    sprintf(tmp, "%lld(%lld Bytes)", (longlong)osc_percent_node->table_cache.records, 
+        osc_percent_node->table_memsize);
+    protocol->store(tmp, system_charset_info);
+    // protocol->store((longlong)osc_percent_node->table_cache.records);
     protocol->store(OPTION_GET_VALUE(&osc_percent_node->option_list[PARALLEL_WORKERS]));
     protocol->store(OPTION_GET_VALUE(&osc_percent_node->option_list[WORKER_QUEUE_LENGTH]));
     time_diff = (long)(time(0) - osc_percent_node->start_time);
@@ -6061,6 +6066,8 @@ inception_transfer_get_table_object(
     tableinfo = mysql_query_table_from_source(thd, mysql, dbname, tablename, TRUE);
     if (tableinfo != NULL)
     {
+        datacenter->table_memsize += (sizeof(table_info_t) + sizeof(field_info_t) * 
+            LIST_GET_LEN(tableinfo->field_lst));
         if (my_hash_insert(&datacenter->table_cache, (uchar*) tableinfo))
         {
             mysql_table_info_free(tableinfo);

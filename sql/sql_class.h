@@ -671,6 +671,7 @@ struct transfer_cache_struct
 //    int queue_length;
     //for qps stat
     time_t start_time;
+    longlong table_memsize;
     longlong events_count;
     longlong trx_count;
     longlong eps;
