@@ -1011,16 +1011,6 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_NET_ERROR_ON_WRITE, "Got an error writing communication packets.");
     SERVER_SETMSG(ER_DERIVED_MUST_HAVE_ALIAS, "Every derived table must have its own alias.");
     SERVER_SETMSG(ER_SET_OPTIONS_ERROR, "Set transfer options error: \'%s\'.");
-    SERVER_SETMSG(ER_CREATE_THREAD_ERROR, "Create thread error: \'%s\'.");
-    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type "
-        "using build-in-osc, please switch to other method.");
-    SERVER_SETMSG(ER_PRIMARY_KEY_MODIFY, "Primary keys changed in table \'%s\'.\'%s\', "
-        "the data will been lost possibly after altered.");
-    SERVER_SETMSG(ER_PRIMARY_KEY_LOST, "After the table \'%s\'.\'%s\' altered, "
-        "there is no primary keys, it can not been altered.");
-    SERVER_SETMSG(ER_OSC_RENAME_TABLE, "Alter table Rename to can not use "
-        "osc(build-in-osc, pt-osc), please use rename table statement directly");
-    SERVER_SETMSG(ER_OSC_ABORT, "Alter table abort: %s");
     SERVER_SETMSG(ER_TOO_MANY_STATEMENTS, "There is too many statements in one task, max %d allowed.");
     SERVER_SETMSG(ER_INVALID_JSON_CHARSET, "Invalid json charset. \'%s\'");
     SERVER_SETMSG(ER_INVALID_JSON_TEXT_IN_PARAM, "Invalid json text in parm. %d, %d, \'%s\' , %d, \'%s\'");
@@ -1051,6 +1041,17 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_JSON_DOCUMENT_NULL_KEY, "Json document null key. ");
     SERVER_SETMSG(ER_JSON_VACUOUS_PATH, "Json vacuous path. ");
     SERVER_SETMSG(ER_INCORRECT_TYPE, "Incorrect type. \'%s\', \'%s\'");
+    SERVER_SETMSG(ER_CREATE_THREAD_ERROR, "Create thread error: \'%s\'.");
+    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type "
+        "using build-in-osc, please switch to other method.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_MODIFY, "Primary keys changed in table \'%s\'.\'%s\', "
+        "the data will been lost possibly after altered.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_LOST, "After the table \'%s\'.\'%s\' altered, "
+        "there is no primary keys, it can not been altered.");
+    SERVER_SETMSG(ER_OSC_RENAME_TABLE, "Alter table Rename to can not use "
+        "osc(build-in-osc, pt-osc), please use rename table statement directly");
+    SERVER_SETMSG(ER_OSC_ABORT, "Alter table abort: %s");
+    SERVER_SETMSG(ER_QUERY_EVENT_FOUND, "Found the query event when alter table: \'%s\', \'%s\'");
     
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))
