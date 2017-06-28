@@ -1272,14 +1272,14 @@ int inception_biosc_sql_parse(
         else
         {
             TABLE_LIST*     table;
-            if (thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
-                thd->lex->sql_command == SQLCOM_INSERT ||
-                thd->lex->sql_command == SQLCOM_UPDATE ||
-                thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
-                thd->lex->sql_command == SQLCOM_REPLACE||
-                thd->lex->sql_command == SQLCOM_REPLACE_SELECT||
-                thd->lex->sql_command == SQLCOM_DELETE ||
-                thd->lex->sql_command == SQLCOM_DELETE_MULTI)
+            if (query_thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
+                query_thd->lex->sql_command == SQLCOM_INSERT ||
+                query_thd->lex->sql_command == SQLCOM_UPDATE ||
+                query_thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
+                query_thd->lex->sql_command == SQLCOM_REPLACE||
+                query_thd->lex->sql_command == SQLCOM_REPLACE_SELECT||
+                query_thd->lex->sql_command == SQLCOM_DELETE ||
+                query_thd->lex->sql_command == SQLCOM_DELETE_MULTI)
             {
                 for (table=query_thd->lex->query_tables; table; table=table->next_global)
                 {
