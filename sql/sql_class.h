@@ -672,6 +672,7 @@ struct transfer_cache_struct
     //for qps stat
     time_t start_time;
     longlong table_memsize;
+    longlong sqlbuffer_memsize;
     longlong events_count;
     longlong trx_count;
     longlong eps;

@@ -274,6 +274,7 @@ str_relloc(str_t* str, int namelen)
     int    buflen ;
     int    newlen ;
 
+    str->last_len = str->str_len;
     if(str->extend_len > 0)
         newlen = namelen + str->extend_len;
     else
@@ -386,6 +387,18 @@ int
 str_get_alloc_len(str_t* str)
 {
     return str->str_len;
+}
+
+int
+str_get_last_len(str_t* str)
+{
+    return str->last_len;
+}
+
+int
+str_set_last_len(str_t* str)
+{
+    return str->last_len = str->str_len;
 }
 
 /**
@@ -4606,7 +4619,8 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_empty_string("Transfer_Stage", FN_REFLEN));
     field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
-    field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Sql_Buffer_Size", FN_REFLEN));
+    // field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Table_Cache_Elements", FN_REFLEN));
     // field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Parallel_Workers", 20, MYSQL_TYPE_LONG));
@@ -4688,7 +4702,9 @@ int mysql_master_transfer_status(
     }
 
     protocol->store(str_get(str), system_charset_info);
-    protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
+    // protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
+    sprintf(tmp, "%lld Bytes", (longlong)osc_percent_node->sqlbuffer_memsize);
+    protocol->store(tmp, system_charset_info);
 
     sprintf(tmp, "%lld(%lld Bytes)", (longlong)osc_percent_node->table_cache.records, 
         osc_percent_node->table_memsize);
@@ -6508,6 +6524,9 @@ retry:
           OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]);
         mysql_mutex_lock(&datacenter->checkpoint_lock);
         datacenter->checkpoint_age += 1; 
+        datacenter->sqlbuffer_memsize += (str_get_alloc_len(&mts_queue->sql_buffer) - 
+            str_get_last_len(&mts_queue->sql_buffer));
+        str_set_last_len(&mts_queue->sql_buffer);
         mysql_mutex_unlock(&datacenter->checkpoint_lock);
         return &mts_queue->sql_buffer;
     }
