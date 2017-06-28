@@ -250,6 +250,7 @@ str_init(str_t* str)
     str->str_len = NAME_CHAR_LEN;
     str->cur_len = 0;
     str->extend_len = 0;
+    str->last_len = 0;
     memset(str->str, 0, NAME_CHAR_LEN);
 
     return str;
@@ -274,7 +275,9 @@ str_relloc(str_t* str, int namelen)
     int    buflen ;
     int    newlen ;
 
-    str->last_len = str->str_len;
+    // if (str->last_len == str->str_len)
+    //     str->last_len = str->str_len;
+    //
     if(str->extend_len > 0)
         newlen = namelen + str->extend_len;
     else
