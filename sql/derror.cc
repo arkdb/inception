@@ -1051,7 +1051,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_OSC_RENAME_TABLE, "Alter table Rename to can not use "
         "osc(build-in-osc, pt-osc), please use rename table statement directly");
     SERVER_SETMSG(ER_OSC_ABORT, "Alter table abort: %s");
-    SERVER_SETMSG(ER_QUERY_EVENT_FOUND, "Found the query event when alter table: \'%s\', \'%s\'");
+    SERVER_SETMSG(ER_QUERY_EVENT_FOUND, "Found the query event (binlog_format == STATEMENT ?) when alter table: \'%s\', \'%s\'");
     
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))

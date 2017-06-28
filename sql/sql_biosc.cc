@@ -1261,7 +1261,8 @@ int inception_biosc_sql_parse(
         system_charset_info, next_query_id());
     if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
     {
-        inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (query_log->db_len > 0)
+            inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
         if (parse_sql(query_thd, &parser_state, NULL))
         {
             my_error(ER_SLAVE_CORRUPT_EVENT, MYF(0));
@@ -1271,15 +1272,25 @@ int inception_biosc_sql_parse(
         else
         {
             TABLE_LIST*     table;
-            for (table=query_thd->lex->query_tables; table; table=table->next_global)
+            if (thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
+                thd->lex->sql_command == SQLCOM_INSERT ||
+                thd->lex->sql_command == SQLCOM_UPDATE ||
+                thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
+                thd->lex->sql_command == SQLCOM_REPLACE||
+                thd->lex->sql_command == SQLCOM_REPLACE_SELECT||
+                thd->lex->sql_command == SQLCOM_DELETE ||
+                thd->lex->sql_command == SQLCOM_DELETE_MULTI)
             {
-                /* if found the table altering in query event, then abort the alter table */
-                if (!strcasecmp(table->db, str_get(&sql_cache_node->tables.db_names)) &&
-                    !strcasecmp(table->table_name, str_get(&sql_cache_node->tables.table_names)))
+                for (table=query_thd->lex->query_tables; table; table=table->next_global)
                 {
-                    my_error(ER_QUERY_EVENT_FOUND, MYF(0), table->db, table->table_name);
-                    err = true;
-                    goto error;
+                    /* if found the table altering in query event, then abort the alter table */
+                    if (!strcasecmp(table->db, str_get(&sql_cache_node->tables.db_names)) &&
+                        !strcasecmp(table->table_name, str_get(&sql_cache_node->tables.table_names)))
+                    {
+                        my_error(ER_QUERY_EVENT_FOUND, MYF(0), table->db, table->table_name);
+                        err = true;
+                        goto error;
+                    }
                 }
             }
         }

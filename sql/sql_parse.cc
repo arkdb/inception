@@ -7279,7 +7279,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         system_charset_info, next_query_id());
     if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
     {
-        inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (query_log->db_len)
+            inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
         if (parse_sql(query_thd, &parser_state, NULL))
         {
             sql_print_error("transfer parse query event error: %s, SQL: %s", 
@@ -18321,7 +18322,7 @@ int mysql_get_remote_variables(THD* thd)
         else if (strcasecmp(source_row[0], "sql_mode") == 0)
             get_sql_mode(thd, source_row[1]);
         else if (strcasecmp(source_row[0], "wsrep_on") == 0)
-            thd->galera_node = true;// strcmp("OFF", source_row[1]) ? false: true;
+            thd->galera_node = strcmp("OFF", source_row[1]) ? true : false;
 
         source_row = mysql_fetch_row(source_res);
     }
