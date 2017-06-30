@@ -673,7 +673,7 @@ transfer_option_t default_transfer_options[]=
     {"trx_sequence_sync", 10000, 100000000, 1, 1, "The size of trx sequence send numbers one time, number of trx."},/* 发号器大小,事务个数 */
     {"slave_sync_position", 10000, 100000000, 1, 1, "The position synced in slave, number of trx."},/* 单位是事务个数 */
     {"master_sync_position", 10000, 100000000, 1, 1, "The position synced in master, number of trx."},/* 单位是事务个数 */
-    {"parallel_workers", 5, 999, 1, 0, "The size of threads execute task, number of thread."},/* 并发线程数 */
+    {"parallel_workers", 5, 999, 0, 0, "The size of threads execute task, number of thread."},/* 并发线程数 */
     {"worker_queue_length", 10000, 100000, 1, 0, "The length of queue, number of event."}, /* 队列长度 */
     {"concurrent_dispatch_method", 1, 2, 1, 1, "the method of binlog concurrent dispatch, 2 means row, 1 means random."}, /* Binlog并行复制时的HASH分发方法*/
 };

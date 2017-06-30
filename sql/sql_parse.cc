@@ -4496,6 +4496,8 @@ inception_transfer_load_datacenter(
     mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
     mysql_mutex_init(NULL, &datacenter->checkpoint_lock, MY_MUTEX_INIT_FAST);
     mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
+    mysql_mutex_init(NULL, &datacenter->sleep_lock, MY_MUTEX_INIT_FAST);
+    mysql_cond_init(NULL, &datacenter->sleep_cond, NULL);
 
     thd->close_all_connections();
     return datacenter;
@@ -8180,9 +8182,9 @@ pthread_handler_t inception_transfer_checkpoint(void* arg)
     while (datacenter->transfer_on && !inception_transfer_killed(datacenter->thd, datacenter))
     {
         set_timespec_nsec(abstime, OPTION_GET_VALUE(&datacenter->option_list[CHECKPOINT_PERIOD]) * 1000000ULL);
-        mysql_mutex_lock(&datacenter->thd->sleep_lock);
-        mysql_cond_timedwait(&datacenter->thd->sleep_cond, &datacenter->thd->sleep_lock, &abstime);
-        mysql_mutex_unlock(&datacenter->thd->sleep_lock);
+        mysql_mutex_lock(&datacenter->sleep_lock);
+        mysql_cond_timedwait(&datacenter->sleep_cond, &datacenter->sleep_lock, &abstime);
+        mysql_mutex_unlock(&datacenter->sleep_lock);
 
         if (datacenter->checkpoint_age > 0)
             inception_transfer_make_checkpoint(thd, datacenter);
@@ -8773,7 +8775,7 @@ retry:
 retry0:
     if (datacenter->checkpoint_running)
     {
-        mysql_cond_broadcast(&datacenter->thd->sleep_cond);
+        mysql_cond_broadcast(&datacenter->sleep_cond);
         sleep(1);
         goto retry0;
     }
@@ -9139,6 +9141,14 @@ int inception_transfer_set_instance_position(
 
     sprintf(tmp, "update `%s`.`instances` set binlog_file='%s', binlog_position=%d \
         where instance_role = 'master'", datacenter, binlog_file_name, binlog_file_pos);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        thd->close_all_connections();
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`transfer_checkpoint`", datacenter);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         mysql_mutex_unlock(&transfer_mutex); 
@@ -14416,7 +14426,7 @@ int inception_transfer_execute_store_simple(
         sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
             mysql_error(mysql), sql);
         inception_transfer_set_errmsg(thd, mi->datacenter, 
-            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         DBUG_RETURN(TRUE);
     }
 
@@ -15789,22 +15799,15 @@ mysql_dup_char_with_escape(
     char* p = src;
     while (*src)
     {
-        if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
-        {
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, escape_char);
-        }
-        else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
-        {
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, escape_char);
-        }
         //if the curr is \n or \r\n, then replace
-        else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
+        if (*src == '\n')
         {
             str_append(dest, "<br/>");
+        }
+        else if (*src == '\r' && *(src+1) == '\n')
+        {
+            str_append(dest, "<br/>");
+            src++;//omit the  \n
         }
         else if ((*src=='\\' && *(src+1) == 'n'))
         {
@@ -15812,27 +15815,65 @@ mysql_dup_char_with_escape(
             str_append(dest, "<br/>");
             src++;//omit the n after "\"
         }
-        else if ((*src=='\\' && *(src+1) == 'n'))
+        else if (*src == escape_char[0])
         {
-            //if the string is \n explictly, example aaaa \\n aaaaa
-            str_append(dest, "<br/>");
-            src++;//omit the n after "\"
-        }
-        else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
-                ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
-        {//'
+            /* 因为有两层用途，一层是MySQL的转义，一层是JSON的转义 */
             str_append_1(dest, "\\");
-            str_append_1(dest, chr);
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
         }
-        else if ((*src=='\\' && *(src+1) == '\\'))
+        else if (*src == chr[0])
         {
-            //if the string is \n explictly, example aaaa \\n aaaaa
             str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            src++;//omit the n after "\"
+            str_append_1(dest, src);
         }
+        else if (*src == '\\')
+        {
+            /* 因为有两层用途，一层是MySQL的转义，一层是JSON的转义 */
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
+        }
+        // else if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
+        // {
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, escape_char);
+        // }
+        // else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
+        // {
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, escape_char);
+        // }
+        // //if the curr is \n or \r\n, then replace
+        // else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
+        // {
+        //     str_append(dest, "<br/>");
+        // }
+        // else if ((*src=='\\' && *(src+1) == 'n'))
+        // {
+        //     //if the string is \n explictly, example aaaa \\n aaaaa
+        //     str_append(dest, "<br/>");
+        //     src++;//omit the n after "\"
+        // }
+        // else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
+        //         ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
+        // {//'
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, chr);
+        // }
+        // else if ((*src=='\\' && *(src+1) == '\\'))
+        // {
+        //     //if the string is \n explictly, example aaaa \\n aaaaa
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     src++;//omit the n after "\"
+        // }
         else
         {
             str_append_1(dest, src);

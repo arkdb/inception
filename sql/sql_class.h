@@ -644,6 +644,8 @@ struct transfer_cache_struct
     struct tm     stop_time_space;
     volatile int  thread_stage;
 
+    mysql_cond_t sleep_cond;
+    mysql_mutex_t sleep_lock;
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
