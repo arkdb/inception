@@ -7789,7 +7789,6 @@ int inception_transfer_binlog_process(
     case QUERY_EVENT:
         mi->datacenter->events_count += 1;
         err = inception_transfer_query_event(mi, ev);
-        free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
         break;
 
     case XID_EVENT:
