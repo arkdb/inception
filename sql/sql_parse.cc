@@ -7269,34 +7269,36 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
     thd = mi->thd;
 
     DBUG_ENTER("inception_transfer_sql_parse");
-    // query_thd = new THD;
-    // query_thd->thread_stack= (char*) &query_thd;
-    thd->query_thd = thd;
 
-    lex_start(thd);
-    mysql_reset_thd_for_next_command(thd);
+    query_thd = new THD;
+    query_thd->thread_stack= (char*) &query_thd;
+    setup_connection_thread_globals(query_thd);
+    thd->query_thd = query_thd;
+
+    lex_start(query_thd);
+    mysql_reset_thd_for_next_command(query_thd);
     query_log = (Query_log_event*)ev;
 
-    thd->set_query_and_id((char*) query_log->query, query_log->q_len, 
+    query_thd->set_query_and_id((char*) query_log->query, query_log->q_len, 
         system_charset_info, next_query_id());
-    if (!parser_state.init(thd, thd->query(), thd->query_length()))
+    if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
     {
         if (query_log->db_len)
-            inception_transfer_set_thd_db(thd, query_log->db, query_log->db_len);
-        if (parse_sql(thd, &parser_state, NULL))
+            inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (parse_sql(query_thd, &parser_state, NULL))
         {
             sql_print_error("transfer parse query event error: %s, SQL: %s", 
-                thd->get_stmt_da()->message(), thd->query());
+                query_thd->get_stmt_da()->message(), query_thd->query());
             inception_transfer_set_errmsg(thd, mi->datacenter, 
-                ER_TRANSFER_INTERRUPT, thd->get_stmt_da()->message());
+                ER_TRANSFER_INTERRUPT, query_thd->get_stmt_da()->message());
             err = true;
             goto error;
         }
         else
         {
             int optype;
-            optype = thd->lex->sql_command;
-            switch (thd->lex->sql_command)
+            optype = query_thd->lex->sql_command;
+            switch (query_thd->lex->sql_command)
             {
                 case SQLCOM_CREATE_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
@@ -7305,11 +7307,11 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                 case SQLCOM_RENAME_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
                     //free the table object
-                    inception_transfer_delete_table_object(thd, mi->datacenter);
+                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
                 case SQLCOM_DROP_TABLE:
                     //free the table object
-                    inception_transfer_delete_table_object(thd, mi->datacenter);
+                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
                 case SQLCOM_TRUNCATE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
@@ -7331,10 +7333,10 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
     }
 
 error:
-    // delete query_thd;
-    // thd->query_thd = NULL;
-    // free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
-
+    delete query_thd;
+    thd->query_thd = NULL;
+    //restore context 
+    setup_connection_thread_globals(thd);
     DBUG_RETURN(err);
 }
 
