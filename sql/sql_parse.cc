@@ -2658,13 +2658,13 @@ mysql_table_info_free(
             field_info->field = NULL;
         }
 
-        free(field_info);
+        my_free(field_info);
         field_info = next_field_info;
     }
 
     my_free(table_info->record);
     my_free(table_info->null_arr);
-    free(table_info);
+    my_free(table_info);
 
     DBUG_VOID_RETURN;
 }
@@ -2766,8 +2766,8 @@ mysql_copy_table_info(
     DBUG_ENTER("mysql_copy_table_info");
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, src->table_name);
@@ -2777,9 +2777,9 @@ mysql_copy_table_info(
     while (field_info)
     {
         //free memory
-        field_info_new = (field_info_t*)malloc(sizeof(field_info_t));
+        field_info_new = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-        memset(field_info_new, 0, sizeof(field_info_t));
+        // memset(field_info_new, 0, sizeof(field_info_t));
         strcpy(field_info_new->field_name, field_info->field_name);
         field_info_new->nullable = field_info->nullable;
         field_info_new->primary_key = field_info->primary_key;
@@ -2811,8 +2811,8 @@ mysql_convert_desc_to_table_info(
     DBUG_ENTER("mysql_convert_desc_to_table_info");
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, tablename);
@@ -2822,9 +2822,9 @@ mysql_convert_desc_to_table_info(
     while (source_row)
     {
         //free memory
-        field_info = (field_info_t*)malloc(sizeof(field_info_t));
+        field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-        memset(field_info, 0, sizeof(field_info_t));
+        // memset(field_info, 0, sizeof(field_info_t));
         strcpy(field_info->field_name, source_row[0]);
         if (strcasecmp(source_row[3], "YES") == 0)
             field_info->nullable = true;
@@ -2988,7 +2988,7 @@ mysql_get_table_object(
     if (tableinfo != NULL)
     {
         mysql_add_table_object(thd, tableinfo);
-        mysql_alloc_record(tableinfo, thd->get_audit_connection());
+        mysql_alloc_record(thd, tableinfo, thd->get_audit_connection());
     }
 
     return tableinfo;
@@ -3737,19 +3737,19 @@ mysql_parse_possible_keys(
         p++;
     }
 
-    keys = (char**)malloc(sizeof(char*) * (count + 1 + 1));
-    memset(keys, 0, sizeof(char*) * (count + 1 + 1));
+    keys = (char**)my_malloc(sizeof(char*) * (count + 1 + 1), MY_ZEROFILL);
+    // memset(keys, 0, sizeof(char*) * (count + 1 + 1));
     p = strtok(possible_keys, ",");
     if (p)
     {
-        keys[i] = (char*)malloc(strlen(p) + 1);
+        keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
         strcpy(keys[i], p);
         i++;
     }
 
     while ((p = strtok(NULL, ",")))
     {
-        keys[i] = (char*)malloc(strlen(p) + 1);
+        keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
         strcpy(keys[i], p);
         i++;
     }
@@ -3915,8 +3915,8 @@ void mysql_free_explain_info(explain_info_t* explain)
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-                free(select_info->possible_keys[i++]);
-            free(select_info->possible_keys);
+                my_free(select_info->possible_keys[i++]);
+            my_free(select_info->possible_keys);
             select_info->possible_keys = NULL;
         }
 
@@ -6102,7 +6102,7 @@ inception_transfer_get_table_object(
         if (doignore == INCEPTION_DO_DO && 
             inception_transfer_write_table_map(mi, datacenter, tableinfo))
             return NULL;
-        mysql_alloc_record(tableinfo, mysql);
+        mysql_alloc_record(thd, tableinfo, mysql);
     }
     else if (mysql_errno(mysql) == 1051/*ER_BAD_TABLE_ERROR*/ || 
             mysql_errno(mysql) == 1146/*ER_NO_SUCH_TABLE*/)
@@ -9662,9 +9662,9 @@ mysql_cache_new_column(
     field_info_t* field_info_tmp;
     int found = false;
 
-    field_info = (field_info_t*)malloc(sizeof(field_info_t));
+    field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-    memset(field_info, 0, sizeof(field_info_t));
+    // memset(field_info, 0, sizeof(field_info_t));
     strcpy(field_info->field_name, field->field_name);
     field_info->nullable = (field->flags & NOT_NULL_FLAG) ? FALSE : TRUE;
 
@@ -9722,8 +9722,8 @@ int mysql_cache_new_table(THD *thd, Alter_info* alter_info_ptr)
     }
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, create_table->table_name);
@@ -12228,15 +12228,15 @@ mysql_convert_derived_table(
     SELECT_LEX *last_select= derived->first_select();
     while (last_select)
     {
-        table_info = (table_info_t*)malloc(sizeof(table_info_t));
-        memset(table_info, 0, sizeof(table_info_t));
+        table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+        // memset(table_info, 0, sizeof(table_info_t));
         LIST_INIT(table_info->field_lst);
 
         List_iterator<Item> it(last_select->item_list);
         while ((item= it++))
         {
-            field_info = (field_info_t*)malloc(sizeof(field_info_t));
-            memset(field_info, 0, sizeof(field_info_t));
+            field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
+            // memset(field_info, 0, sizeof(field_info_t));
             if (item->item_name.is_set())
                 strcpy(field_info->field_name, (char*)item->item_name.ptr());
             else
@@ -16214,8 +16214,8 @@ int mysql_execute_backup_info_insert_sql(
     sprintf(tmp_buf, "%d,", sql_cache_node->end_binlog_pos);
     backup_sql->append(tmp_buf);
 
-    dupcharsql = (char*)my_malloc(strlen(sql_cache_node->sql_statement) * 2 + 1, MYF(0));
-    memset(dupcharsql, 0, strlen(sql_cache_node->sql_statement) * 2 + 1);
+    dupcharsql = (char*)my_malloc(strlen(sql_cache_node->sql_statement) * 2 + 1, MY_ZEROFILL);
+    // memset(dupcharsql, 0, strlen(sql_cache_node->sql_statement) * 2 + 1);
     mysql_dup_char(sql_cache_node->sql_statement, dupcharsql, '\'');
     backup_sql->append("\'");
     backup_sql->append(dupcharsql);
@@ -16936,7 +16936,7 @@ FIELDFLAG_ZEROFILL : 0) |
     DBUG_RETURN(0);
 }
 
-int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
+int mysql_alloc_record(THD* thd, table_info_t* table_info, MYSQL *mysql)
 {
     char   set_format[256];
     MYSQL_RES *  source_res;
@@ -17042,7 +17042,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
         field_def = make_field(NULL, field_info->field_ptr, field_info->max_length,
             (uchar *)"Hello world", false, field_info->pack_flag,
             field_info->real_type, get_charset(field_info->charsetnr, MYF(0)),
-            geom_type, Field::NONE, NULL, field_info->field_name, NULL);
+            geom_type, Field::NONE, NULL, field_info->field_name, thd->mem_root);
 
         if (field_def != NULL)
         {
@@ -18099,7 +18099,7 @@ int mysql_alloc_cache_table_record_low(THD *thd, sql_cache_node_t* sql_cache_nod
     {
         table_info = table_rt->table_info; 
         if (table_info && mysql_sql_cache_is_valid(sql_cache_node))
-            if(mysql_alloc_record(table_info, thd->get_audit_connection()))
+            if(mysql_alloc_record(thd, table_info, thd->get_audit_connection()))
                 return TRUE;
 
         table_rt = LIST_GET_NEXT(link, table_rt);
