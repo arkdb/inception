@@ -2498,16 +2498,17 @@ int thd_parse_options(
             DBUG_RETURN(TRUE);
     }
 
+    mysql_mutex_lock(&isql_option_mutex);
+
     comment = (char*)my_malloc(str - sql + 1, MY_ZEROFILL);
     memcpy(comment, sql, str - sql);
     str_comment = strtok(comment, "*/");
     if (str_comment == NULL)
     {
+        mysql_mutex_unlock(&isql_option_mutex);
         my_error(ER_SQL_INVALID_SOURCE, MYF(0));
         DBUG_RETURN(ER_NO);
     }
-
-    mysql_mutex_lock(&isql_option_mutex);
 
     length = strlen(str_comment);
     while (length > 0 && my_isspace(thd->charset(), *str_comment))
@@ -3723,6 +3724,8 @@ mysql_parse_possible_keys(
     int   count = 0;
     char**  keys;
     int   i = 0;
+    char *outer_ptr = NULL;
+    char *inner_ptr = NULL;
 
     DBUG_ENTER("mysql_parse_possible_keys");
 
@@ -3738,22 +3741,21 @@ mysql_parse_possible_keys(
     }
 
     keys = (char**)my_malloc(sizeof(char*) * (count + 1 + 1), MY_ZEROFILL);
-    // memset(keys, 0, sizeof(char*) * (count + 1 + 1));
-    p = strtok(possible_keys, ",");
-    if (p)
-    {
-        keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
-        strcpy(keys[i], p);
-        i++;
-    }
+    while((p = strtok_r(possible_keys, ",", &outer_ptr))!=NULL)   
+    {  
+        possible_keys=p;
+        while((p = strtok_r(possible_keys, " ", &inner_ptr))!=NULL)   
+        {  
+            // sql_print_information("possible_keys %d: %s", i, p);
+            keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
+            strcpy(keys[i], p);
+            i++;
+            possible_keys=NULL;
+        }  
+        possible_keys=NULL;
+    }  
 
-    while ((p = strtok(NULL, ",")))
-    {
-        keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
-        strcpy(keys[i], p);
-        i++;
-    }
-
+    keys[i] = NULL;
     DBUG_RETURN(keys);
 }
 
@@ -3859,7 +3861,8 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "possible_keys") == 0)
                 {
-                    select_info->possible_keys = mysql_parse_possible_keys(field_value);
+                    // select_info->possible_keys = mysql_parse_possible_keys(field_value);
+                    select_info->possible_keys = NULL;
                 }
                 else if (strcmpi(field->name, "key") == 0)
                 {
@@ -3915,7 +3918,10 @@ void mysql_free_explain_info(explain_info_t* explain)
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-                my_free(select_info->possible_keys[i++]);
+            {
+                my_free(select_info->possible_keys[i]);
+                i ++;
+            }
             my_free(select_info->possible_keys);
             select_info->possible_keys = NULL;
         }
@@ -4235,6 +4241,8 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             protocol->store("DEINIT", system_charset_info);
         else if (thd_info->state == INCEPTION_STATE_BACKUP)
             protocol->store("BACKUP", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_SEND)
+            protocol->store("SEND", system_charset_info);
 
         //time
         if (thd_info->start_time)
@@ -9807,6 +9815,8 @@ int mysql_check_charset(const char* charsetname)
     if (inception_support_charset == NULL)
         return true;
     
+    /* strtok 是线程不安全的函数，需要保护起来 */
+    mysql_mutex_lock(&isql_option_mutex);
     charset = (char*)my_malloc(strlen (inception_support_charset) + 1, MY_ZEROFILL);
     strcpy(charset, inception_support_charset);
     if ((strToken = strtok(charset, ",")) == NULL)
@@ -9825,6 +9835,7 @@ int mysql_check_charset(const char* charsetname)
     }
 
 err:
+    mysql_mutex_unlock(&isql_option_mutex);
     my_free(charset);
     return ret;
 }
@@ -18312,6 +18323,7 @@ int get_sql_mode(THD*  thd, char* sqlmode)
     if (!strlen(sqlmode))
         return false; 
 
+    mysql_mutex_lock(&isql_option_mutex);
     sql_mode = (char*)my_malloc(strlen(sqlmode)+1, MY_ZEROFILL);
     strcpy(sql_mode, sqlmode);
     if ((strToken = strtok(sql_mode, ",")) == NULL)
@@ -18327,9 +18339,11 @@ int get_sql_mode(THD*  thd, char* sqlmode)
     }
 
 err:
+    mysql_mutex_unlock(&isql_option_mutex);
     my_free(sql_mode);
     return false;
 }
+
 int mysql_get_remote_variables(THD* thd)
 {
     char set_format[1024];
