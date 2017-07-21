@@ -9988,7 +9988,7 @@ int mysql_check_create_table(THD *thd)
     /* CREATE TABLE IF NOT EXISTS tablename ... */
     if (mysql_get_table_object(thd, create_table->db, create_table->table_name, FALSE))
     {
-        if (!(create_info_ptr->options | HA_LEX_CREATE_IF_NOT_EXISTS))
+        if (!(create_info_ptr->options & HA_LEX_CREATE_IF_NOT_EXISTS))
         {
             my_error(ER_TABLE_EXISTS_ERROR, MYF(0), create_table->table_name);
             mysql_errmsg_append(thd);
