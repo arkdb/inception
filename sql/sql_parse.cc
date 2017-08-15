@@ -7119,6 +7119,32 @@ print_item(
             my_free(fieldname);
         }
         break;
+    case Item::REF_ITEM:
+        {
+            char fieldname[FN_LEN];
+            char dbname[FN_LEN];
+            char tablename[FN_LEN];
+            dbname[0]=fieldname[0]=tablename[0] = '\0';
+            str_append(print_str, "{");
+            str_append(print_str, "\"type\":\"REF_ITEM\",");
+            if (((Item_ref*)item)->db_name)
+            {
+                str_append(print_str, "\"db\":");
+                sprintf(dbname, "\"%s\",", ((Item_ref*)item)->db_name);
+                str_append(print_str, dbname);
+            }
+            if (((Item_ref*)item)->table_name)
+            {
+                str_append(print_str, "\"table\":");
+                sprintf(tablename, "\"%s\",", ((Item_ref*)item)->table_name);
+                str_append(print_str, tablename);
+            }
+            str_append(print_str, "\"ref\":");
+            sprintf(fieldname, "\"%s\"", ((Item_ref*)item)->field_name);
+            str_append(print_str, fieldname);
+            str_append(print_str, "}");
+        }
+        break;
     default:
         break;
     }
