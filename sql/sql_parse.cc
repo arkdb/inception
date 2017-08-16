@@ -11269,7 +11269,8 @@ int mysql_show_table_status(THD *thd, table_info_t* table_info)
         DBUG_RETURN(TRUE);
     }
 
-    if ((source_row = mysql_fetch_row(source_res)) != NULL)
+    thd->affected_rows += 0;
+    if ((source_row = mysql_fetch_row(source_res)) != NULL && source_row[4] != NULL)
         thd->affected_rows += atoi(source_row[4]);
 
     mysql_free_result(source_res);
