@@ -1106,3 +1106,9 @@ static Sys_var_charptr Sys_inception_result_columns_delimiters(
     NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(check_inception_result_columns_delimiters),
     ON_UPDATE(update_inception_result_columns_delimiters));
+
+static Sys_var_mybool Sys_inception_show_db_name_in_rollback_statement(
+    "inception_show_db_name_in_rollback_statement",
+    "used for deciding wether to add the db_name in rollback_statement",
+    GLOBAL_VAR(inception_show_db_name_in_rollback_statement),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));

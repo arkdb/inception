@@ -194,6 +194,7 @@ extern bool inception_ddl_support;
 extern bool inception_osc_on;
 extern char* inception_result_columns_delimiters;
 extern const char *inception_result_columns_delimiter_chars;
+extern bool inception_show_db_name_in_rollback_statement;
 // extern ulong inception_osc_critical_connected;
 // extern ulong inception_osc_critical_running;
 // extern ulong inception_osc_max_connected;

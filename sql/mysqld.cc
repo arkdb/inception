@@ -599,6 +599,7 @@ bool inception_ddl_support=0;
 bool inception_osc_on=0;
 char *inception_result_columns_delimiters = 0;
 const char *inception_result_columns_delimiter_chars = "\n";
+bool inception_show_db_name_in_rollback_statement = 1;
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
 // ulong inception_osc_max_connected=0;

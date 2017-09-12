@@ -4743,7 +4743,10 @@ int mysql_check_create_table(THD *thd)
     //only when execute, generate the rollback sql statement
     if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE)
     {
-        sprintf(tmp_buf, "DROP TABLE `%s`.`%s`;", create_table->db, create_table->table_name);
+        if(inception_show_db_name_in_rollback_statement)
+            sprintf(tmp_buf, "DROP TABLE `%s`.`%s`;", create_table->db, create_table->table_name);
+        else
+            sprintf(tmp_buf, "DROP TABLE `%s`;", create_table->table_name);
         str_append(&thd->ddl_rollback, tmp_buf);
     }
 
@@ -6131,14 +6134,22 @@ int mysql_check_alter_table(THD *thd)
     {
         if (!(alter_info_ptr->flags & Alter_info::ALTER_RENAME))
         {
-            sprintf(tmp_buf, "ALTER TABLE `%s`.`%s` ", thd->lex->query_tables->db,
-                    thd->lex->query_tables->table_name);
+            if(inception_show_db_name_in_rollback_statement)
+                sprintf(tmp_buf, "ALTER TABLE `%s`.`%s` ", thd->lex->query_tables->db,
+                        thd->lex->query_tables->table_name);
+            else
+                sprintf(tmp_buf, "ALTER TABLE `%s` ", thd->lex->query_tables->table_name);
+
             str_append(&thd->ddl_rollback, tmp_buf);
         }
         else
         {
-            sprintf(tmp_buf, "ALTER TABLE `%s`.`%s` ",
-                    thd->lex->select_lex.db, thd->lex->name.str);
+            if(inception_show_db_name_in_rollback_statement)
+                sprintf(tmp_buf, "ALTER TABLE `%s`.`%s` ",
+                        thd->lex->select_lex.db, thd->lex->name.str);
+            else
+                sprintf(tmp_buf, "ALTER TABLE `%s` ", thd->lex->name.str);
+
             str_append(&thd->ddl_rollback, tmp_buf);
         }
     }
@@ -9365,9 +9376,14 @@ int mysql_generate_field_insert_values_for_rollback(
     int    field_index=0;
     int    pkcount=0;
 
+    bool display_db_name_in_sql = inception_show_db_name_in_rollback_statement;
     if (optype == SQLCOM_INSERT)
     {
-        sprintf(tmp_buf, "DELETE FROM `%s`.`%s` WHERE ", dbname, tablename);
+        if(display_db_name_in_sql)
+            sprintf(tmp_buf, "DELETE FROM `%s`.`%s` WHERE ", dbname, tablename);
+        else
+            sprintf(tmp_buf, "DELETE FROM `%s` WHERE ", tablename);
+
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
@@ -9390,7 +9406,11 @@ int mysql_generate_field_insert_values_for_rollback(
 
         backup_sql->append(";");
     } else if (optype == SQLCOM_DELETE) {
-        sprintf(tmp_buf, "INSERT INTO `%s`.`%s` ( ", dbname, tablename);
+        if(display_db_name_in_sql)
+            sprintf(tmp_buf, "INSERT INTO `%s`.`%s` ( ", dbname, tablename);
+        else
+            sprintf(tmp_buf, "INSERT INTO `%s` ( ", tablename);
+
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
@@ -9416,7 +9436,11 @@ int mysql_generate_field_insert_values_for_rollback(
 
         backup_sql->append(");");
     } else if (optype == SQLCOM_UPDATE) {
-        sprintf(tmp_buf, "UPDATE `%s`.`%s` SET ", dbname, tablename);
+        if(display_db_name_in_sql)
+            sprintf(tmp_buf, "UPDATE `%s`.`%s` SET ", dbname, tablename);
+        else
+            sprintf(tmp_buf, "UPDATE `%s` SET ", tablename);
+
         backup_sql->append(tmp_buf);
         field_node = LIST_GET_FIRST(mi->table_info->field_lst);
         while (field_node != NULL)
