@@ -17620,6 +17620,9 @@ int mysql_execute_alter_table_osc(
     if (!thd->variables.inception_osc_check_alter)
         oscargv[count++] = strdup("--no-check-alter");
 
+    if (!thd->variables.inception_osc_check_unique_key_change)
+        oscargv[count++] = strdup("--no-check-unique-key-change");
+
     sprintf(cmd_line, "--alter-foreign-keys-method=%s", 
         osc_alter_foreign_keys_method[thd->variables.inception_alter_foreign_keys_method]);
     oscargv[count++] = strdup(cmd_line);
@@ -18597,7 +18600,7 @@ int mysql_init_sql_cache(THD* thd)
         DBUG_RETURN(FALSE);
     }
 
-    DBUG_ASSERT(thd->sql_cache == NULL);
+    //DBUG_ASSERT(thd->sql_cache == NULL);
     sql_cache = (sql_cache_t*)my_malloc(sizeof(sql_cache_t), MY_ZEROFILL);
     thd->sql_cache = sql_cache;
     if (sql_cache == NULL)

@@ -1054,6 +1054,14 @@ static Sys_var_mybool Sys_inception_osc_check_alter(
     SESSION_VAR(inception_osc_check_alter),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_osc_check_unique_key_change(
+    "inception_osc_check_unique_key_change",
+    "Added the --check-unique-key-change option for pt-online-schema-change to"
+    "abort if the specified statement for --alter is trying to add a unique index. "
+    "This is supposed to avoid adding duplicate keys that might lead to silently losing data.",
+    SESSION_VAR(inception_osc_check_unique_key_change),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
 const char *osc_alter_foreign_keys_method[]= 
 {"auto", "none", "rebuild_constraints", "drop_swap", NullS};
 
