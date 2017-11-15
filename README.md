@@ -21,3 +21,20 @@ http://mysql-inception.github.io/inception-document/
 
 * 邮箱：doathink@gmail.com
 * Inception讨论QQ群：185803996
+
+## English summary
+
+MySQL Inception is a tool for database administrators. It allows DBAs to construct good SQL statements, test them on read-only datasets and finally run those SQL statements against production databases with the ability to rollback if the SQL statement for some reason did not result in the intended result.
+
+Testing SQL statements utilizes the EXPLAIN features and custom rules on best practices in SQL statements. The rollback feature is similar to the Flashback feature in MariaDB. To be able to rollback a SQL statement, a special syntax like shown below must be used:
+
+```
+inception_magic_start;
+use <database name>;
+<any SQL statement>
+inception_magic_commit;
+```
+
+MySQL Inception is built on MySQL 5.6.10 with storage engines and other parts removed. It uses the real MySQL parser to analyze SQL statements and provides a shell for command line access. In addition there is also a web user interface. The main author is Wang Zhufeng (e-mail address above), who works for [Qunar.com](https://www.qunar.com()), the biggest online hotel booking site in China. As with MySQL 5.6, Inception is open source and free to use by anybody.
+
+MySQL Inception is very popular in China and used some other countries as well, e.g. India. Most of the [documentation](https://github.com/mysql-inception/inception-document) and web user interface is in Chinese. We welcome translation contributions!
