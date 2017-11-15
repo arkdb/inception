@@ -1044,6 +1044,7 @@ THD::THD(bool enable_plugins)
   binlog_next_event_pos.pos= 0;
 
   have_begin = FALSE;
+  add_task = FALSE;
   sql_cache = NULL;
   thd_sinfo = (sinfo_space_t*)my_malloc(sizeof(sinfo_space_t), MYF(0));
   thd_sinfo->optype = INCEPTION_TYPE_LOCAL; 

@@ -7314,8 +7314,6 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                 case SQLCOM_ALTER_TABLE:
                 case SQLCOM_RENAME_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
-                    //free the table object
-                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
                 case SQLCOM_DROP_TABLE:
                     //free the table object
@@ -7328,6 +7326,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                     break;
             }
 
+            //free the table object
+            inception_transfer_delete_table_object(query_thd, mi->datacenter);
             if (!err && (optype == SQLCOM_ALTER_TABLE 
                   || optype == SQLCOM_TRUNCATE
                   || optype == SQLCOM_RENAME_TABLE
@@ -18496,7 +18496,7 @@ int mysql_cache_deinit_task(THD* thd)
     task_progress_t* task_node;
     DBUG_ENTER("mysql_cache_deinit_task");
 
-    if (!inception_get_task_sequence(thd))
+    if (!inception_get_task_sequence(thd) || !thd->add_task)
         DBUG_RETURN(false);
 
     mysql_mutex_lock(&task_mutex);
@@ -18542,6 +18542,7 @@ int mysql_cache_new_task(THD* thd)
         task_node = LIST_GET_NEXT(link, task_node);
     }
 
+    thd->add_task =  true;
     task_node = (task_progress_t*)my_malloc(sizeof(task_progress_t), MY_ZEROFILL);
     strcpy(task_node->sequence, inception_get_task_sequence(thd));
     LIST_ADD_LAST(link, global_task_cache.task_lst, task_node);

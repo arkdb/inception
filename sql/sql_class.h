@@ -3639,6 +3639,7 @@ public:
 
   char* sql_statement;//±Ì æ¡Ÿ ±¥Ê¥¢’Ê’˝µƒsql”Ôæ‰£¨“≤æÕ «»•µÙ‘¥–≈œ¢µƒ≤ø∑÷
   int have_begin;
+  int add_task;
   
   sql_statistic_t sql_statistic;
   sql_cache_t* sql_cache;
