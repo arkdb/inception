@@ -17252,8 +17252,9 @@ int mysql_backup_single_statement(
         delete evlog;
 
         if (log_pos != 0 &&
-            strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) == 0 &&
-            log_pos >= (my_off_t)sql_cache_node->end_binlog_pos)
+            ((strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) == 0 &&
+            log_pos >= (my_off_t)sql_cache_node->end_binlog_pos) ||
+            strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) < 0))
         {
             break;
         }
