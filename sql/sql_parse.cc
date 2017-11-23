@@ -14961,8 +14961,6 @@ ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql)
         DBUG_RETURN(packet_error);
     }
 
-    /* update the timer if read from net */
-    mi->thd->set_timer();
     /* Check if eof packet */
     if (len < 8 && mysql->net.read_pos[0] == 254)
     {
