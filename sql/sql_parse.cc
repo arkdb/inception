@@ -18227,6 +18227,8 @@ int mysql_execute_commit(THD *thd)
                     if ((mysql = thd->get_audit_connection()) == NULL)
                         goto error;
 
+                    /* set the current_execute to current backup sqlnode */
+                    thd->current_execute = sql_cache_node;
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
                     if(mysql_backup_sql(thd, mi, mysql, sql_cache_node) && next_sql_cache_node)
                     {
