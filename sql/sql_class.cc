@@ -1153,6 +1153,12 @@ bool THD::init_audit_connection()
   return !restore_connection_context(this, mysql);
 }
 
+int THD::set_timer()
+{
+    audit_conn.start_timer = start_timer();
+    return false;
+}
+
 MYSQL* THD::get_audit_connection()
 {
 reconnect:

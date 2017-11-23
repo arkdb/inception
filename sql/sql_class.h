@@ -4719,6 +4719,7 @@ private:
 
 public:
   MYSQL* get_audit_connection();
+  int set_timer();
   MYSQL* get_backup_connection();
   MYSQL* get_transfer_connection(char* datacenter_name);
   void close_all_connections();

@@ -14961,6 +14961,8 @@ ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql)
         DBUG_RETURN(packet_error);
     }
 
+    /* update the timer if read from net */
+    mi->thd->set_timer();
     /* Check if eof packet */
     if (len < 8 && mysql->net.read_pos[0] == 254)
     {
@@ -14973,7 +14975,7 @@ ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql)
     DBUG_RETURN(len - 1);
 }
 
-ulong mysql_read_event(MYSQL* mysql)
+ulong mysql_read_event(THD* thd, MYSQL* mysql)
 {
     ulong len;
     DBUG_ENTER("mysql_read_event");
@@ -14985,6 +14987,8 @@ ulong mysql_read_event(MYSQL* mysql)
         DBUG_RETURN(packet_error);
     }
 
+    /* update the timer if read from net */
+    thd->set_timer();
     /* Check if eof packet */
     if (len < 8 && mysql->net.read_pos[0] == 254)
     {
@@ -17213,7 +17217,7 @@ int mysql_backup_single_statement(
     {
         ulong event_len;
 
-        event_len = mysql_read_event(mysql);
+        event_len = mysql_read_event(thd, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
 
         if (event_len == 0)//end of packet
@@ -17232,6 +17236,8 @@ int mysql_backup_single_statement(
                 sql_print_warning("Dump binlog error: '%s', retry: %d",
                     thd->get_stmt_da()->message(), retrycount);
                 thd->clear_error();
+                thd->close_all_connections();
+                mysql = thd->get_audit_connection();
                 mysql_get_master_version(mysql, mi);
                 if (mysql_request_binlog_dump(mysql, sql_cache_node->start_binlog_file,
                       sql_cache_node->start_binlog_pos, 0))
