@@ -7143,15 +7143,23 @@ int inception_transfer_write_ddl_event(
     str_t* backup_sql;
     THD *thd;
     table_info_t* table_info;
+    TABLE_LIST* table;
+    int notignore = false;
 
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
     thd = mi->thd;
     query_thd = thd->query_thd;
-    table_info = inception_transfer_get_table_object(mi, mi->thd, 
-                     query_thd->lex->query_tables->db, 
-                     query_thd->lex->query_tables->table_name, mi->datacenter);
-    if (table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE))
+
+    for (table=query_thd->lex->query_tables; table; table=table->next_global)
+    {
+        table_info = inception_transfer_get_table_object(mi, mi->thd, 
+                         table->db, table->table_name, mi->datacenter);
+        if (!(table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE)))
+            notignore = true;
+    }
+       
+    if (notignore == false)
         DBUG_RETURN(false);
        
     backup_sql = inception_mts_get_sql_buffer(mi->datacenter, table_info, NULL, true);
