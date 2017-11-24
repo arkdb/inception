@@ -7151,6 +7151,9 @@ int inception_transfer_write_ddl_event(
     thd = mi->thd;
     query_thd = thd->query_thd;
 
+    /* if the sql is ddl, then set the event_seq_in_trx to zero, 
+     * because ddl is not transactional*/
+    datacenter->event_seq_in_trx = 0;
     for (table=query_thd->lex->query_tables; table; table=table->next_global)
     {
         table_info = inception_transfer_get_table_object(mi, mi->thd, 
