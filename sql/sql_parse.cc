@@ -6764,10 +6764,29 @@ int inception_tranfer_write_alter_table(
                     
                 str_append(sql_buffer, "{");
                 List_iterator<Key_part_spec> col_it(key->columns);
-                str_append(sql_buffer, "\"index_name\":");
+                str_append(sql_buffer, "\"index_type\":");
                 str_append(sql_buffer, "\"");
-                str_append(sql_buffer, key->name.str);
+                if (key->type == Key::PRIMARY)
+                    str_append(sql_buffer, "PRIMARY");
+                else if (key->type == Key::UNIQUE)
+                    str_append(sql_buffer, "UNIQUE");
+                else if (key->type == Key::MULTIPLE)
+                    str_append(sql_buffer, "MULTIPLE");
+                else if (key->type == Key::FULLTEXT)
+                    str_append(sql_buffer, "FULLTEXT");
+                else if (key->type == Key::SPATIAL)
+                    str_append(sql_buffer, "SPATIAL");
+                else if (key->type == Key::FOREIGN_KEY)
+                    str_append(sql_buffer, "FOREIGN_KEY");
                 str_append(sql_buffer, "\",");
+                if (key->name.str)
+                {
+                    str_append(sql_buffer, "\"index_name\":");
+                    str_append(sql_buffer, "\"");
+                    str_append(sql_buffer, key->name.str);
+                    str_append(sql_buffer, "\",");
+                }
+
                 str_append(sql_buffer, "\"column_name\":[");
                 colfirst=1;
                 while ((col1= col_it++))
@@ -7150,7 +7169,7 @@ int inception_transfer_write_ddl_event(
 
     thd = mi->thd;
     query_thd = thd->query_thd;
-
+    optype = query_thd->lex->sql_command;
     /* if the sql is ddl, then set the event_seq_in_trx to zero, 
      * because ddl is not transactional*/
     datacenter->event_seq_in_trx = 0;
@@ -7158,6 +7177,16 @@ int inception_transfer_write_ddl_event(
     {
         table_info = inception_transfer_get_table_object(mi, mi->thd, 
                          table->db, table->table_name, mi->datacenter);
+        if (!(table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE)))
+            notignore = true;
+    }
+
+    if (optype == SQLCOM_ALTER_TABLE && 
+        query_thd->lex->alter_info.flags & Alter_info::ALTER_RENAME)
+    {
+        table_info = inception_transfer_get_table_object(mi, mi->thd, 
+           query_thd->lex->select_lex.db, 
+           query_thd->lex->name.str, mi->datacenter);
         if (!(table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE)))
             notignore = true;
     }
@@ -7174,7 +7203,6 @@ int inception_transfer_write_ddl_event(
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
         DBUG_RETURN(true);
-    optype = query_thd->lex->sql_command;
     switch (optype)
     {
       case SQLCOM_TRUNCATE:
