@@ -979,4 +979,5 @@
 #define  ER_PRIMARY_KEY_LOST                                                  1978
 #define  ER_OSC_RENAME_TABLE                                                  1979
 #define  ER_OSC_ABORT                                                         1980
-#define  ER_ERROR_LAST                                                        1981
+#define  ER_QUERY_EVENT_FOUND                                                 1981
+#define  ER_ERROR_LAST                                                        1982

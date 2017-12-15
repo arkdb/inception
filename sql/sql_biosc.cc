@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+void inception_transfer_set_thd_db(THD *thd, const char *db, uint32 db_len);
 int inception_get_table_rows(THD* thd, sql_cache_node_t* sql_cache_node);
 int mysql_execute_sql_with_retry( THD* thd, MYSQL** mysql, char* tmp, my_ulonglong* affected_rows, sql_cache_node_t* sql_cache_node);
 int inception_event_enqueue( THD*  thd, sql_cache_node_t* sql_cache_node, time_t timestamp);
@@ -1234,6 +1235,102 @@ error:
     DBUG_RETURN(error);
 }
 
+int inception_biosc_sql_parse(
+    Master_info* mi, 
+    Log_event* ev, 
+    sql_cache_node_t* sql_cache_node
+)
+{
+    int err=false;
+    THD* thd;
+    THD* query_thd;
+    Parser_state parser_state;
+    Query_log_event*  query_log;
+    thd = mi->thd;
+
+    DBUG_ENTER("inception_biosc_sql_parse");
+    query_thd = new THD;
+    query_thd->thread_stack= (char*) &query_thd;
+    thd->query_thd = query_thd;
+
+    lex_start(query_thd);
+    mysql_reset_thd_for_next_command(query_thd);
+    query_log = (Query_log_event*)ev;
+
+    query_thd->set_query_and_id((char*) query_log->query, query_log->q_len, 
+        system_charset_info, next_query_id());
+    if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
+    {
+        if (query_log->db_len > 0)
+            inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (parse_sql(query_thd, &parser_state, NULL))
+        {
+            my_error(ER_SLAVE_CORRUPT_EVENT, MYF(0));
+            err = true;
+            goto error;
+        }
+        else
+        {
+            TABLE_LIST*     table;
+            if (query_thd->lex->sql_command == SQLCOM_INSERT_SELECT ||
+                query_thd->lex->sql_command == SQLCOM_INSERT ||
+                query_thd->lex->sql_command == SQLCOM_UPDATE ||
+                query_thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
+                query_thd->lex->sql_command == SQLCOM_REPLACE||
+                query_thd->lex->sql_command == SQLCOM_REPLACE_SELECT||
+                query_thd->lex->sql_command == SQLCOM_DELETE ||
+                query_thd->lex->sql_command == SQLCOM_DELETE_MULTI)
+            {
+                for (table=query_thd->lex->query_tables; table; table=table->next_global)
+                {
+                    /* if found the table altering in query event, then abort the alter table */
+                    if (!strcasecmp(table->db, str_get(&sql_cache_node->tables.db_names)) &&
+                        !strcasecmp(table->table_name, str_get(&sql_cache_node->tables.table_names)))
+                    {
+                        my_error(ER_QUERY_EVENT_FOUND, MYF(0), table->db, table->table_name);
+                        err = true;
+                        goto error;
+                    }
+                }
+            }
+        }
+    }
+
+error:
+    delete query_thd;
+    thd->query_thd = NULL;
+
+    DBUG_RETURN(err);
+}
+
+int inception_biosc_query_event(
+    Master_info* mi,
+    Log_event* ev,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    Query_log_event*  query_log;
+    THD* thd;
+
+    DBUG_ENTER("inception_biosc_query_event");
+
+    query_log = (Query_log_event*)ev;
+    thd = mi->thd;
+
+    if (strcasecmp(query_log->query, "BEGIN") == 0)
+    {
+        DBUG_RETURN(false);
+    }
+
+    if (strcasecmp(query_log->query, "COMMIT") == 0)
+    {
+        free_tables_to_lock(mi);
+        DBUG_RETURN(false);
+    }
+
+    DBUG_RETURN(inception_biosc_sql_parse(mi, ev, sql_cache_node));
+}
+
 int inception_biosc_binlog_process(
     Master_info* mi,
     THD*        query_thd,
@@ -1254,6 +1351,10 @@ int inception_biosc_binlog_process(
     {
     case TABLE_MAP_EVENT:
         err = inception_biosc_table_map_log_event(mi, ev, sql_cache_node);
+        break;
+
+    case QUERY_EVENT:
+        err = inception_biosc_query_event(mi, ev, sql_cache_node);
         break;
 
     case XID_EVENT:
@@ -1694,13 +1795,22 @@ pthread_handler_t inception_move_rows_thread(void* arg)
         }
         else if (first_time)
         {
-            /* 第一次进来，这是第一行数据 */
-            inception_swap_str(&change_cond_sql, &lesser_cond_sql);
-            str_truncate_0(lesser_cond_sql);
-            first_time = false;
+            /* empty table */
+            if (str_get_len(greater_cond_sql) == 0 && 
+                str_get_len(lesser_cond_sql) == 0)
+            {
+                complete = true;
+            }
+            else
+            {
+                /* 第一次进来，这是第一行数据 */
+                inception_swap_str(&change_cond_sql, &lesser_cond_sql);
+                str_truncate_0(lesser_cond_sql);
+                first_time = false;
 
-            inception_get_copy_rows_batch_sql(query_thd, &select_prefix, change_cond_sql, 
-                &execute_sql, sql_cache_node, first_time);
+                inception_get_copy_rows_batch_sql(query_thd, &select_prefix, change_cond_sql, 
+                    &execute_sql, sql_cache_node, first_time);
+            }
         }
         else if (!first_time)
         {
@@ -2479,9 +2589,9 @@ int inception_wait_biosc_complete(
 )
 {
     struct    timespec abstime;
-    set_timespec_nsec(abstime, 200 * 1000000ULL);
     while (true)
     {
+        set_timespec_nsec(abstime, 200 * 1000000ULL);
         mysql_mutex_lock(&sql_cache_node->osc_lock);
         mysql_cond_timedwait(&sql_cache_node->alter_status, 
             &sql_cache_node->osc_lock, &abstime);
@@ -2809,7 +2919,15 @@ reconnect:
                         if (inception_wait_biosc_complete(thd, sql_cache_node))
                             break;
                         else
-                            goto reconnect;
+                        {
+                            /* 这里存在问题，不能直接reconnect，因为表已经被删除
+                             * 可以直接abort */
+                            sprintf(osc_output, "[Master thread] Can not wait"
+                                "the rename thread completed");
+                            mysql_analyze_biosc_output(thd, osc_output, sql_cache_node);
+                            sql_cache_node->osc_abort = true;
+                            break;
+                        }
                     }
                 }
             }

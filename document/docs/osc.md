@@ -59,6 +59,7 @@ inception get osc_percent '当前执行的SQL语句以及一些基本信息生�
 至于上面提到的SHA1值是如何获得的，因为在应用提交语句时，都会审核通过才能提交到流程管理数据库中，那么这个语句就不会被修改了，而此时在审核通过的时候，返回的结果集新增一个列sqlsha1，而只有当Inception判断到当前语句满足使用OSC方式执行时，这个列才会有值，就会根据当前语句信息生成一个哈希值，这个值存储起来以方便后面执行时使用。
 
 下面来看看ALTER语句在满足使用OSC的情况下，审核时返回的结果集信息：
+
 ````
 ['ID', 'stage', 'errlevel', 'stagestatus', 'errormessage', 'SQL', 'Affected_rows', 'sequence', 'backup_dbname', 'execute_time', 'sqlsha1']
 1 | CHECKED | 0 | Audit completed | None | use sbtest | 0 | '0_0_0' | None | 0 |
@@ -95,3 +96,5 @@ inception get osc processlist;
 
 ##后记
 **需要注意的是**，OSC全局参数最好别频繁修改，因为针对某一个语句的SHA1是分阶段的，生成是在审核阶段的，如果在审核时候没有打开，或者设置的表大小没有满足OSC方式，则不会生成SHA1，那么在执行时候，这个进度就不能被查询了，这个语句的执行情况就不能获取到，影响执行过程的体验。当然这个影响也不大，因为在执行完成之后，如果执行成功了，并且参数`inception_osc_print_none`为OFF，则会看到打印信息，里面包括成功或者失败的所有信息，而如果为ON，则如果结果集中有信息，则说明是执行错误了，如果没有则说明成功。
+
+

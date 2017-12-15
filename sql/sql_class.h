@@ -644,6 +644,8 @@ struct transfer_cache_struct
     struct tm     stop_time_space;
     volatile int  thread_stage;
 
+    mysql_cond_t sleep_cond;
+    mysql_mutex_t sleep_lock;
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
@@ -671,6 +673,8 @@ struct transfer_cache_struct
 //    int queue_length;
     //for qps stat
     time_t start_time;
+    longlong table_memsize;
+    longlong sqlbuffer_memsize;
     longlong events_count;
     longlong trx_count;
     longlong eps;
@@ -1312,6 +1316,7 @@ typedef struct system_variables
   bool inception_biosc_drop_new_table;
   bool inception_osc_check_replication_filters;
   bool inception_osc_check_alter;
+  bool inception_osc_check_unique_key_change;
   ulong inception_alter_foreign_keys_method;
   ulong inception_osc_chunk_size;
   ulong inception_osc_max_running;
@@ -3634,6 +3639,7 @@ public:
 
   char* sql_statement;//±Ì æ¡Ÿ ±¥Ê¥¢’Ê’˝µƒsql”Ôæ‰£¨“≤æÕ «»•µÙ‘¥–≈œ¢µƒ≤ø∑÷
   int have_begin;
+  int add_task;
   
   sql_statistic_t sql_statistic;
   sql_cache_t* sql_cache;
@@ -4713,6 +4719,7 @@ private:
 
 public:
   MYSQL* get_audit_connection();
+  int set_timer();
   MYSQL* get_backup_connection();
   MYSQL* get_transfer_connection(char* datacenter_name);
   void close_all_connections();

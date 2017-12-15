@@ -205,7 +205,7 @@ int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
 int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
 int mysql_execute_commit(THD *thd);
 void mysql_free_all_table_definition(THD*  thd);
-int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql);
+int mysql_alloc_record(THD* thd, table_info_t* table_info, MYSQL *mysql);
 int mysql_check_binlog_format(THD* thd, char* binlogformat);
 int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
 int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
