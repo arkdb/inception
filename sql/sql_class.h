@@ -326,7 +326,8 @@ struct field_info_struct
     uint    unireg_check;
     uint    length;
     uint    decimals;      /* Number of decimals in field */
-
+    uint    unsigned_flag;
+    
     uchar*    field_ptr;
     CHARSET_INFO *charset;
 

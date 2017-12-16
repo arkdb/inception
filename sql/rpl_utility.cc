@@ -738,28 +738,6 @@ table_def::compatible_with(THD *thd, Relay_log_info *rli,
 
       if (!field)
           order=-1;
-      
-        switch(type(col))
-        {
-            case MYSQL_TYPE_TINY:
-            case MYSQL_TYPE_INT24:
-            case MYSQL_TYPE_LONG:
-            case MYSQL_TYPE_FLOAT:
-            case MYSQL_TYPE_DOUBLE:
-            case MYSQL_TYPE_SHORT:
-            case MYSQL_TYPE_DECIMAL:
-            case MYSQL_TYPE_LONGLONG:
-            case MYSQL_TYPE_NEWDECIMAL:
-            {
-                if (field_info->field && field_info->conv_field_after)
-                    ((Field_num*)field_info->conv_field_after)->unsigned_flag =
-                    ((Field_num*)field_info->field)->unsigned_flag;
-                break;
-            }
-                
-            default:
-                break;
-        }
       /*
         If order is not 0, a conversion is required, so we need to set
         up the conversion table.
@@ -882,7 +860,7 @@ table_def::create_conversion_table(
                                   max_length,
                                   decimals,
                                   TRUE,         // maybe_null
-                                  FALSE,        // unsigned_flag
+                                  field_info->unsigned_flag,        // unsigned_flag
                                   pack_length);
     if (field_info->field)
         field_def->charset= field_info->field->charset();

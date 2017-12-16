@@ -90,6 +90,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "thr_alarm.h"
 #include "my_stacktrace.h"
 #include "sys_vars.h"
+#include <string.h>
 
 using std::max;
 using std::min;
@@ -2857,6 +2858,11 @@ mysql_convert_desc_to_table_info(
         }
         else
             strcpy(field_info->data_type, source_row[1]);
+        
+        if (strstr(field_info->data_type, "unsigned"))
+            field_info->unsigned_flag = true;
+        else
+            field_info->unsigned_flag = false;
 
         LIST_ADD_LAST(link, table_info->field_lst, field_info);
         source_row = mysql_fetch_row(source_res);
