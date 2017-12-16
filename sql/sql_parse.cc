@@ -15749,10 +15749,12 @@ mysql_unpack_row(
             if (null_bits & null_mask)
             {
                 table_info->null_arr[i] = TRUE;
+                field->is_created_from_null_item = TRUE;
             }
             else
             {
                 table_info->null_arr[i] = FALSE;
+                field->is_created_from_null_item = FALSE;
                 uint16 const metadata= tabledef->field_metadata(i);
                 pack_ptr= field->unpack(field->ptr, pack_ptr, metadata, TRUE);
             }
@@ -15967,7 +15969,7 @@ int mysql_get_field_string_for_tranfer(
     String buffer((char*) buff,sizeof(buff),&my_charset_bin);
     String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
 
-    if (null_arr[field_index])
+    if (field->is_created_from_null_item)
     {
         str_append(backup_sql, "NULL");
         append_flag = FALSE;
