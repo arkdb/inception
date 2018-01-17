@@ -988,6 +988,12 @@ static Sys_var_mybool Sys_inception_osc_print_none(
     GLOBAL_VAR(inception_osc_print_none),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_osc_preserve_triggers(
+    "inception_osc_preserve_triggers",
+    "if true, will preserve triggers",
+    GLOBAL_VAR(inception_osc_preserve_triggers),
+    CMD_LINE(OPT_ARG), DEFAULT(FALSE));
+	
 static Sys_var_mybool Sys_inception_read_only(
     "inception_read_only",
     "if true, inception will not execute the sql on remote MySQL server, although --enable-execute",

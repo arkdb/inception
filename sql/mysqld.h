@@ -187,6 +187,7 @@ extern bool inception_enable_identifer_keyword;
 extern bool inception_enable_sql_statistic;
 extern char* inception_osc_bin_dir;
 extern bool inception_osc_print_sql;
+extern bool inception_osc_preserve_triggers;
 extern bool inception_osc_print_none;
 extern bool inception_read_only;
 extern bool inception_check_identifier;

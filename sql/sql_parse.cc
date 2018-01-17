@@ -10466,6 +10466,8 @@ int mysql_execute_alter_table_osc(
                               thd, statement, sql_cache_node->ignore));
     if (inception_osc_print_sql)
         oscargv[count++] = strdup("--print");
+    if (inception_osc_preserve_triggers)
+    oscargv[count++] = strdup("--preserve-triggers");
     oscargv[count++] = strdup("--charset");
     oscargv[count++] = strdup("utf8");
 

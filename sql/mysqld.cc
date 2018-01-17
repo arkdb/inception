@@ -592,6 +592,7 @@ bool inception_enable_identifer_keyword=0;
 bool inception_enable_sql_statistic=0;
 char* inception_osc_bin_dir= NULL;
 bool inception_osc_print_sql=0;
+bool inception_osc_preserve_triggers=0;
 bool inception_osc_print_none=0;
 bool inception_read_only=0;
 bool inception_check_identifier=0;
