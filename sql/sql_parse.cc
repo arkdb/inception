@@ -2540,6 +2540,7 @@ int thd_parse_options(
 
     sprintf(errmsg, "Invalid source infomation.");
     global_source.password = global_source.user = NULL;
+    memset(&global_source, 0, sizeof(sinfo_t));
     ho_error = my_handle_options(&++i, &isql_option, my_isql_options, NULL, NULL, errmsg);
     isql_option--;
     if (ho_error)
