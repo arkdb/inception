@@ -17744,6 +17744,7 @@ int mysql_execute_alter_table_osc(
         DBUG_RETURN(true);
     }
         
+    proc.wait();
     if(mysql_osc_execute_abort_check(thd, sql_cache_node))
         DBUG_RETURN(true);
 
