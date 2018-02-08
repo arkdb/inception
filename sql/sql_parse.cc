@@ -7360,6 +7360,8 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                 case SQLCOM_ALTER_TABLE:
                 case SQLCOM_RENAME_TABLE:
                     err = inception_transfer_write_ddl_event(mi, ev, mi->datacenter);
+                    //free the table object
+                    inception_transfer_delete_table_object(query_thd, mi->datacenter);
                     break;
                 case SQLCOM_DROP_TABLE:
                     //free the table object
@@ -7372,8 +7374,6 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
                     break;
             }
 
-            //free the table object
-            inception_transfer_delete_table_object(query_thd, mi->datacenter);
             if (!err && (optype == SQLCOM_ALTER_TABLE 
                   || optype == SQLCOM_TRUNCATE
                   || optype == SQLCOM_RENAME_TABLE
