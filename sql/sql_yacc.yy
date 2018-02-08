@@ -6365,11 +6365,11 @@ type:
             Lex->type|= (AUTO_INCREMENT_FLAG | NOT_NULL_FLAG | UNSIGNED_FLAG |
               UNIQUE_FLAG);
           }
-//        | JSON_SYM
-//        {
-//            Lex->charset=&my_charset_bin;
-//            $$=MYSQL_TYPE_JSON;
-//        }
+        | JSON_SYM
+        {
+            Lex->charset=&my_charset_bin;
+            $$=MYSQL_TYPE_JSON;
+        }
         ;
 
 // spatial_type:
@@ -9184,21 +9184,21 @@ simple_expr:
             if ($$ == NULL)
               MYSQL_YYABORT;
           }
-//        | simple_ident JSON_SEPARATOR_SYM TEXT_STRING_literal
-//        {
-//            Item_string *path=     
-//            NEW_PTN Item_string($3.str, $3.length,
-//            YYTHD->variables.collation_connection);
-//            $$= NEW_PTN Item_func_json_extract(YYTHD, $1, path);
-//        }
-//        | simple_ident JSON_UNQUOTED_SEPARATOR_SYM TEXT_STRING_literal
-//        {
-//            Item_string *path=
-//            NEW_PTN Item_string($3.str, $3.length,
-//            YYTHD->variables.collation_connection);
-//            Item *extr= NEW_PTN Item_func_json_extract(YYTHD, $1, path);
-//            $$= NEW_PTN Item_func_json_unquote(extr);
-//        }
+        | simple_ident JSON_SEPARATOR_SYM TEXT_STRING_literal
+        {
+            Item_string *path=     
+            NEW_PTN Item_string($3.str, $3.length,
+            YYTHD->variables.collation_connection);
+            $$= NEW_PTN Item_func_json_extract(YYTHD, $1, path);
+        }
+        | simple_ident JSON_UNQUOTED_SEPARATOR_SYM TEXT_STRING_literal
+        {
+            Item_string *path=
+            NEW_PTN Item_string($3.str, $3.length,
+            YYTHD->variables.collation_connection);
+            Item *extr= NEW_PTN Item_func_json_extract(YYTHD, $1, path);
+            $$= NEW_PTN Item_func_json_unquote(extr);
+        }
         ;
 
 /*
@@ -10244,14 +10244,14 @@ cast_type:
           { $$= ITEM_CAST_DATETIME; Lex->charset= NULL; Lex->length= (char *) 0; }
         | DECIMAL_SYM float_options
           { $$=ITEM_CAST_DECIMAL; Lex->charset= NULL; }
-//        | JSON_SYM
-//        {
-//            $$ =ITEM_CAST_JSON;
-//            Lex->charset = NULL;
-////            $$.type_flags= 0;
-//            Lex->length= NULL;
-//            Lex->dec= NULL;
-//        }
+        | JSON_SYM
+        {
+            $$ =ITEM_CAST_JSON;
+            Lex->charset = NULL;
+//            $$.type_flags= 0;
+            Lex->length= NULL;
+            Lex->dec= NULL;
+        }
         ;
 
 opt_expr_list:
