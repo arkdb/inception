@@ -100,11 +100,12 @@ enum enum_ident_name_check
 typedef struct str_struct str_t;
 struct str_struct
 {
-	char	str_buf[NAME_CHAR_LEN];
-	char*	str;
-	int		str_len;
-	int		cur_len;
-    int     extend_len;
+    char	str_buf[NAME_CHAR_LEN];
+    char*	str;
+    int		str_len;
+    int		cur_len;
+    int   extend_len;
+    int   last_len;/* 扩展之后，上一次的大小 */
 };
 
 typedef struct select_info_struct select_info_t;
@@ -121,9 +122,9 @@ struct select_info_struct
 	*/
 	char	join_type[NAME_CHAR_LEN];
 	char**	possible_keys;
-	char	key[NAME_CHAR_LEN];
+	char*	key;
 	int		key_len;
-	char	ref[NAME_CHAR_LEN];
+	char*	ref;
 	int		rows;
 	char*	extra;
 

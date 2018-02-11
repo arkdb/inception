@@ -1,0 +1,4 @@
+*.out
+*.swp
+tags
+.DS_Store

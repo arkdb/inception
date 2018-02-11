@@ -575,6 +575,7 @@ ulong inception_max_update_rows=0;
 ulong inception_max_keys=0;
 bool inception_enable_not_innodb=0;
 char* inception_support_charset=0;
+char* inception_slave_ports_range=0;
 bool inception_check_table_comment=0;
 bool inception_check_column_comment=0;
 bool inception_check_primary_key=0;
@@ -605,6 +606,7 @@ char* inception_datacenter_host=NULL;
 int inception_datacenter_port;
 char* inception_datacenter_user=NULL;
 char* inception_datacenter_password=NULL;
+ulong inception_max_allowed_statements=0;
 
 // ulong inception_osc_critical_connected=0;
 // ulong inception_osc_critical_running=0;
@@ -626,6 +628,8 @@ osc_cache_t global_osc_cache;
 task_cache_t global_task_cache;
 transfer_t global_transfer_cache;
 collector_instance_list_t global_collector_instance_cache;
+
+PSI_memory_key key_memory_JSON;
 
 /**
   Soft upper limit for number of sp_head objects that can be stored
@@ -676,7 +680,7 @@ transfer_option_t default_transfer_options[]=
     {"trx_sequence_sync", 10000, 100000000, 1, 1, "The size of trx sequence send numbers one time, number of trx."},/* 发号器大小,事务个数 */
     {"slave_sync_position", 10000, 100000000, 1, 1, "The position synced in slave, number of trx."},/* 单位是事务个数 */
     {"master_sync_position", 10000, 100000000, 1, 1, "The position synced in master, number of trx."},/* 单位是事务个数 */
-    {"parallel_workers", 5, 999, 1, 0, "The size of threads execute task, number of thread."},/* 并发线程数 */
+    {"parallel_workers", 5, 999, 0, 0, "The size of threads execute task, number of thread."},/* 并发线程数 */
     {"worker_queue_length", 10000, 100000, 1, 0, "The length of queue, number of event."}, /* 队列长度 */
     {"concurrent_dispatch_method", 1, 2, 1, 1, "the method of binlog concurrent dispatch, 2 means row, 1 means random."}, /* Binlog并行复制时的HASH分发方法*/
 };

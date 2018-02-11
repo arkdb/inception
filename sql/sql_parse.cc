@@ -89,31 +89,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql_time.h"
 #include "thr_alarm.h"
 #include "my_stacktrace.h"
+#include "sys_vars.h"
+#include <string.h>
 
 using std::max;
 using std::min;
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
-
-#if defined(__WIN__)
-#include <time.h>
-#else
-#include <sys/times.h>
-#ifdef _SC_CLK_TCK        // For mit-pthreads
-#undef CLOCKS_PER_SEC
-#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
-#endif
-#endif
-
-static ulong start_timer(void)
-{
-#if defined(__WIN__)
-    return clock();
-#else
-    struct tms tms_tmp;
-    return times(&tms_tmp);
-#endif
-}
 
 /**
 @defgroup Runtime_Environment Runtime Environment
@@ -239,6 +221,18 @@ const char* transfer_stage_type_array[]=
 
 extern const char *osc_recursion_method[];
 extern const char *osc_alter_foreign_keys_method[];
+void mysql_dup_char_with_escape( char* src, str_t* dest, char* chr, char* escape_char);
+void mysql_char_escape( char* src, str_t* dest, char* escape_char);
+
+ulong start_timer(void)
+{
+#if defined(__WIN__)
+    return clock();
+#else
+    struct tms tms_tmp;
+    return times(&tms_tmp);
+#endif
+}
 
 void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row)
 {
@@ -257,6 +251,7 @@ str_init(str_t* str)
     str->str_len = NAME_CHAR_LEN;
     str->cur_len = 0;
     str->extend_len = 0;
+    str->last_len = 0;
     memset(str->str, 0, NAME_CHAR_LEN);
 
     return str;
@@ -281,6 +276,9 @@ str_relloc(str_t* str, int namelen)
     int    buflen ;
     int    newlen ;
 
+    // if (str->last_len == str->str_len)
+    //     str->last_len = str->str_len;
+    //
     if(str->extend_len > 0)
         newlen = namelen + str->extend_len;
     else
@@ -395,6 +393,18 @@ int
 str_get_alloc_len(str_t* str)
 {
     return str->str_len;
+}
+
+int
+str_get_last_len(str_t* str)
+{
+    return str->last_len;
+}
+
+int
+str_set_last_len(str_t* str)
+{
+    return str->last_len = str->str_len;
 }
 
 /**
@@ -780,11 +790,16 @@ int mysql_cache_one_sql(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
-    sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
-    if (sql_cache_node == NULL)
+    sql_cache_node = thd->current_sql_cache_node;
+    thd->current_sql_cache_node = NULL;
+    if (!sql_cache_node)
     {
-        my_error(ER_OUTOFMEMORY, MYF(0));
-        DBUG_RETURN(ER_NO);
+        sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
+        if (sql_cache_node == NULL)
+        {
+            my_error(ER_OUTOFMEMORY, MYF(0));
+            DBUG_RETURN(ER_NO);
+        }
     }
 
     sql_cache_node->stagereport = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
@@ -811,11 +826,15 @@ int mysql_cache_one_sql(THD* thd)
         strcat(sql_cache_node->sql_statement, str_get(thd->show_result));
     }
 
-    mysql_extract_update_tables(thd, sql_cache_node);
-
-    sql_cache_node->use_osc = thd->use_osc;
+    sql_cache_node->thd = thd;
     sql_cache_node->optype = thd->lex->sql_command;
     sql_cache_node->seqno = ++thd->sql_cache->seqno_cache;
+    if (sql_cache_node->seqno > (int)inception_max_allowed_statements)
+    {
+        my_error(ER_TOO_MANY_STATEMENTS, MYF(0), inception_max_allowed_statements);
+        DBUG_RETURN(ER_NO);
+    }
+
     mysql_compute_sql_sha1(thd, sql_cache_node);
     sql_cache_node->affected_rows = thd->affected_rows;
     sql_cache_node->ignore = thd->lex->ignore;
@@ -1973,12 +1992,10 @@ bool my_yyoverflow(short **yyss, YYSTYPE **yyvs, ulong *yystacksize)
     if (!state->yacc_yyvs)
         old_info= *yystacksize;
     *yystacksize= set_zone((*yystacksize)*2,MY_YACC_INIT,MY_YACC_MAX);
-    if (!(state->yacc_yyvs= (uchar*)
-        my_realloc(state->yacc_yyvs,
+    if (!(state->yacc_yyvs= (uchar*) my_realloc(state->yacc_yyvs,
         *yystacksize*sizeof(**yyvs),
         MYF(MY_ALLOW_ZERO_PTR | MY_FREE_ON_ERROR))) ||
-        !(state->yacc_yyss= (uchar*)
-        my_realloc(state->yacc_yyss,
+        !(state->yacc_yyss= (uchar*) my_realloc(state->yacc_yyss,
         *yystacksize*sizeof(**yyss),
         MYF(MY_ALLOW_ZERO_PTR | MY_FREE_ON_ERROR))))
         return 1;
@@ -2275,7 +2292,6 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_IDENT_USE_KEYWORD:
     case ER_TABLE_CHARSET_MUST_UTF8:
     case ER_AUTO_INCR_ID_WARNING:
-    case ER_ALTER_TABLE_ONCE:
     case ER_BLOB_CANT_HAVE_DEFAULT:
     case ER_WITH_DEFAULT_ADD_COLUMN:
     case ER_NOT_SUPPORTED_YET:
@@ -2293,6 +2309,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_NAMES_MUST_UTF8:
     case ER_TEXT_NOT_NULLABLE_ERROR:
     case ER_INVALID_IDENT:
+    case ER_PRIMARY_KEY_MODIFY:
     case ER_SUBSELECT_IN_DML:
         return INCEPTION_RULES;
 
@@ -2343,6 +2360,10 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_COLLATION_CHARSET_MISMATCH:
     case ER_VIEW_SELECT_CLAUSE:
     case ER_NOT_SUPPORTED_ITEM_TYPE:
+    case ER_BUILD_IN_OSC_NOT_SUPPORT:
+    case ER_ALTER_TABLE_ONCE:
+    case ER_PRIMARY_KEY_LOST:
+    case ER_REQUIRES_PRIMARY_KEY:
         return INCEPTION_PARSE;
 
     default:
@@ -2512,13 +2533,13 @@ mysql_check_inception_variables(
             return false;
         break;
 
-    case ER_ALTER_TABLE_ONCE:
-        if (inception_merge_alter_table)
-            return true;
-        else 
-            return false;
-        break;
-
+    // case ER_ALTER_TABLE_ONCE:
+    //     if (inception_merge_alter_table)
+    //         return true;
+    //     else 
+    //         return false;
+    //     break;
+    //
     case ER_WITH_DEFAULT_ADD_COLUMN:
         if (inception_check_column_default_value)
             return true;
@@ -2793,16 +2814,17 @@ int thd_parse_options(
             DBUG_RETURN(TRUE);
     }
 
+    mysql_mutex_lock(&isql_option_mutex);
+
     comment = (char*)my_malloc(str - sql + 1, MY_ZEROFILL);
     memcpy(comment, sql, str - sql);
     str_comment = strtok(comment, "*/");
     if (str_comment == NULL)
     {
+        mysql_mutex_unlock(&isql_option_mutex);
         my_error(ER_SQL_INVALID_SOURCE, MYF(0));
         DBUG_RETURN(ER_NO);
     }
-
-    mysql_mutex_lock(&isql_option_mutex);
 
     length = strlen(str_comment);
     while (length > 0 && my_isspace(thd->charset(), *str_comment))
@@ -2833,6 +2855,7 @@ int thd_parse_options(
 
     sprintf(errmsg, "Invalid source infomation.");
     global_source.password = global_source.user = NULL;
+    memset(&global_source, 0, sizeof(sinfo_t));
     ho_error = my_handle_options(&++i, &isql_option, my_isql_options, NULL, NULL, errmsg);
     isql_option--;
     if (ho_error)
@@ -2964,13 +2987,13 @@ mysql_table_info_free(
             field_info->field = NULL;
         }
 
-        free(field_info);
+        my_free(field_info);
         field_info = next_field_info;
     }
 
     my_free(table_info->record);
     my_free(table_info->null_arr);
-    free(table_info);
+    my_free(table_info);
 
     DBUG_VOID_RETURN;
 }
@@ -3072,8 +3095,8 @@ mysql_copy_table_info(
     DBUG_ENTER("mysql_copy_table_info");
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, src->table_name);
@@ -3083,9 +3106,9 @@ mysql_copy_table_info(
     while (field_info)
     {
         //free memory
-        field_info_new = (field_info_t*)malloc(sizeof(field_info_t));
+        field_info_new = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-        memset(field_info_new, 0, sizeof(field_info_t));
+        // memset(field_info_new, 0, sizeof(field_info_t));
         strcpy(field_info_new->field_name, field_info->field_name);
         field_info_new->nullable = field_info->nullable;
         field_info_new->primary_key = field_info->primary_key;
@@ -3170,8 +3193,8 @@ mysql_convert_desc_to_table_info(
     DBUG_ENTER("mysql_convert_desc_to_table_info");
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, tablename);
@@ -3181,9 +3204,9 @@ mysql_convert_desc_to_table_info(
     while (source_row)
     {
         //free memory
-        field_info = (field_info_t*)malloc(sizeof(field_info_t));
+        field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-        memset(field_info, 0, sizeof(field_info_t));
+        // memset(field_info, 0, sizeof(field_info_t));
         strcpy(field_info->field_name, source_row[0]);
         if (strcasecmp(source_row[3], "YES") == 0)
             field_info->nullable = true;
@@ -3215,6 +3238,11 @@ mysql_convert_desc_to_table_info(
         }
         else
             strcpy(field_info->data_type, source_row[1]);
+        
+        if (strstr(field_info->data_type, "unsigned"))
+            field_info->unsigned_flag = true;
+        else
+            field_info->unsigned_flag = false;
 
         LIST_ADD_LAST(link, table_info->field_lst, field_info);
         source_row = mysql_fetch_row(source_res);
@@ -3283,6 +3311,8 @@ mysql_query_table_from_source(
     char  sql[100];
     MYSQL_RES* source_res= 0;
     table_info_t* table_info;
+    field_info_t*   field_info;
+    MYSQL_ROW   source_row;
 
     DBUG_ENTER("mysql_query_table_from_source");
 
@@ -3312,8 +3342,53 @@ mysql_query_table_from_source(
     }
 
     table_info = mysql_convert_desc_to_table_info(thd, source_res, dbname, tablename);
-    table_info = mysql_get_index_info_from_source(thd, 
-        mysql, dbname, tablename, table_info, not_exist_report);
+    if (table_info)
+    {
+        sprintf(sql, "SHOW INDEX FROM `%s`.`%s`", table_info->db_name,
+            table_info->table_name);
+        if (mysql_real_query(mysql, sql, strlen(sql)))
+        {
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+            DBUG_RETURN(table_info);
+        }
+
+        if ((source_res = mysql_store_result(mysql)) == NULL)
+        {
+            my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+            mysql_errmsg_append(thd);
+            DBUG_RETURN(table_info);
+        }
+
+        /* 得到主键列的位置信息 */
+        source_row = mysql_fetch_row(source_res);
+        while (source_row )
+        {
+            if (!strcasecmp(source_row[2], "PRIMARY"))
+            {
+                field_info = LIST_GET_FIRST(table_info->field_lst); 
+                while (field_info)
+                {
+                    if (!strcasecmp(source_row[4], field_info->field_name))
+                    {
+                        strcpy(field_info->keyname, source_row[2]);
+                        field_info->key_seq = strtoll(source_row[3], NULL, 10);
+                    }
+
+                    field_info = LIST_GET_NEXT(link, field_info);
+                }
+            }
+            source_row = mysql_fetch_row(source_res);
+        }
+
+        mysql_free_result(source_res);
+    }
+
+    if (table_info)
+    {
+        table_info = mysql_get_index_info_from_source(thd, 
+            mysql, dbname, tablename, table_info, not_exist_report);
+    }
 
     DBUG_RETURN(table_info);
 }
@@ -3352,7 +3427,7 @@ mysql_get_table_object(
     if (tableinfo != NULL)
     {
         mysql_add_table_object(thd, tableinfo);
-        mysql_alloc_record(tableinfo, thd->get_audit_connection());
+        mysql_alloc_record(thd, tableinfo, thd->get_audit_connection());
     }
 
     return tableinfo;
@@ -3381,6 +3456,33 @@ mysql_check_ddldml_coexisted(
             mysql_errmsg_append(thd);
         }
     }
+}
+
+field_info_t*
+mysql_get_table_pk_field_by_seq(
+    THD*  thd,
+    char*  dbname,
+    char*  tablename,
+    int     keyseq
+)
+{
+    field_info_t* fieldinfo = NULL;
+    table_info_t*   tableinfo = NULL;
+
+    if ((tableinfo = mysql_get_table_object(thd, dbname, tablename, TRUE)) == NULL)
+        return NULL;
+
+    fieldinfo = LIST_GET_FIRST(tableinfo->field_lst);
+    while (fieldinfo != NULL) {
+        if (strcasecmp(fieldinfo->keyname, "PRIMARY") == 0 &&
+            fieldinfo->primary_key && fieldinfo->key_seq == keyseq) {
+            return fieldinfo;
+        }
+
+        fieldinfo = LIST_GET_NEXT(link, fieldinfo);
+    }
+
+    return fieldinfo;
 }
 
 field_info_t*
@@ -3747,6 +3849,19 @@ int mysql_check_insert(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_check_version_57(THD* thd)
+{
+    MYSQL* mysql;
+    mysql = thd->get_audit_connection();
+    if (!mysql)
+        return false;
+
+    if (mysql && strncmp(mysql->server_version, "5.7", 3) < 0)
+        return false;
+
+    return true;
+}
+
 int mysql_check_version_56(THD* thd)
 {
     MYSQL* mysql;
@@ -4047,6 +4162,8 @@ mysql_parse_possible_keys(
     int   count = 0;
     char**  keys;
     int   i = 0;
+    char *outer_ptr = NULL;
+    char *inner_ptr = NULL;
 
     DBUG_ENTER("mysql_parse_possible_keys");
 
@@ -4061,23 +4178,22 @@ mysql_parse_possible_keys(
         p++;
     }
 
-    keys = (char**)malloc(sizeof(char*) * (count + 1 + 1));
-    memset(keys, 0, sizeof(char*) * (count + 1 + 1));
-    p = strtok(possible_keys, ",");
-    if (p)
-    {
-        keys[i] = (char*)malloc(strlen(p) + 1);
-        strcpy(keys[i], p);
-        i++;
-    }
+    keys = (char**)my_malloc(sizeof(char*) * (count + 1 + 1), MY_ZEROFILL);
+    while((p = strtok_r(possible_keys, ",", &outer_ptr))!=NULL)   
+    {  
+        possible_keys=p;
+        while((p = strtok_r(possible_keys, " ", &inner_ptr))!=NULL)   
+        {  
+            // sql_print_information("possible_keys %d: %s", i, p);
+            keys[i] = (char*)my_malloc(strlen(p) + 1, MY_ZEROFILL);
+            strcpy(keys[i], p);
+            i++;
+            possible_keys=NULL;
+        }  
+        possible_keys=NULL;
+    }  
 
-    while ((p = strtok(NULL, ",")))
-    {
-        keys[i] = (char*)malloc(strlen(p) + 1);
-        strcpy(keys[i], p);
-        i++;
-    }
-
+    keys[i] = NULL;
     DBUG_RETURN(keys);
 }
 
@@ -4183,10 +4299,12 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "possible_keys") == 0)
                 {
-                    select_info->possible_keys = mysql_parse_possible_keys(field_value);
+                    // select_info->possible_keys = mysql_parse_possible_keys(field_value);
+                    select_info->possible_keys = NULL;
                 }
                 else if (strcmpi(field->name, "key") == 0)
                 {
+                    select_info->key = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
                     strcpy(select_info->key, field_value);
                 }
                 else if (strcmpi(field->name, "key_len") == 0)
@@ -4195,7 +4313,8 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "ref") == 0)
                 {
-                    strcpy(select_info->key, field_value);
+                    select_info->ref = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
+                    strcpy(select_info->ref, field_value);
                 }
                 else if (strcmpi(field->name, "rows") == 0)
                 {
@@ -4203,7 +4322,7 @@ mysql_get_explain_info(
                 }
                 else if (strcmpi(field->name, "Extra") == 0)
                 {
-                    select_info->extra = (char*)malloc(strlen(field_value) + 1);
+                    select_info->extra = (char*)my_malloc(strlen(field_value) + 1, MY_ZEROFILL);
                     strcpy(select_info->extra, field_value);
                 }
             }
@@ -4233,19 +4352,24 @@ void mysql_free_explain_info(explain_info_t* explain)
     {
         i = 0;
         select_info_next = LIST_GET_NEXT(link, select_info);
-        if (select_info->extra != NULL)
-        {
-            free(select_info->extra);
-        }
 
         if (select_info->possible_keys != NULL)
         {
             while (select_info->possible_keys[i])
-                free(select_info->possible_keys[i++]);
-            free(select_info->possible_keys);
+            {
+                my_free(select_info->possible_keys[i]);
+                i ++;
+            }
+            my_free(select_info->possible_keys);
             select_info->possible_keys = NULL;
         }
 
+        if (select_info->extra)
+            my_free(select_info->extra);
+        if (select_info->key)
+            my_free(select_info->key);
+        if (select_info->ref)
+            my_free(select_info->ref);
         my_free(select_info);
         select_info = select_info_next;
     }
@@ -4264,6 +4388,9 @@ int mysql_anlyze_explain(
     select_info_t* select_node;
 
     DBUG_ENTER("mysql_anlyze_explain");
+
+    if (explain == NULL)
+        DBUG_RETURN(TRUE);
 
     select_count = LIST_GET_LEN(explain->field_lst);
 
@@ -4387,6 +4514,7 @@ int mysql_execute_inception_osc_abort(THD* thd)
     LEX *lex= thd->lex;
     const char *wild= lex->wild ? lex->wild->ptr() : NullS;
     osc_percent_cache_t* osc_percent_node;
+    sql_cache_node_t* sql_cache_node;
 
     mysql_mutex_lock(&osc_mutex); 
     osc_percent_node = LIST_GET_FIRST(global_osc_cache.osc_lst);
@@ -4397,10 +4525,23 @@ int mysql_execute_inception_osc_abort(THD* thd)
         osc_percent_node = LIST_GET_NEXT(link, osc_percent_node);        
     }
 
-    if (osc_percent_node && osc_percent_node->proc && osc_percent_node->percent != 100)
+    if (osc_percent_node)
     {
-        osc_percent_node->killed= 1;
-        osc_percent_node->proc->killpid();
+        sql_cache_node= osc_percent_node->sql_cache_node;
+        if (sql_cache_node->alter_table_method == osc_method_build_in_osc
+            && osc_percent_node->percent != 100)
+        {
+            osc_percent_node->killed= 1;
+            sql_cache_node->osc_abort = true;
+        }
+        else if (sql_cache_node->alter_table_method == osc_method_pt_osc && 
+            osc_percent_node->proc && osc_percent_node->percent != 100)
+        {
+            osc_percent_node->killed= 1;
+            osc_percent_node->proc->killpid();
+        }
+        else
+            my_error(ER_OSC_KILL_FAILED, MYF(0));
     }
     else
         my_error(ER_OSC_KILL_FAILED, MYF(0));
@@ -4429,6 +4570,7 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
     field_list.push_back(new Item_empty_string("Info",max_query_length));
     field_list.push_back(new Item_empty_string("Current_Execute",max_query_length));
     field_list.push_back(new Item_empty_string("Progress",FN_REFLEN));
+    field_list.push_back(new Item_empty_string("Current_DB",FN_REFLEN));
     
     if (protocol->send_result_set_metadata(&field_list,
         Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
@@ -4473,11 +4615,20 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             memset(thd_info->progress, 0, 64);
             if (tmp->current_execute && tmp->current_execute->sql_statement)
             {
+                /* set the executing progress */
                 char *q= thd->strmake(tmp->current_execute->sql_statement, 100);
                 thd_info->query_string_e= CSET_STRING(q, q ? 100: 0, system_charset_info);
                 
-                sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,LIST_GET_LEN(tmp->sql_cache->field_lst));
+                sprintf(thd_info->progress,"%d/%d",tmp->current_execute->seqno,
+                    LIST_GET_LEN(tmp->sql_cache->field_lst));
             }
+            else if (tmp->sql_cache)
+            {
+                /* set the checking progress */
+                sprintf(thd_info->progress,"%d", LIST_GET_LEN(tmp->sql_cache->field_lst));
+            }
+
+            strcpy(thd_info->current_db, tmp->thd_sinfo->db);
 
             //info
             if (tmp->query())
@@ -4528,6 +4679,8 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
             protocol->store("DEINIT", system_charset_info);
         else if (thd_info->state == INCEPTION_STATE_BACKUP)
             protocol->store("BACKUP", system_charset_info);
+        else if (thd_info->state == INCEPTION_STATE_SEND)
+            protocol->store("SEND", system_charset_info);
 
         //time
         if (thd_info->start_time)
@@ -4541,6 +4694,8 @@ int mysql_execute_inception_processlist(THD *thd,bool verbose)
         protocol->store(thd_info->query_string_e.str(), thd_info->query_string_e.charset());
         //percent
         protocol->store(thd_info->progress, system_charset_info);
+        // current db
+        protocol->store(thd_info->current_db, system_charset_info);
         if (protocol->write())
             break; /* purecov: inspected */
     }
@@ -4641,7 +4796,7 @@ inception_transfer_load_datacenter(
         return datacenter;
 
     //not found in global transfer cache
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         return NULL;
 
@@ -4782,10 +4937,13 @@ inception_transfer_load_datacenter(
     mysql_free_result(source_res);
     datacenter->checkpoint_running=false;
     datacenter->ddl_cache = (ddl_cache_t*)my_malloc(sizeof(ddl_cache_t), MY_ZEROFILL);
+    datacenter->slave_first_set = false;
 
     mysql_mutex_init(NULL, &datacenter->run_lock, MY_MUTEX_INIT_FAST);
     mysql_mutex_init(NULL, &datacenter->checkpoint_lock, MY_MUTEX_INIT_FAST);
     mysql_cond_init(NULL, &datacenter->stop_cond, NULL);
+    mysql_mutex_init(NULL, &datacenter->sleep_lock, MY_MUTEX_INIT_FAST);
+    mysql_cond_init(NULL, &datacenter->sleep_cond, NULL);
 
     thd->close_all_connections();
     return datacenter;
@@ -4912,8 +5070,10 @@ int mysql_master_transfer_status(
     field_list.push_back(new Item_empty_string("Transfer_Stage", FN_REFLEN));
     field_list.push_back(new Item_return_int("Seconds_Behind_Master", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_empty_string("Slave_Members", FN_REFLEN));
-    field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
-    field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Sql_Buffer_Size", FN_REFLEN));
+    // field_list.push_back(new Item_return_int("Sql_Buffer_Size", 20, MYSQL_TYPE_LONGLONG));
+    field_list.push_back(new Item_empty_string("Table_Cache_Elements", FN_REFLEN));
+    // field_list.push_back(new Item_return_int("Table_Cache_Elements", 20, MYSQL_TYPE_LONGLONG));
     field_list.push_back(new Item_return_int("Parallel_Workers", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Worker_Queue_Length", 20, MYSQL_TYPE_LONG));
     field_list.push_back(new Item_return_int("Events_Per_Second", 20, MYSQL_TYPE_LONGLONG));
@@ -4993,8 +5153,14 @@ int mysql_master_transfer_status(
     }
 
     protocol->store(str_get(str), system_charset_info);
-    protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
-    protocol->store((longlong)osc_percent_node->table_cache.records);
+    // protocol->store((longlong)str_get_alloc_len(&osc_percent_node->sql_buffer));
+    sprintf(tmp, "%lld Bytes", (longlong)osc_percent_node->sqlbuffer_memsize);
+    protocol->store(tmp, system_charset_info);
+
+    sprintf(tmp, "%lld(%lld Bytes)", (longlong)osc_percent_node->table_cache.records, 
+        osc_percent_node->table_memsize);
+    protocol->store(tmp, system_charset_info);
+    // protocol->store((longlong)osc_percent_node->table_cache.records);
     protocol->store(OPTION_GET_VALUE(&osc_percent_node->option_list[PARALLEL_WORKERS]));
     protocol->store(OPTION_GET_VALUE(&osc_percent_node->option_list[WORKER_QUEUE_LENGTH]));
     time_diff = (long)(time(0) - osc_percent_node->start_time);
@@ -5168,7 +5334,7 @@ int mysql_show_datacenter_do_ignore_list(THD* thd, char* datacenter_name, int ty
 
     sprintf(tmp, "select db_name, table_name from `%s`.transfer_filter \
            where type = '%s'", datacenter_name, type == DO_SYM ? "Do" : "Ignore");
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         DBUG_RETURN(true);
 
@@ -5220,7 +5386,7 @@ int mysql_show_datacenter_list(THD* thd)
     }
 
     sprintf(tmp, "SHOW DATABASES");
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(NULL);
     if (mysql == NULL)
         DBUG_RETURN(true);
 
@@ -5511,13 +5677,6 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     transfer_option_t* default_option = NULL;
     Item_int* it= (Item_int*)thd->lex->value_dc;
     
-    mysql= thd->get_transfer_connection();
-    if (mysql == NULL)
-    {
-        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
-        return false;
-    }
-    
     if(strcmp("", thd->lex->value_dc->str_value.c_ptr()))
     {
         int error=0;
@@ -5558,6 +5717,13 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     }
     
     mysql_mutex_lock(&transfer_mutex);
+    
+    mysql= thd->get_transfer_connection(thd->lex->ident.str);
+    if (mysql == NULL)
+    {
+        my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
+        return false;
+    }
     
     sql= &sql_space;
     sql= str_init(sql);
@@ -5614,10 +5780,10 @@ int mysql_execute_inception_set_command_for_dc(THD* thd)
     return false;
 };
 
-int inception_transfer_execute_sql(THD* thd, char* sql)
+int inception_transfer_execute_sql(THD* thd, char* sql, char* datacenter_name)
 {
     MYSQL* mysql;
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
         return true;
 
@@ -5640,7 +5806,7 @@ int inception_transfer_instance_table_create(
     str_t* create_sql;
     MYSQL* mysql;
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -5938,6 +6104,27 @@ int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* m
         return true;
     }
     
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "CREATE TABLE ");
+    sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_meta");
+    create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "dbname varchar(64) comment 'database name', ");
+    create_sql = str_append(create_sql, "tablename varchar(64) comment 'table name', ");
+    create_sql = str_append(create_sql, "metadata text comment 'table struct', ");
+    create_sql = str_append(create_sql, "update_time timestamp not null default "
+        "current_timestamp comment 'the load time of table', ");
+    create_sql = str_append(create_sql, "PRIMARY KEY (`dbname`, `tablename`))");
+    create_sql = str_append(create_sql, "engine innodb charset utf8 comment "
+                            "'transfer meta data '");
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            str_deinit(create_sql);
+            return true;
+        }
+    }
+
     str_deinit(create_sql);
     return false;
 }
@@ -5986,7 +6173,7 @@ int inception_transfer_add_do_ignore(
         return true;
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -6064,7 +6251,7 @@ int inception_transfer_add_instance(
         }
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -6161,6 +6348,22 @@ MYSQL* inception_get_connection(
     return mysql;
 }
 
+int inception_transfer_free_table_object(
+    transfer_cache_t* datacenter
+)
+{
+    table_info_t* tableinfo = NULL;
+
+    for (uint i=0; i < datacenter->table_cache.records; i++)
+    {
+        tableinfo = (table_info_t*)my_hash_element(&datacenter->table_cache, i);
+        my_hash_delete(&datacenter->table_cache, (uchar*)tableinfo);
+        mysql_table_info_free(tableinfo);
+    }
+
+    return false;
+}
+
 int inception_transfer_delete_table_object(
     THD*  thd,
     transfer_cache_t* datacenter
@@ -6206,7 +6409,7 @@ int inception_get_table_do_ignore(
 
     if ((tableinfo && tableinfo->doignore == INCEPTION_DO_UNKNOWN) || !tableinfo)
     {
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter->datacenter_name);
         if (mysql == NULL)
         {
             thd->clear_error();
@@ -6279,6 +6482,7 @@ int inception_get_table_do_ignore(
 
 table_info_t*
 inception_transfer_get_table_object(
+    Master_info* mi,
     THD*  thd,
     char*  dbname,
     char*  tablename,
@@ -6329,6 +6533,8 @@ inception_transfer_get_table_object(
     tableinfo = mysql_query_table_from_source(thd, mysql, dbname, tablename, TRUE);
     if (tableinfo != NULL)
     {
+        datacenter->table_memsize += (sizeof(table_info_t) + sizeof(field_info_t) * 
+            LIST_GET_LEN(tableinfo->field_lst));
         if (my_hash_insert(&datacenter->table_cache, (uchar*) tableinfo))
         {
             mysql_table_info_free(tableinfo);
@@ -6339,7 +6545,10 @@ inception_transfer_get_table_object(
 
         // mysql_add_table_object(thd, tableinfo);
         tableinfo->doignore = doignore;
-        mysql_alloc_record(tableinfo, mysql);
+        if (doignore == INCEPTION_DO_DO && 
+            inception_transfer_write_table_map(mi, datacenter, tableinfo))
+            return NULL;
+        mysql_alloc_record(thd, tableinfo, mysql);
     }
     else if (mysql_errno(mysql) == 1051/*ER_BAD_TABLE_ERROR*/ || 
             mysql_errno(mysql) == 1146/*ER_NO_SUCH_TABLE*/)
@@ -6363,7 +6572,7 @@ inception_transfer_table_map(
 
     tab_map_ev = (Table_map_log_event*)ev;
 
-    table_info = inception_transfer_get_table_object(mi->thd, (char*)tab_map_ev->get_db(), 
+    table_info = inception_transfer_get_table_object(mi, mi->thd, (char*)tab_map_ev->get_db(), 
         (char*)tab_map_ev->get_table_name(), mi->datacenter);
 
     if (mysql_parse_table_map_log_event_low(mi, ev, table_info))
@@ -6554,7 +6763,7 @@ int inception_transfer_next_sequence(
     {
         sprintf(sql, "select * from `%s`.`transfer_sequence` where idname='%s' or idname='%s'", 
             datacenter_name, INCEPTION_TRANSFER_EIDNAME, INCEPTION_TRANSFER_TIDNAME);
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter_name);
         if (mysql == NULL)
         {
             my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -6605,7 +6814,7 @@ int inception_transfer_next_sequence(
             thd->event_id = eventid;
         if (thd->event_id % OPTION_GET_VALUE(&datacenter->option_list[EVENT_SEQUENCE_SYNC]) ==0)
         {
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(datacenter_name);
             if (mysql == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -6630,7 +6839,7 @@ int inception_transfer_next_sequence(
             thd->transaction_id = trxid;
         if (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[TRX_SEQUENCE_SYNC]) ==0)
         {
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(datacenter_name);
             if (mysql == NULL)
             {
                 my_error(ER_TRANSFER_INTERRUPT, MYF(0), mysql_error(mysql));
@@ -6766,6 +6975,9 @@ retry:
           OPTION_GET_VALUE(&datacenter->option_list[WORKER_QUEUE_LENGTH]);
         mysql_mutex_lock(&datacenter->checkpoint_lock);
         datacenter->checkpoint_age += 1; 
+        datacenter->sqlbuffer_memsize += (str_get_alloc_len(&mts_queue->sql_buffer) - 
+            str_get_last_len(&mts_queue->sql_buffer));
+        str_set_last_len(&mts_queue->sql_buffer);
         mysql_mutex_unlock(&datacenter->checkpoint_lock);
         return &mts_queue->sql_buffer;
     }
@@ -6990,10 +7202,29 @@ int inception_tranfer_write_alter_table(
                     
                 str_append(sql_buffer, "{");
                 List_iterator<Key_part_spec> col_it(key->columns);
-                str_append(sql_buffer, "\"index_name\":");
+                str_append(sql_buffer, "\"index_type\":");
                 str_append(sql_buffer, "\"");
-                str_append(sql_buffer, key->name.str);
+                if (key->type == Key::PRIMARY)
+                    str_append(sql_buffer, "PRIMARY");
+                else if (key->type == Key::UNIQUE)
+                    str_append(sql_buffer, "UNIQUE");
+                else if (key->type == Key::MULTIPLE)
+                    str_append(sql_buffer, "MULTIPLE");
+                else if (key->type == Key::FULLTEXT)
+                    str_append(sql_buffer, "FULLTEXT");
+                else if (key->type == Key::SPATIAL)
+                    str_append(sql_buffer, "SPATIAL");
+                else if (key->type == Key::FOREIGN_KEY)
+                    str_append(sql_buffer, "FOREIGN_KEY");
                 str_append(sql_buffer, "\",");
+                if (key->name.str)
+                {
+                    str_append(sql_buffer, "\"index_name\":");
+                    str_append(sql_buffer, "\"");
+                    str_append(sql_buffer, key->name.str);
+                    str_append(sql_buffer, "\",");
+                }
+
                 str_append(sql_buffer, "\"column_name\":[");
                 colfirst=1;
                 while ((col1= col_it++))
@@ -7117,9 +7348,64 @@ int inception_tranfer_write_alter_table(
     return false;
 }
 
+int inception_transfer_create_table_json(
+    table_info_t* table_info,
+    str_t*        sql_buffer
+)
+{
+    field_info_t* field_info;
+    int first=1;
+
+    field_info = LIST_GET_FIRST(table_info->field_lst);
+    first=1;
+    while (field_info)
+    {
+        if (!first)
+            str_append(sql_buffer, ",");
+
+        str_append(sql_buffer, "{");
+        str_append(sql_buffer, "\"field_name\":");
+        str_append(sql_buffer, "\"");
+        str_append(sql_buffer, field_info->field_name);
+        str_append(sql_buffer, "\",");
+        str_append(sql_buffer, "\"nullable\":");
+        str_append(sql_buffer, "\"");
+        str_append(sql_buffer, field_info->nullable ? "Yes":"No");
+        str_append(sql_buffer, "\",");
+        str_append(sql_buffer, "\"primary_key\":");
+        str_append(sql_buffer, "\"");
+        str_append(sql_buffer, field_info->primary_key? "Yes":"No");
+        str_append(sql_buffer, "\",");
+        str_append(sql_buffer, "\"data_type\":");
+        str_append(sql_buffer, "\"");
+        if (field_info->real_type == MYSQL_TYPE_ENUM ||
+            field_info->real_type == MYSQL_TYPE_SET ||
+            field_info->real_type == MYSQL_TYPE_STRING)
+        {
+            char* dupcharfield;
+            dupcharfield = (char*)my_malloc(strlen(field_info->data_type) 
+                * 4 + 1, MY_ZEROFILL);
+            mysql_dup_char(field_info->data_type, dupcharfield, '\'');
+            str_append(sql_buffer, dupcharfield);
+            my_free(dupcharfield);
+        }
+        else
+        {
+            str_append(sql_buffer, field_info->data_type);
+        }
+
+        str_append(sql_buffer, "\"");
+        str_append(sql_buffer, "}");
+
+        first = 0;
+        field_info = LIST_GET_NEXT(link, field_info);
+    }
+
+    return false;
+}
+
 int inception_transfer_write_DDL(
     Master_info* mi, 
-    Log_event* ev, 
     transfer_cache_t* datacenter,
     str_t * sql_buffer
 )
@@ -7128,7 +7414,6 @@ int inception_transfer_write_DDL(
     THD* thd;
     THD* query_thd;
     table_info_t* table_info;
-    field_info_t* field_info;
     int optype=0;
     int first=1;
     int switch_flag=1;
@@ -7182,56 +7467,13 @@ int inception_transfer_write_DDL(
     case SQLCOM_CREATE_TABLE:
         {
             TABLE_LIST *create_table= select_lex->table_list.first;
-            table_info = inception_transfer_get_table_object(mi->thd, 
+            table_info = inception_transfer_get_table_object(mi, mi->thd, 
             (char*)create_table->db, (char*)create_table->table_name, 
             mi->datacenter);
             if (table_info == NULL)
                 return false;
             str_append(sql_buffer, "\"NEW\":[");
-            field_info = LIST_GET_FIRST(table_info->field_lst);
-            first=1;
-            while (field_info)
-            {
-                if (!first)
-                    str_append(sql_buffer, ",");
-
-                str_append(sql_buffer, "{");
-                str_append(sql_buffer, "\"field_name\":");
-                str_append(sql_buffer, "\"");
-                str_append(sql_buffer, field_info->field_name);
-                str_append(sql_buffer, "\",");
-                str_append(sql_buffer, "\"nullable\":");
-                str_append(sql_buffer, "\"");
-                str_append(sql_buffer, field_info->nullable ? "Yes":"No");
-                str_append(sql_buffer, "\",");
-                str_append(sql_buffer, "\"primary_key\":");
-                str_append(sql_buffer, "\"");
-                str_append(sql_buffer, field_info->primary_key? "Yes":"No");
-                str_append(sql_buffer, "\",");
-                str_append(sql_buffer, "\"data_type\":");
-                str_append(sql_buffer, "\"");
-                if (field_info->real_type == MYSQL_TYPE_ENUM ||
-                    field_info->real_type == MYSQL_TYPE_SET ||
-                    field_info->real_type == MYSQL_TYPE_STRING)
-                {
-                    char* dupcharfield;
-                    dupcharfield = (char*)my_malloc(strlen(field_info->data_type) 
-                        * 4 + 1, MY_ZEROFILL);
-                    mysql_dup_char(field_info->data_type, dupcharfield, '\'');
-                    str_append(sql_buffer, dupcharfield);
-                    my_free(dupcharfield);
-                }
-                else
-                {
-                    str_append(sql_buffer, field_info->data_type);
-                }
-
-                str_append(sql_buffer, "\"");
-                str_append(sql_buffer, "}");
-
-                first = 0;
-                field_info = LIST_GET_NEXT(link, field_info);
-            }
+            inception_transfer_create_table_json(table_info, sql_buffer);
             str_append(sql_buffer, "]");
             break;
         }
@@ -7269,6 +7511,82 @@ int inception_transfer_cache_ddl(
     return false;
 }
 
+int inception_transfer_write_table_map(
+    Master_info*      mi, 
+    transfer_cache_t* datacenter,
+    table_info_t*     table_info
+)
+{
+    char   tmp_buf[2560];
+    str_t* backup_sql;
+    str_t  create_json;
+    str_t  create_json2;
+    THD *thd;
+
+    DBUG_ENTER("inception_transfer_write_table_map");
+
+    thd = mi->thd;
+    backup_sql = inception_mts_get_sql_buffer(mi->datacenter, table_info, NULL, true);
+    if (backup_sql == NULL)
+        DBUG_RETURN(true);
+
+    str_truncate_0(backup_sql);
+    if(inception_transfer_next_sequence(mi, mi->datacenter->datacenter_name, 
+          INCEPTION_TRANSFER_EIDENUM))
+        DBUG_RETURN(true);
+
+    str_append(backup_sql, "INSERT IGNORE INTO ");
+    sprintf(tmp_buf, "`%s`.`transfer_data` (id, tid, dbname, \
+      tablename, create_time, instance_name, binlog_hash, optype , data) VALUES \
+      (%lld, %lld, '%s', '%s', now(), '%s:%d', NULL, 'META', ", 
+        datacenter->datacenter_name, thd->event_id, thd->transaction_id, 
+        table_info->db_name, table_info->table_name, 
+        datacenter->hostname, datacenter->mysql_port);
+    str_append(backup_sql,tmp_buf);
+
+    str_init(&create_json);
+    str_init(&create_json2);
+
+    str_append(&create_json, "{");
+    str_append(&create_json, "\"META\":[");
+    inception_transfer_create_table_json(table_info, &create_json);
+    str_append(&create_json, "]");
+    str_append(&create_json, "}");
+
+    str_append(backup_sql, "'");
+    str_append(backup_sql, str_get(&create_json));
+    str_append(backup_sql, "'");
+    str_append(backup_sql, ")");
+    if (inception_transfer_execute_store_with_transaction(mi, NULL, str_get(backup_sql)))
+    {
+        str_deinit(&create_json);
+        str_deinit(&create_json2);
+        DBUG_RETURN(true);
+    }
+
+    str_append(&create_json2, "INSERT INTO ");
+    sprintf(tmp_buf, "`%s`.`transfer_meta` (dbname, tablename, update_time, "
+        "metadata) VALUES ('%s', '%s', now(), '", datacenter->datacenter_name, 
+      table_info->db_name, table_info->table_name);
+    str_append(&create_json2, tmp_buf);
+    str_append(&create_json2, str_get(&create_json));
+    str_append(&create_json2, "') ON DUPLICATE KEY UPDATE metadata = '");
+    str_append(&create_json2, str_get(&create_json));
+    str_append(&create_json2, "'");
+
+    if (inception_transfer_execute_sql(thd, str_get(&create_json2), datacenter->datacenter_name))
+    {
+        str_deinit(&create_json);
+        str_deinit(&create_json2);
+        DBUG_RETURN(true);
+    }
+
+    str_deinit(&create_json);
+    str_deinit(&create_json2);
+
+    DBUG_RETURN(false);
+}
+
 int inception_transfer_write_ddl_event(
     Master_info* mi, 
     Log_event* ev, 
@@ -7282,15 +7600,36 @@ int inception_transfer_write_ddl_event(
     str_t* backup_sql;
     THD *thd;
     table_info_t* table_info;
+    TABLE_LIST* table;
+    int notignore = false;
 
     DBUG_ENTER("inception_transfer_write_ddl_event");
 
     thd = mi->thd;
     query_thd = thd->query_thd;
-    table_info = inception_transfer_get_table_object(mi->thd, 
-                     query_thd->lex->query_tables->db, 
-                     query_thd->lex->query_tables->table_name, mi->datacenter);
-    if (table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE))
+    optype = query_thd->lex->sql_command;
+    /* if the sql is ddl, then set the event_seq_in_trx to zero, 
+     * because ddl is not transactional*/
+    datacenter->event_seq_in_trx = 0;
+    for (table=query_thd->lex->query_tables; table; table=table->next_global)
+    {
+        table_info = inception_transfer_get_table_object(mi, mi->thd, 
+                         table->db, table->table_name, mi->datacenter);
+        if (!(table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE)))
+            notignore = true;
+    }
+
+    if (optype == SQLCOM_ALTER_TABLE && 
+        query_thd->lex->alter_info.flags & Alter_info::ALTER_RENAME)
+    {
+        table_info = inception_transfer_get_table_object(mi, mi->thd, 
+           query_thd->lex->select_lex.db, 
+           query_thd->lex->name.str, mi->datacenter);
+        if (!(table_info == NULL || (table_info && table_info->doignore == INCEPTION_DO_IGNORE)))
+            notignore = true;
+    }
+       
+    if (notignore == false)
         DBUG_RETURN(false);
        
     backup_sql = inception_mts_get_sql_buffer(mi->datacenter, table_info, NULL, true);
@@ -7302,7 +7641,6 @@ int inception_transfer_write_ddl_event(
     if(inception_transfer_next_sequence(mi, 
         mi->datacenter->datacenter_name, INCEPTION_TRANSFER_TIDENUM))
         DBUG_RETURN(true);
-    optype = query_thd->lex->sql_command;
     switch (optype)
     {
       case SQLCOM_TRUNCATE:
@@ -7338,7 +7676,7 @@ int inception_transfer_write_ddl_event(
     else
     {
         str_append(backup_sql, "{");
-        inception_transfer_write_DDL(mi, ev, datacenter, backup_sql);
+        inception_transfer_write_DDL(mi, datacenter, backup_sql);
         str_append(backup_sql, "}");
     }
 
@@ -7416,17 +7754,11 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
     thd = mi->thd;
 
     DBUG_ENTER("inception_transfer_sql_parse");
-    if (!thd->query_thd)
-    {
-        query_thd = new THD;
-        query_thd->thread_stack= (char*) &query_thd;
-        setup_connection_thread_globals(query_thd);
-        thd->query_thd = query_thd;
-    }
-    else
-    {
-        query_thd = thd->query_thd;
-    }
+
+    query_thd = new THD;
+    query_thd->thread_stack= (char*) &query_thd;
+    setup_connection_thread_globals(query_thd);
+    thd->query_thd = query_thd;
 
     lex_start(query_thd);
     mysql_reset_thd_for_next_command(query_thd);
@@ -7436,14 +7768,16 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         system_charset_info, next_query_id());
     if (!parser_state.init(query_thd, query_thd->query(), query_thd->query_length()))
     {
-        inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
+        if (query_log->db_len)
+            inception_transfer_set_thd_db(query_thd, query_log->db, query_log->db_len);
         if (parse_sql(query_thd, &parser_state, NULL))
         {
             sql_print_error("transfer parse query event error: %s, SQL: %s", 
                 query_thd->get_stmt_da()->message(), query_thd->query());
             inception_transfer_set_errmsg(thd, mi->datacenter, 
                 ER_TRANSFER_INTERRUPT, query_thd->get_stmt_da()->message());
-            DBUG_RETURN(true);
+            err = true;
+            goto error;
         }
         else
         {
@@ -7483,9 +7817,11 @@ int inception_transfer_sql_parse(Master_info* mi, Log_event* ev)
         }
     }
 
-    query_thd->end_statement();
-    query_thd->cleanup_after_query();
-
+error:
+    delete query_thd;
+    thd->query_thd = NULL;
+    //restore context 
+    setup_connection_thread_globals(thd);
     DBUG_RETURN(err);
 }
 
@@ -7593,9 +7929,14 @@ inception_transfer_get_slaves_position(
     datacenter = mi->datacenter;
     thd = mi->thd;
 
-    if (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[SLAVE_SYNC_POSITION]) != 0)
+    /* set the slaves position first time */
+    if (datacenter->slave_first_set == true &&
+        (thd->transaction_id % OPTION_GET_VALUE(&datacenter->option_list[SLAVE_SYNC_POSITION]) != 0))
+    {
         return false;
+    }
 
+    datacenter->slave_first_set = true;
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while (slave)
     {
@@ -7678,7 +8019,7 @@ retry_fetch2:
             slave->mysql_port, slave->cbinlog_file, slave->cbinlog_position);
 retry_write:
         retry_count+=1;
-        if (inception_transfer_execute_sql(thd, tmp))
+        if (inception_transfer_execute_sql(thd, tmp, datacenter->datacenter_name))
         {
             if (retry_count <= 2)
                 goto retry_write;
@@ -7800,7 +8141,7 @@ inception_transfer_write_Xid(
     return false;
 }
 
-int inception_execute_sql_with_retry(
+int inception_transfer_execute_sql_with_retry(
     THD* thd, 
     transfer_cache_t* datacenter,
     char* tmp
@@ -7812,7 +8153,7 @@ int inception_execute_sql_with_retry(
 
 retry:
     retry_count++;
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
     if (mysql == NULL)
     {
         errcode = ER_INVALID_TRANSFER_INFO;
@@ -7895,7 +8236,7 @@ inception_transfer_make_checkpoint(
 
     sprintf(sql, "UPDATE `%s`.`transfer_checkpoint` set id= %lld, tid=%lld", 
         datacenter->datacenter_name, min_eid, min_tid);
-    if (inception_execute_sql_with_retry(thd_thread, datacenter, sql))
+    if (inception_transfer_execute_sql_with_retry(thd_thread, datacenter, sql))
         return true;
 
     mysql_mutex_lock(&datacenter->checkpoint_lock);
@@ -8048,21 +8389,23 @@ int inception_transfer_failover(Master_info* mi)
     //the failed instance will been omit in new instance table
     thd = mi->thd;
     thd->clear_error();
-    mysql = thd->get_transfer_connection();
+    datacenter = mi->datacenter;
+
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
         return NULL;
     }
 
-    datacenter = mi->datacenter;
     inception_wait_mts_threads_finish(datacenter);
     mysql_mutex_lock(&transfer_mutex);
     slave = LIST_GET_FIRST(datacenter->slave_lst);
     while(slave)
     {
-        if (strcasecmp(slave->hostname, datacenter->hostname) ||
-            slave->mysql_port != datacenter->mysql_port)
+        /* find a node, which is running, and not itself, then make it master */
+        if (slave->valid && (strcasecmp(slave->hostname, datacenter->hostname) ||
+            slave->mysql_port != datacenter->mysql_port))
         {
             //the new master node
             break;
@@ -8210,7 +8553,7 @@ pthread_handler_t inception_mts_thread(void* arg)
 
     while (true)
     {
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter->datacenter_name);
         if (mysql == NULL)
         {
             inception_transfer_set_errmsg(thd, datacenter, 
@@ -8327,9 +8670,9 @@ pthread_handler_t inception_transfer_checkpoint(void* arg)
     while (datacenter->transfer_on && !inception_transfer_killed(datacenter->thd, datacenter))
     {
         set_timespec_nsec(abstime, OPTION_GET_VALUE(&datacenter->option_list[CHECKPOINT_PERIOD]) * 1000000ULL);
-        mysql_mutex_lock(&datacenter->thd->sleep_lock);
-        mysql_cond_timedwait(&datacenter->thd->sleep_cond, &datacenter->thd->sleep_lock, &abstime);
-        mysql_mutex_unlock(&datacenter->thd->sleep_lock);
+        mysql_mutex_lock(&datacenter->sleep_lock);
+        mysql_cond_timedwait(&datacenter->sleep_cond, &datacenter->sleep_lock, &abstime);
+        mysql_mutex_unlock(&datacenter->sleep_lock);
 
         if (datacenter->checkpoint_age > 0)
             inception_transfer_make_checkpoint(thd, datacenter);
@@ -8359,20 +8702,30 @@ inception_transfer_delete(
     MYSQL_RES *     source_res1=NULL;
     MYSQL_ROW       source_row;
 
-    if ((mysql = thd->get_transfer_connection()) == NULL)
+    if ((mysql = thd->get_transfer_connection(datacenter_name)) == NULL)
         return false;
 
     //fetch the min id for faster delete
     sprintf(sql_select, "SELECT id FROM `%s`.`%s` limit 1", datacenter_name, tablename);
     if (mysql_real_query(mysql, sql_select, strlen(sql_select)))
+    {
+        sql_print_information("[%s] Background delete error(id delimitation): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     if ((source_res1 = mysql_store_result(mysql)) == NULL)
+    {
+        sql_print_information("[%s] Background delete error(store result): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     source_row = mysql_fetch_row(source_res1);
     if (source_row != NULL)
         strcpy(minid, source_row[0]);
+    else
+        strcpy(minid, "0");
 
     mysql_free_result(source_res1);
 
@@ -8381,7 +8734,11 @@ inception_transfer_delete(
         datacenter_name, tablename, period, minid);
 
     if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        sql_print_information("[%s] Background delete error(real delete): %s",
+            datacenter_name, mysql_error(mysql));
         return false;
+    }
 
     affected_rows = mysql_affected_rows(mysql);
     if (affected_rows == 0)
@@ -8443,7 +8800,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
     MYSQL* mysql;
     char tmp[1024];
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -8516,7 +8873,7 @@ int inception_reset_transfer_position(THD* thd, char* datacenter_name, int mp_tr
     MYSQL* mysql;
     char tmp[1024];
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql == NULL)
     {
         my_error(ER_INVALID_TRANSFER_INFO, MYF(0));
@@ -8906,7 +9263,7 @@ retry:
 retry0:
     if (datacenter->checkpoint_running)
     {
-        mysql_cond_broadcast(&datacenter->thd->sleep_cond);
+        mysql_cond_broadcast(&datacenter->sleep_cond);
         sleep(1);
         goto retry0;
     }
@@ -8941,6 +9298,43 @@ retry0:
 }
 
 int
+inception_cut_master_positions(
+    THD* thd,
+    transfer_cache_t* datacenter
+)
+{
+    char sql[1024];
+    MYSQL* mysql;
+
+    sprintf(sql, "UPDATE `%s`.master_positions set binlog_file = '%s', "
+        " binlog_position = %d where datacenter_epoch = '%s'",
+        datacenter->datacenter_name, datacenter->cbinlog_file, 
+        datacenter->cbinlog_position, datacenter->datacenter_epoch);
+    mysql = thd->get_transfer_connection(datacenter->datacenter_name);
+    if (mysql == NULL)
+        return true;
+
+    if (mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        sql_print_information("[%s] inception master position cut error: %s",
+            datacenter->datacenter_name, mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
+
+    if (mysql_real_query(mysql, "Commit", strlen("Commit")))
+    {
+        sql_print_information("[%s] inception master position cut error: %s",
+            datacenter->datacenter_name, mysql_error(mysql));
+        thd->close_all_connections();
+        return true;
+    }
+
+    thd->close_all_connections();
+    return false;
+}
+
+int
 inception_wait_and_free_mts(
     transfer_cache_t* datacenter,
     int need_lock
@@ -8961,6 +9355,7 @@ inception_wait_and_free_mts(
     {
         mysql_cond_broadcast(&datacenter->mts->mts_cond);
         inception_free_mts(datacenter);
+        inception_cut_master_positions(datacenter->thd, datacenter);
     }
 
     if (need_lock)
@@ -9008,6 +9403,7 @@ int inception_stop_transfer(
     //reset the ignore info
     inception_reset_datacenter_do_ignore(datacenter);
     inception_wait_and_free_mts(datacenter, false);
+    inception_transfer_free_table_object(datacenter);
 
     mysql_mutex_unlock(&datacenter->run_lock);
 
@@ -9082,7 +9478,7 @@ int inception_transfer_start_replicate(
     sprintf(tmp, "select id,tid from `%s`.transfer_data where id > "
         "(select id from `%s`.transfer_checkpoint limit 1) limit 1;", datacenter_name,
         datacenter_name);
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
         (source_res1 = mysql_store_result(mysql)) == NULL)
     {
@@ -9102,7 +9498,7 @@ int inception_transfer_start_replicate(
     {
         MYSQL mysql_space;
             
-        mysql = thd->get_transfer_connection();
+        mysql = thd->get_transfer_connection(datacenter_name);
         sprintf(tmp, "select binlog_file,binlog_position from `%s`.master_positions \
             where datacenter_epoch=(select datacenter_epoch from \
               `%s`.master_positions where id=(select max(id) from \
@@ -9143,7 +9539,7 @@ int inception_transfer_start_replicate(
                 return true;
             }
 
-            mysql_close(mysql);
+            thd->close_all_connections();
         }
             
         source_row = mysql_fetch_row(source_res1);
@@ -9222,7 +9618,7 @@ int inception_transfer_set_instance_position(
         return true;
     }
 
-    mysql = thd->get_transfer_connection();
+    mysql = thd->get_transfer_connection(datacenter);
     if (mysql == NULL)
     {
         mysql_mutex_unlock(&transfer_mutex); 
@@ -9233,6 +9629,14 @@ int inception_transfer_set_instance_position(
 
     sprintf(tmp, "update `%s`.`instances` set binlog_file='%s', binlog_position=%d \
         where instance_role = 'master'", datacenter, binlog_file_name, binlog_file_pos);
+    if (mysql_real_query(mysql, tmp, strlen(tmp)))
+    {
+        mysql_mutex_unlock(&transfer_mutex); 
+        thd->close_all_connections();
+        return true;
+    }
+
+    sprintf(tmp, "truncate table `%s`.`transfer_checkpoint`", datacenter);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         mysql_mutex_unlock(&transfer_mutex); 
@@ -9374,7 +9778,7 @@ int mysql_execute_inception_binlog_transfer(THD* thd)
         {
             char sql[1024];
             sprintf(sql, "CREATE DATABASE `%s` default charset utf8", thd->lex->name.str);
-            mysql = thd->get_transfer_connection();
+            mysql = thd->get_transfer_connection(thd->lex->name.str);
             if (mysql == NULL)
                 return true;
 
@@ -9725,31 +10129,62 @@ mysql_set_cache_new_column_type(field_info_t* field_info, Create_field*   field)
     case MYSQL_TYPE_BLOB:
         strcpy(field_info->data_type, "BLOB");
         break;
+    case MYSQL_TYPE_JSON:
+        strcpy(field_info->data_type, "JSON");
+        break;
     default:
         strcpy(field_info->data_type, "UNKNOWN");
         break;
     }
 }
 
-field_info_t* mysql_cache_new_column(table_info_t* table_info, Create_field*   field)
+field_info_t* 
+mysql_cache_new_column(
+    table_info_t* table_info, 
+    Create_field*   field,
+    const char*           after
+)
 {
     field_info_t* field_info;
+    field_info_t* field_info_tmp;
+    int found = false;
 
-    field_info = (field_info_t*)malloc(sizeof(field_info_t));
+    field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
 
-    memset(field_info, 0, sizeof(field_info_t));
+    // memset(field_info, 0, sizeof(field_info_t));
     strcpy(field_info->field_name, field->field_name);
     field_info->nullable = (field->flags & NOT_NULL_FLAG) ? FALSE : TRUE;
 
     field_info->primary_key = FALSE;
     field_info->max_length = field->length;
     table_info->new_column_cache = TRUE;
+    field_info->cache_new = TRUE;
     field_info->auto_increment = FALSE;
     field_info->real_type = field->sql_type;
     field_info->charset = (CHARSET_INFO*)field->charset;
     mysql_set_cache_new_column_type(field_info,field);
 
-    LIST_ADD_LAST(link, table_info->field_lst, field_info);
+    /* 外面会报错，这里就只处理找到的情况 */
+    if (after)
+    {
+        field_info_tmp = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info_tmp)
+        {
+            if (strcasecmp(field_info_tmp->field_name, after) == 0)
+            {
+                found=TRUE;
+                break;
+            }
+
+            field_info_tmp = LIST_GET_NEXT(link, field_info_tmp);
+        }
+
+        if (found)
+            LIST_INSERT_AFTER(link, table_info->field_lst, field_info_tmp, field_info);
+    }
+    else 
+        LIST_ADD_LAST(link, table_info->field_lst, field_info);
+
     return field_info;
 }
 
@@ -9774,8 +10209,8 @@ int mysql_cache_new_table(THD *thd, Alter_info* alter_info_ptr)
     }
 
     //free memory
-    table_info = (table_info_t*)malloc(sizeof(table_info_t));
-    memset(table_info, 0, sizeof(table_info_t));
+    table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+    // memset(table_info, 0, sizeof(table_info_t));
     LIST_INIT(table_info->field_lst);
 
     strcpy(table_info->table_name, create_table->table_name);
@@ -9785,7 +10220,7 @@ int mysql_cache_new_table(THD *thd, Alter_info* alter_info_ptr)
     it.rewind();
     while ((sql_field=it++))
     {
-        mysql_cache_new_column(table_info, sql_field);
+        mysql_cache_new_column(table_info, sql_field, NULL);
     }
 
     mysql_add_table_object(thd, table_info);
@@ -9859,6 +10294,8 @@ int mysql_check_charset(const char* charsetname)
     if (inception_support_charset == NULL)
         return true;
     
+    /* strtok 是线程不安全的函数，需要保护起来 */
+    mysql_mutex_lock(&isql_option_mutex);
     charset = (char*)my_malloc(strlen (inception_support_charset) + 1, MY_ZEROFILL);
     strcpy(charset, inception_support_charset);
     if ((strToken = strtok(charset, ",")) == NULL)
@@ -9877,6 +10314,7 @@ int mysql_check_charset(const char* charsetname)
     }
 
 err:
+    mysql_mutex_unlock(&isql_option_mutex);
     my_free(charset);
     return ret;
 }
@@ -10026,10 +10464,14 @@ int mysql_check_create_table(THD *thd)
         mysql_errmsg_append(thd);
     }
     
+    /* CREATE TABLE IF NOT EXISTS tablename ... */
     if (mysql_get_table_object(thd, create_table->db, create_table->table_name, FALSE))
     {
-        my_error(ER_TABLE_EXISTS_ERROR, MYF(0), create_table->table_name);
-        mysql_errmsg_append(thd);
+        if (!(create_info_ptr->options & HA_LEX_CREATE_IF_NOT_EXISTS))
+        {
+            my_error(ER_TABLE_EXISTS_ERROR, MYF(0), create_table->table_name);
+            mysql_errmsg_append(thd);
+        }
     }
 
     //to do: cache the new table object, so that inception can find this table when insert
@@ -10139,6 +10581,13 @@ mysql_check_index_attribute(
         {
             my_error(ER_FOREIGN_KEY, MYF(0), table_name);
             mysql_errmsg_append(thd);
+            if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+                thd->current_sql_cache_node->alter_table_method == osc_method_build_in_osc)
+            {
+                thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
+                // my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+                // mysql_errmsg_append(thd);
+            }
         }
         else if (key->type == Key::UNIQUE)
         {
@@ -10173,7 +10622,8 @@ int mysql_field_is_blob(
     if (real_type== MYSQL_TYPE_BLOB ||
       real_type== MYSQL_TYPE_TINY_BLOB ||
       real_type== MYSQL_TYPE_MEDIUM_BLOB ||
-      real_type== MYSQL_TYPE_LONG_BLOB)
+      real_type== MYSQL_TYPE_LONG_BLOB ||
+      real_type== MYSQL_TYPE_JSON)
     {
         return TRUE;
     }
@@ -10252,7 +10702,8 @@ int mysql_check_create_index(THD *thd)
             field_node = LIST_GET_FIRST(table_info->field_lst);
             while (field_node != NULL)
             {
-                if (!strcasecmp(field_node->field_name, col1->field_name.str))
+                if (!field_node->is_deleted && 
+                    !strcasecmp(field_node->field_name, col1->field_name.str))
                 {
                     if (field_node->charset && col1->length)
                     {
@@ -10267,6 +10718,9 @@ int mysql_check_create_index(THD *thd)
                     {
                         keymaxlen += field_node->max_length;
                     }
+
+                    if (key->type == Key::PRIMARY)
+                        field_node->primary_key = true;
 
                     found = TRUE;
                     break;
@@ -10668,7 +11122,8 @@ int mysql_check_add_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->field_name) == 0)
+            if (!field_info->is_deleted &&
+                strcasecmp(field_info->field_name, field->field_name) == 0)
             {
                 my_error(ER_COLUMN_EXISTED, MYF(0), field->field_name);
                 mysql_errmsg_append(thd);
@@ -10677,7 +11132,8 @@ int mysql_check_add_column(THD *thd)
             field_info = LIST_GET_NEXT(link, field_info);
         }
 
-        field_info_new = mysql_cache_new_column(table_info, field);
+        /* 按照顺序将新的列缓存起来 */
+        field_info_new = mysql_cache_new_column(table_info, field, field->after);
         if (field->after)
         {
             field_info = LIST_GET_FIRST(table_info->field_lst);
@@ -10763,7 +11219,7 @@ int mysql_check_rename_table(THD *thd)
 
 int mysql_drop_column_rollback(THD* thd, table_info_t* table_info, char* columnname)
 {
-    char        tmp_buf[256];
+    char        tmp_buf[4096];
     MYSQL_RES *     source_res;
     MYSQL_ROW       source_row;
     MYSQL*          mysql;
@@ -10849,7 +11305,8 @@ int mysql_check_drop_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->name) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->name) == 0)
             {
                 found = TRUE;
                 break;
@@ -10863,6 +11320,10 @@ int mysql_check_drop_column(THD *thd)
             my_error(ER_COLUMN_NOT_EXISTED, MYF(0), field->name);
             mysql_errmsg_append(thd);
         }
+        else
+        {
+            field_info->is_deleted = true;
+        }
 
         mysql_drop_column_rollback(thd, table_info, (char*)field->name);
     }
@@ -10870,7 +11331,12 @@ int mysql_check_drop_column(THD *thd)
     DBUG_RETURN(FALSE);
 }
 
-int mysql_change_column_rollback(THD* thd, table_info_t* table_info, char* columnname,char* column_change)
+int mysql_change_column_rollback(
+    THD* thd, 
+    table_info_t* table_info, 
+    char* columnname,
+    char* column_change
+)
 {
     char*           tmp_buf;
     char            buff_space[4096];
@@ -10969,7 +11435,8 @@ int mysql_check_change_column(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->change) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->change) == 0)
             {
                 found = TRUE;
                 break;
@@ -10997,13 +11464,15 @@ int mysql_check_change_column(THD *thd)
             strcpy(field_info->field_name, field->field_name);
             field_info->nullable = field->flags & NOT_NULL_FLAG ? 0 : 1;
             field_info->auto_increment = field->flags & AUTO_INCREMENT_FLAG ? 1 : 0;
-            field_info->primary_key= field->flags & PRI_KEY_FLAG ? 1 : 0;
+            /* primary_key 标记保持原样即可 */
+            // field_info->primary_key; 
             
             field->charset = system_charset_info;
             mysql_field_check(thd, field, table_info->table_name);
             mysql_check_column_default(thd, field->def, field->flags, 
                 field_info, field->field_name, field->sql_type);
-            mysql_change_column_rollback(thd, table_info, (char*)field->field_name,(char*)field->change);
+            mysql_change_column_rollback(thd, table_info, 
+                (char*)field->field_name,(char*)field->change);
         }
     }
 
@@ -11066,6 +11535,27 @@ int mysql_check_drop_index(THD *thd)
                 my_error(ER_CANT_DROP_FIELD_OR_KEY, MYF(0), field->name);
                 mysql_errmsg_append(thd);
                 continue;
+            }
+
+            /* 去掉主键标志 */
+            if (!strcasecmp(field->name, "PRIMARY"))
+            {
+                field_info_t*   field_info;
+                while (source_row)
+                {
+                    int keyseq;
+                    keyseq = strtoll(source_row[3], NULL, 10);
+                    field_info = mysql_get_table_pk_field_by_seq(thd, thd->lex->query_tables->db, 
+                        thd->lex->query_tables->table_name, keyseq);
+                    if (field_info)
+                    {
+                        field_info->primary_key = false;
+                        field_info->key_seq = 0;
+                        field_info->keyname[0] = '\0';
+                    }
+
+                    source_row = mysql_fetch_row(source_res);
+                }
             }
 
             if (inception_get_type(thd) == INCEPTION_TYPE_EXECUTE )
@@ -11166,7 +11656,8 @@ int mysql_check_change_column_default(THD *thd)
         field_info = LIST_GET_FIRST(table_info->field_lst);
         while (field_info)
         {
-            if (strcasecmp(field_info->field_name, field->name) == 0)
+            if (!field_info->is_deleted && 
+                strcasecmp(field_info->field_name, field->name) == 0)
             {
                 found = TRUE;
                 break;
@@ -11278,11 +11769,514 @@ int mysql_show_table_status(THD *thd, table_info_t* table_info)
         DBUG_RETURN(TRUE);
     }
 
-    if ((source_row = mysql_fetch_row(source_res)) != NULL)
+    thd->affected_rows += 0;
+    if ((source_row = mysql_fetch_row(source_res)) != NULL && source_row[4] != NULL)
         thd->affected_rows += atoi(source_row[4]);
 
     mysql_free_result(source_res);
     DBUG_RETURN(FALSE);
+}
+
+int mysql_drop_column_select(
+    THD *thd,
+    char*             column_name
+)
+{
+    Alter_drop*  field;
+    int    found = FALSE;
+
+    DBUG_ENTER("mysql_drop_column_select");
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Alter_drop> fields(alter_info_ptr->drop_list);
+
+    while ((field=fields++))
+    {
+        if (field->type != Alter_drop::COLUMN)
+            continue;
+
+        found = FALSE;
+        if (strcasecmp(column_name, field->name) == 0)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    DBUG_RETURN(!found);
+}
+
+int mysql_change_column_select(
+    THD *thd,
+    char*             column_name,
+    char*             insert_column_name
+)
+{
+    Create_field* field;
+    int    found = FALSE;
+
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Create_field> fields(alter_info_ptr->create_list);
+
+    DBUG_ENTER("mysql_check_change_column");
+
+    strcpy(insert_column_name, "\0");
+    while ((field=fields++))
+    {
+        if (field->change == NULL)
+            continue;
+
+        if (strcasecmp(column_name, (char*)field->change) == 0)
+        {
+            strcpy(insert_column_name, (char*)field->field_name);
+            found = true;
+            break;
+        }
+    }
+
+    DBUG_RETURN(found);
+}
+
+int mysql_check_create_primary_key(
+    THD *thd, 
+    char* column_name, 
+    sql_cache_node_t* sql_cache_node
+)
+{
+    Key*   key;
+    Key_part_spec * col1;
+    field_info_t*   field_node;
+    table_info_t*   table_info;
+    int             found;
+
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+
+    List_iterator<Key> key_iterator(alter_info_ptr->key_list);
+
+    DBUG_ENTER("mysql_check_create_primary_key");
+    table_info = mysql_get_table_object(thd, thd->lex->query_tables->db,
+            thd->lex->query_tables->table_name, FALSE);
+    if (table_info == NULL)
+        DBUG_RETURN(TRUE);
+
+    while ((key=key_iterator++))
+    {
+        List_iterator<Key_part_spec> col_it(key->columns);
+
+        if (key->type != Key::PRIMARY)
+            continue;
+
+        while ((col1= col_it++))
+        {
+            found = 0;
+            field_node = LIST_GET_FIRST(table_info->field_lst);
+            while (field_node != NULL)
+            {
+                if (!strcasecmp(field_node->field_name, col1->field_name.str) && 
+                    !strcasecmp(field_node->field_name, column_name))
+                {
+                    /* 如果这个列，是新的主键列，并且不是新增的列，则这是新表的主键列,
+                     * 不过，只要找到了，主键中有一个列是新增的，则不能以新主键做为OSC新表
+                     * BInlog应用主键了，需要用原表的主键 */
+                    if (!field_node->cache_new)
+                        DBUG_RETURN(1);
+                    else
+                        DBUG_RETURN(2);
+                }
+
+                field_node = LIST_GET_NEXT(link, field_node);
+            }
+
+        }
+
+    }
+
+    DBUG_RETURN(0);
+}
+
+int mysql_select_insert_column(
+    THD *thd,
+    char*             column_name,
+    int               *insert_use,
+    int               *select_use,
+    char*             insert_column_name
+)
+{
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+    DBUG_ENTER("mysql_select_insert_column");
+    int tmp_flags;
+
+    *insert_use = true;
+    *select_use = true;
+
+    /* 这里如果找到了指定的列，就结束循环，否则直到遍历完所有的改表类型 */
+    tmp_flags = alter_info_ptr->flags;
+    while (tmp_flags)
+    {
+        if (tmp_flags & Alter_info::ALTER_ADD_COLUMN ||
+            tmp_flags & Alter_info::ALTER_COLUMN_ORDER)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_COLUMN;
+            tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
+        else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            *insert_use = mysql_drop_column_select(thd, column_name);
+            *select_use = *insert_use;
+            tmp_flags &= ~Alter_info::ALTER_DROP_COLUMN;
+            if (!*insert_use)
+                break;
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+            if (mysql_change_column_select(thd, column_name, insert_column_name))
+                break;
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN_DEFAULT;
+        }
+        else if (tmp_flags & Alter_info::ALTER_OPTIONS)
+        {
+            tmp_flags &= ~Alter_info::ALTER_OPTIONS;
+        }
+        else if (tmp_flags & Alter_info::ALTER_CONVERT)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CONVERT;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
+int mysql_check_alter_option_execute_direct(THD *thd)
+{
+    DBUG_ENTER("mysql_check_alter_option_execute_direct");
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    int used_fields = create_info.used_fields;
+    while(used_fields)
+    {
+        if (used_fields & HA_CREATE_USED_ENGINE)
+        {
+            used_fields &= ~HA_CREATE_USED_ENGINE;
+            DBUG_RETURN(FALSE);
+        }
+        else if (used_fields & HA_CREATE_USED_COMMENT)
+        {
+            used_fields &= ~HA_CREATE_USED_COMMENT;
+        }
+        else if (used_fields & HA_CREATE_USED_AUTO)
+        {
+            used_fields &= ~HA_CREATE_USED_AUTO;
+            if (!mysql_check_version_56(thd))
+                DBUG_RETURN(FALSE);
+        }
+        else if (used_fields & HA_CREATE_USED_DEFAULT_CHARSET)
+        {
+            used_fields &= ~HA_CREATE_USED_DEFAULT_CHARSET;
+            if (!mysql_check_version_56(thd))
+                DBUG_RETURN(FALSE);
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    DBUG_RETURN(FALSE);
+}
+
+int mysql_check_alter_table_execute_direct(
+    THD *thd
+)
+{
+    HA_CREATE_INFO create_info(thd->lex->create_info);
+    Alter_info alter_info(thd->lex->alter_info, thd->mem_root);
+    Alter_info* alter_info_ptr = &alter_info;
+    DBUG_ENTER("mysql_check_alter_table_execute_direct");
+    int tmp_flags;
+
+    /* 这里如果找到了指定的列，就结束循环，否则直到遍历完所有的改表类型 */
+    tmp_flags = alter_info_ptr->flags;
+    while (tmp_flags)
+    {
+        if (tmp_flags & Alter_info::ALTER_ADD_COLUMN ||
+            tmp_flags & Alter_info::ALTER_COLUMN_ORDER)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_COLUMN;
+            tmp_flags &= ~Alter_info::ALTER_COLUMN_ORDER;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_INDEX)
+        {
+            /* 5.5及以上都不会锁表 */
+            tmp_flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
+        else if (tmp_flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            tmp_flags &= ~Alter_info::ALTER_ADD_INDEX;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            tmp_flags &= ~Alter_info::ALTER_DROP_COLUMN;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN;
+            DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_RENAME)
+        {
+            /* 不能通过 osc来改表名 */
+            tmp_flags &= ~Alter_info::ALTER_RENAME;
+            if (thd->current_sql_cache_node->use_osc)
+            {
+                my_error(ER_OSC_RENAME_TABLE, MYF(0));
+                mysql_errmsg_append(thd);
+            }
+        }
+        else if (tmp_flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
+        {
+            /* 5.5及以上都不会锁表 */
+            tmp_flags &= ~Alter_info::ALTER_CHANGE_COLUMN_DEFAULT;
+        }
+        else if (tmp_flags & Alter_info::ALTER_OPTIONS)
+        {
+            tmp_flags &= ~Alter_info::ALTER_OPTIONS;
+            if (!mysql_check_alter_option_execute_direct(thd))
+                DBUG_RETURN(false);
+        }
+        else if (tmp_flags & Alter_info::ALTER_CONVERT)
+        {
+            tmp_flags &= ~Alter_info::ALTER_CONVERT;
+            DBUG_RETURN(false);
+        }
+        else
+        {
+            /* 目前不支持的改表操作 */
+            DBUG_RETURN(2);
+        }
+    }
+
+    DBUG_RETURN(true);
+}
+
+int inception_get_table_primary_keys(
+    THD* thd,
+    sql_cache_node_t* sql_cache_node
+)
+{
+    sql_table_t*  tables;
+    table_rt_t*   table_rt;
+    table_info_t* table_info;
+    field_info_t* field_info;
+    int           first = true;
+    int           pkcount = 0;
+
+    sql_cache_node->pk_string = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(sql_cache_node->pk_string);
+
+    tables = &sql_cache_node->tables;
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_info = table_rt->table_info;
+        field_info = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info)
+        {
+            if (field_info->primary_key)
+            {
+                if (!first)
+                    str_append(sql_cache_node->pk_string, ", ");
+                str_append(sql_cache_node->pk_string, field_info->field_name);
+                first = false;
+                pkcount++;
+            }
+
+            field_info = LIST_GET_NEXT(link, field_info);
+        }
+        
+        sql_cache_node->primary_keys = (char**)my_malloc(sizeof(char*) * 
+            (pkcount + 1), MY_ZEROFILL);
+        pkcount = 0;
+        field_info = LIST_GET_FIRST(table_info->field_lst);
+        while (field_info)
+        {
+            if (field_info->primary_key)
+            {
+                sql_cache_node->primary_keys[pkcount] = (char*)my_malloc(NAME_LEN, MY_ZEROFILL);
+                strcpy(sql_cache_node->primary_keys[pkcount], field_info->field_name);
+                pkcount++;
+            }
+
+            field_info = LIST_GET_NEXT(link, field_info);
+        }
+
+        /* only one table to alter */
+        break;
+        table_rt = LIST_GET_NEXT(link, table_rt);
+    }
+
+    return false;
+}
+
+int mysql_get_alter_table_new_primary_key(
+    THD*            thd,
+    table_info_t*   table_info
+)
+{
+    field_info_t*     field_node;
+    sql_cache_node_t* sql_cache_node;
+    int pkcount = 0;
+
+    if (!thd->current_sql_cache_node->use_osc)
+        return false;
+
+    if (thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc)
+        return false;
+
+    sql_cache_node = thd->current_sql_cache_node;
+
+    sql_cache_node->new_primary_keys = (char**)my_malloc(sizeof(char*) * 
+        (1 + LIST_GET_LEN(table_info->field_lst)), MY_ZEROFILL);
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        if (!field_node->is_deleted && field_node->primary_key && !field_node->cache_new)
+        {
+            sql_cache_node->new_primary_keys[pkcount] 
+              = (char*)my_malloc(NAME_LEN, MY_ZEROFILL);
+            strcpy(sql_cache_node->new_primary_keys[pkcount], field_node->field_name);
+            pkcount++; 
+        }
+
+        field_node = LIST_GET_NEXT(link, field_node);
+    }
+
+    pkcount = 0;
+    while (sql_cache_node->new_primary_keys[pkcount] &&
+        sql_cache_node->primary_keys[pkcount])
+    {
+        if (strcasecmp(sql_cache_node->primary_keys[pkcount], 
+              sql_cache_node->new_primary_keys[pkcount]))
+        {
+            my_error(ER_PRIMARY_KEY_MODIFY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+                str_get(&sql_cache_node->tables.table_names));
+            mysql_errmsg_append(thd);
+            break;
+        }
+
+        pkcount++;
+    }
+
+    /* 改前改后主键不相同了，则报警 */
+    if (sql_cache_node->new_primary_keys[pkcount] ||
+        sql_cache_node->primary_keys[pkcount])
+    {
+        my_error(ER_PRIMARY_KEY_MODIFY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
+    /* 新表必须要有主键，不然没法做delete */
+    if (pkcount == 0 && !sql_cache_node->new_primary_keys[pkcount])
+    {
+        my_error(ER_PRIMARY_KEY_LOST, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
+    /* 要改的表，必须要有主键，不然没法改 */
+    if (pkcount == 0 && !sql_cache_node->primary_keys[pkcount])
+    {
+        my_error(ER_REQUIRES_PRIMARY_KEY, MYF(0), str_get(&sql_cache_node->tables.db_names), 
+            str_get(&sql_cache_node->tables.table_names));
+        mysql_errmsg_append(thd);
+    }
+
+    return FALSE;
+}
+
+int mysql_check_alter_use_osc_type(
+    THD*            thd,
+    table_info_t*   table_info
+)
+{
+    field_info_t*     field_node;
+    int               insert_use;
+    int               select_use;
+    char              insert_column_name[FN_LEN];
+    int               first = true;
+    sql_cache_node_t* sql_cache_node;
+
+    if (!thd->current_sql_cache_node->use_osc)
+        return false;
+
+    if (thd->current_sql_cache_node->alter_table_method == osc_method_pt_osc ||
+        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE)
+        return false;
+
+    sql_cache_node = thd->current_sql_cache_node;
+    sql_cache_node->osc_select_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    sql_cache_node->osc_insert_columns = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
+    str_init(sql_cache_node->osc_select_columns);
+    str_init(sql_cache_node->osc_insert_columns);
+
+    field_node = LIST_GET_FIRST(table_info->field_lst);
+    while (field_node != NULL)
+    {
+        insert_column_name[0] = '\0';
+        mysql_select_insert_column(thd, field_node->field_name, 
+            &insert_use, &select_use, insert_column_name);
+
+        /* 这里，应该insert_use和select_use是一样的，不可能存在
+         * 插入列与值的个数不相同的情况 */
+        if (insert_use)
+        {
+            if (!first)
+            {
+                str_append(sql_cache_node->osc_select_columns, ",");
+                str_append(sql_cache_node->osc_insert_columns, ",");
+            }
+
+            if (insert_column_name[0] != '\0')
+                str_append(sql_cache_node->osc_insert_columns, insert_column_name);
+            else
+                str_append(sql_cache_node->osc_insert_columns, field_node->field_name);
+
+            first = false;
+            str_append(sql_cache_node->osc_select_columns, field_node->field_name);
+        }
+
+        field_node = LIST_GET_NEXT(link, field_node);
+    }
+
+
+    return FALSE;
 }
 
 int mysql_check_alter_use_osc(
@@ -11290,16 +12284,39 @@ int mysql_check_alter_use_osc(
     table_info_t*   table_info
 )
 {
+    int ret;
     //如果inception_osc_min_table_size设置为0，或者表大小大于
     //这个参数，就用OSC，如果直接设置为0的话，下面2个参数都满足，但为了
     //代码上看起来清楚，还是写了第二个条件
+    thd->current_sql_cache_node->alter_table_method = thd->variables.inception_alter_table_method;
+
     if (inception_osc_on && 
+        thd->current_sql_cache_node->alter_table_method != osc_method_direct_alter &&
         (table_info->table_size >= (int)thd->variables.inception_osc_min_table_size ||
         !thd->variables.inception_osc_min_table_size))
-        thd->use_osc = TRUE;
+        thd->current_sql_cache_node->use_osc = TRUE;
     else
-        thd->use_osc = FALSE; 
+        thd->current_sql_cache_node->use_osc = FALSE; 
        
+    /* 如果改表操作中，涉及到的修改都可以直接改表而不需要锁表的话，则不做OSC */
+    if ((ret = mysql_check_alter_table_execute_direct(thd)) == true)
+        thd->current_sql_cache_node->use_osc = FALSE;
+
+    if (ret == 2 && inception_get_type(thd) == INCEPTION_TYPE_EXECUTE && 
+        thd->current_sql_cache_node->alter_table_method == osc_method_build_in_osc)
+    {
+        thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
+        // my_error(ER_BUILD_IN_OSC_NOT_SUPPORT, MYF(0));
+        // mysql_errmsg_append(thd);
+    }
+
+    /* 目前如果是5.7及以上版本，或者是PXC节点，就还是用PT工具改表 */
+    if (mysql_check_version_57(thd) || thd->galera_node)
+        thd->current_sql_cache_node->alter_table_method = osc_method_pt_osc;
+
+    inception_get_table_primary_keys(thd, thd->current_sql_cache_node);
+    mysql_check_alter_use_osc_type(thd, table_info);
+
     return FALSE;
 }
 
@@ -11422,7 +12439,14 @@ int mysql_check_alter_table(THD *thd)
     mysql_check_alter_use_osc(thd, table_info);
     while (alter_info_ptr->flags)
     {
-        if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
+        if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_COLUMN);
+            if((err = mysql_check_drop_column(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_COLUMN;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_COLUMN ||
             alter_info_ptr->flags & Alter_info::ALTER_COLUMN_ORDER)
         {
             thd_sql_statistic_increment(thd, Alter_info::ALTER_ADD_COLUMN);
@@ -11430,27 +12454,6 @@ int mysql_check_alter_table(THD *thd)
                 DBUG_RETURN(err);
             alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_COLUMN;
             alter_info_ptr->flags &= ~Alter_info::ALTER_COLUMN_ORDER;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_ADD_INDEX);
-            if ((err = mysql_check_create_index(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_INDEX;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_DROP_COLUMN)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_DROP_COLUMN);
-            if((err = mysql_check_drop_column(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_COLUMN;
-        }
-        else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
-        {
-            thd_sql_statistic_increment(thd, Alter_info::ALTER_RENAME);
-            if((err = mysql_check_rename_table(thd)))
-                DBUG_RETURN(err);
-            alter_info_ptr->flags &= ~Alter_info::ALTER_RENAME;
         }
         else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN)
         {
@@ -11465,6 +12468,20 @@ int mysql_check_alter_table(THD *thd)
             if ((err = mysql_check_drop_index(thd)))
                 DBUG_RETURN(err);
             alter_info_ptr->flags &= ~Alter_info::ALTER_DROP_INDEX;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_ADD_INDEX)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_ADD_INDEX);
+            if ((err = mysql_check_create_index(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_ADD_INDEX;
+        }
+        else if (alter_info_ptr->flags & Alter_info::ALTER_RENAME)
+        {
+            thd_sql_statistic_increment(thd, Alter_info::ALTER_RENAME);
+            if((err = mysql_check_rename_table(thd)))
+                DBUG_RETURN(err);
+            alter_info_ptr->flags &= ~Alter_info::ALTER_RENAME;
         }
         else if (alter_info_ptr->flags & Alter_info::ALTER_CHANGE_COLUMN_DEFAULT)
         {
@@ -11501,6 +12518,7 @@ int mysql_check_alter_table(THD *thd)
         }
     }
 
+    mysql_get_alter_table_new_primary_key(thd, table_info);
     DBUG_RETURN(FALSE);
 }
 
@@ -11726,15 +12744,15 @@ mysql_convert_derived_table(
     SELECT_LEX *last_select= derived->first_select();
     while (last_select)
     {
-        table_info = (table_info_t*)malloc(sizeof(table_info_t));
-        memset(table_info, 0, sizeof(table_info_t));
+        table_info = (table_info_t*)my_malloc(sizeof(table_info_t), MY_ZEROFILL);
+        // memset(table_info, 0, sizeof(table_info_t));
         LIST_INIT(table_info->field_lst);
 
         List_iterator<Item> it(last_select->item_list);
         while ((item= it++))
         {
-            field_info = (field_info_t*)malloc(sizeof(field_info_t));
-            memset(field_info, 0, sizeof(field_info_t));
+            field_info = (field_info_t*)my_malloc(sizeof(field_info_t), MY_ZEROFILL);
+            // memset(field_info, 0, sizeof(field_info_t));
             if (item->item_name.is_set())
                 strcpy(field_info->field_name, (char*)item->item_name.ptr());
             else
@@ -12390,7 +13408,10 @@ print_item(
             sprintf(fieldname, "\"%s\"", stringval->ptr());
             str_append(print_str, "\"type\":\"STRING_ITEM\",");
             str_append(print_str, "\"value\":");
-            str_append(print_str, fieldname);
+            // str_append(print_str, fieldname);
+            str_append(print_str, "\"");
+            mysql_char_escape(stringval->c_ptr(), print_str, (char*)"\"");
+            str_append(print_str, "\"");
             str_append(print_str, "}");
             my_free(fieldname);
         }
@@ -13420,7 +14441,7 @@ int mysql_extract_update_tables(
 
         if (table->updating)
         {
-            table_info = mysql_get_table_object_from_cache(thd, table->db, table->table_name);
+            table_info = mysql_get_table_object(thd, table->db, table->table_name, false);
             if (table_info == NULL) 
                 continue;
 
@@ -13467,6 +14488,11 @@ int mysql_extract_update_tables(
                   table_info->table_name, &thd->ddl_rollback);
                 table_rt->drop_table_rollback = (str_t*)my_malloc(sizeof(str_t), MY_ZEROFILL);
                 str_init(table_rt->drop_table_rollback);
+                /* 因为show create table出来的语句中，没有库名，所以
+                 * 在这里显式的加上use db语句 */
+                str_append(table_rt->drop_table_rollback, "use ");
+                str_append(table_rt->drop_table_rollback, table_info->db_name);
+                str_append(table_rt->drop_table_rollback, ";\n");
                 str_append(table_rt->drop_table_rollback, str_get(&thd->ddl_rollback));
                 str_truncate_0(&thd->ddl_rollback);
             }
@@ -13518,10 +14544,21 @@ int mysql_check_command(THD *thd)
     LEX  *lex= thd->lex;
     SELECT_LEX *select_lex= &lex->select_lex;
     TABLE_LIST *first_table= select_lex->table_list.first;
+    sql_cache_node_t* sql_cache_node;
     
     thd->thread_state = INCEPTION_STATE_CHECKING;
     DBUG_ENTER("mysql_check_command");
 
+    sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
+    if (sql_cache_node == NULL)
+    {
+        my_error(ER_OUTOFMEMORY, MYF(0));
+        DBUG_RETURN(true);
+    }
+
+    mysql_extract_update_tables(thd, sql_cache_node);
+
+    thd->current_sql_cache_node = sql_cache_node;
     select_lex->context.resolve_in_table_list_only(select_lex->table_list.first);
     lex->first_lists_tables_same();
     thd->timestamp_count=0;
@@ -13985,7 +15022,7 @@ int inception_transfer_execute_store_simple(
 
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(mi->datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
@@ -14001,7 +15038,7 @@ int inception_transfer_execute_store_simple(
         sql_print_warning("insert the transfer_data failed: %s, SQL: %s", 
             mysql_error(mysql), sql);
         inception_transfer_set_errmsg(thd, mi->datacenter, 
-            ER_TRANSFER_INTERRUPT_DC, thd->get_stmt_da()->message());
+            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
         DBUG_RETURN(TRUE);
     }
 
@@ -14020,7 +15057,7 @@ int inception_mts_insert_commit_positions(
     DBUG_ENTER("inception_mts_insert_commit_positions");
 
     thd = datacenter->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
@@ -14118,7 +15155,7 @@ int inception_transfer_execute_store_with_transaction(
 
     mi->datacenter->thread_stage = transfer_write_datacenter;
     thd = mi->thd;
-    if ((mysql= thd->get_transfer_connection()) == NULL)
+    if ((mysql= thd->get_transfer_connection(datacenter->datacenter_name)) == NULL)
     {
        	sql_print_warning("write the datacenter failed, get connection failed: %s", 
             thd->get_stmt_da()->message());
@@ -14148,25 +15185,28 @@ int inception_transfer_execute_store_with_transaction(
         goto rollback;
     }
 
-    str_truncate_0(backup_sql);
-
-    str_append(backup_sql, "UPDATE ");
-    sprintf(tmp_buf, "`%s`.`master_positions` set id=%lld, tid=%lld, \
-        create_time=from_unixtime(%ld), binlog_file='%s', binlog_position=%lld \
-        where datacenter_epoch = '%s' and thread_sequence='%p'", datacenter->datacenter_name,
-        thd->event_id, thd->transaction_id, ev->get_time()+ev->exec_time, 
-        (char*)mi->get_master_log_name(), mi->get_master_log_pos(), 
-        datacenter->datacenter_epoch, datacenter);
-
-    str_append(backup_sql, tmp_buf);
-
-    if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
+    if (ev)
     {
-        sql_print_warning("write the datacenter failed, insert failed: %s", 
-            mysql_error(mysql));
-        inception_transfer_set_errmsg(thd, mi->datacenter, 
-            ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
-        goto rollback;
+        str_truncate_0(backup_sql);
+
+        str_append(backup_sql, "UPDATE ");
+        sprintf(tmp_buf, "`%s`.`master_positions` set id=%lld, tid=%lld, \
+            create_time=from_unixtime(%ld), binlog_file='%s', binlog_position=%lld \
+            where datacenter_epoch = '%s' and thread_sequence='%p'", datacenter->datacenter_name,
+            thd->event_id, thd->transaction_id, ev->get_time()+ev->exec_time, 
+            (char*)mi->get_master_log_name(), mi->get_master_log_pos(), 
+            datacenter->datacenter_epoch, datacenter);
+
+        str_append(backup_sql, tmp_buf);
+
+        if (mysql_real_query(mysql, str_get(backup_sql), str_get_len(backup_sql)))
+        {
+            sql_print_warning("write the datacenter failed, insert failed: %s", 
+                mysql_error(mysql));
+            inception_transfer_set_errmsg(thd, mi->datacenter, 
+                ER_TRANSFER_INTERRUPT_DC, mysql_error(mysql));
+            goto rollback;
+        }
     }
 
     goto commit;
@@ -14528,7 +15568,7 @@ ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql)
     DBUG_RETURN(len - 1);
 }
 
-ulong mysql_read_event(MYSQL* mysql)
+ulong mysql_read_event(THD* thd, MYSQL* mysql)
 {
     ulong len;
     DBUG_ENTER("mysql_read_event");
@@ -14540,6 +15580,8 @@ ulong mysql_read_event(MYSQL* mysql)
         DBUG_RETURN(packet_error);
     }
 
+    /* update the timer if read from net */
+    thd->set_timer();
     /* Check if eof packet */
     if (len < 8 && mysql->net.read_pos[0] == 254)
     {
@@ -15257,10 +16299,12 @@ mysql_unpack_row(
             if (null_bits & null_mask)
             {
                 table_info->null_arr[i] = TRUE;
+                field->is_created_from_null_item = TRUE;
             }
             else
             {
                 table_info->null_arr[i] = FALSE;
+                field->is_created_from_null_item = FALSE;
                 uint16 const metadata= tabledef->field_metadata(i);
                 pack_ptr= field->unpack(field->ptr, pack_ptr, metadata, TRUE);
             }
@@ -15338,6 +16382,31 @@ mysql_dup_char(
 }
 
 void
+mysql_char_escape(
+    char* src,
+    str_t* dest,
+    char* escape_char
+)
+{
+    char* p = src;
+    while (*src)
+    {
+        if ((*src == escape_char[0] && (p == src || *(src-1)!='\\')) ||
+           (*src == escape_char[0] && (src > p && *(src-1)=='\\')))
+        {
+            // str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, escape_char);
+        }
+        else
+        {
+            str_append_1(dest, src);
+        }
+        src++;
+    }
+}
+
+void
 mysql_dup_char_with_escape(
     char* src,
     str_t* dest,
@@ -15348,22 +16417,15 @@ mysql_dup_char_with_escape(
     char* p = src;
     while (*src)
     {
-        if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
-        {
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, escape_char);
-        }
-        else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
-        {
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, escape_char);
-        }
         //if the curr is \n or \r\n, then replace
-        else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
+        if (*src == '\n')
         {
             str_append(dest, "<br/>");
+        }
+        else if (*src == '\r' && *(src+1) == '\n')
+        {
+            str_append(dest, "<br/>");
+            src++;//omit the  \n
         }
         else if ((*src=='\\' && *(src+1) == 'n'))
         {
@@ -15371,27 +16433,65 @@ mysql_dup_char_with_escape(
             str_append(dest, "<br/>");
             src++;//omit the n after "\"
         }
-        else if ((*src=='\\' && *(src+1) == 'n'))
+        else if (*src == escape_char[0])
         {
-            //if the string is \n explictly, example aaaa \\n aaaaa
-            str_append(dest, "<br/>");
-            src++;//omit the n after "\"
-        }
-        else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
-                ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
-        {//'
+            /* 因为有两层用途，一层是MySQL的转义，一层是JSON的转义 */
             str_append_1(dest, "\\");
-            str_append_1(dest, chr);
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
         }
-        else if ((*src=='\\' && *(src+1) == '\\'))
+        else if (*src == chr[0])
         {
-            //if the string is \n explictly, example aaaa \\n aaaaa
             str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            str_append_1(dest, "\\");
-            src++;//omit the n after "\"
+            str_append_1(dest, src);
         }
+        else if (*src == '\\')
+        {
+            /* 因为有两层用途，一层是MySQL的转义，一层是JSON的转义 */
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
+        }
+        // else if (*src == escape_char[0] && (p == src || *(src-1)!='\\'))
+        // {
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, escape_char);
+        // }
+        // else if (*src == escape_char[0] && (src > p && *(src-1)=='\\'))
+        // {
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, escape_char);
+        // }
+        // //if the curr is \n or \r\n, then replace
+        // else if (*src == '\n' || (*src == '\r' && *(src+1) == '\n'))
+        // {
+        //     str_append(dest, "<br/>");
+        // }
+        // else if ((*src=='\\' && *(src+1) == 'n'))
+        // {
+        //     //if the string is \n explictly, example aaaa \\n aaaaa
+        //     str_append(dest, "<br/>");
+        //     src++;//omit the n after "\"
+        // }
+        // else if (*src == chr[0] && (p == src || (*(src-1) != '\\') ||
+        //         ((*(src-1) == '\\') && *(src-2) == '\\' && src-p>=2)))
+        // {//'
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, chr);
+        // }
+        // else if ((*src=='\\' && *(src+1) == '\\'))
+        // {
+        //     //if the string is \n explictly, example aaaa \\n aaaaa
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     str_append_1(dest, "\\");
+        //     src++;//omit the n after "\"
+        // }
         else
         {
             str_append_1(dest, src);
@@ -15419,7 +16519,7 @@ int mysql_get_field_string_for_tranfer(
     String buffer((char*) buff,sizeof(buff),&my_charset_bin);
     String buffer2((char*) buff,sizeof(buff),&my_charset_bin);
 
-    if (null_arr[field_index])
+    if (field->is_created_from_null_item)
     {
         str_append(backup_sql, "NULL");
         append_flag = FALSE;
@@ -15444,6 +16544,7 @@ int mysql_get_field_string_for_tranfer(
         case MYSQL_TYPE_MEDIUM_BLOB://16m
         case MYSQL_TYPE_LONG_BLOB://4G
         case MYSQL_TYPE_BLOB://65K
+        case MYSQL_TYPE_JSON:
         case MYSQL_TYPE_STRING:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_VARCHAR:
@@ -15592,6 +16693,7 @@ int mysql_get_field_string(
         case MYSQL_TYPE_MEDIUM_BLOB://16m
         case MYSQL_TYPE_LONG_BLOB://4G
         case MYSQL_TYPE_BLOB://65K
+        case MYSQL_TYPE_JSON:
         case MYSQL_TYPE_STRING:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_VARCHAR:
@@ -15727,8 +16829,8 @@ int mysql_execute_backup_info_insert_sql(
     sprintf(tmp_buf, "%d,", sql_cache_node->end_binlog_pos);
     backup_sql->append(tmp_buf);
 
-    dupcharsql = (char*)my_malloc(strlen(sql_cache_node->sql_statement) * 2 + 1, MYF(0));
-    memset(dupcharsql, 0, strlen(sql_cache_node->sql_statement) * 2 + 1);
+    dupcharsql = (char*)my_malloc(strlen(sql_cache_node->sql_statement) * 2 + 1, MY_ZEROFILL);
+    // memset(dupcharsql, 0, strlen(sql_cache_node->sql_statement) * 2 + 1);
     mysql_dup_char(sql_cache_node->sql_statement, dupcharsql, '\'');
     backup_sql->append("\'");
     backup_sql->append(dupcharsql);
@@ -16361,6 +17463,7 @@ int mysql_prepare_field(
     charset = get_charset(sql_field->charsetnr, MYF(0));
     if (f_is_blob(sql_field->pack_flag) ||
         f_is_enum(sql_field->pack_flag) ||
+        f_is_json(sql_field->pack_flag) ||
         sql_field->real_type == MYSQL_TYPE_SET)
     {
         pack_length = calc_pack_length(sql_field->real_type, sql_field->max_length);
@@ -16376,6 +17479,15 @@ int mysql_prepare_field(
         if (charset->state & MY_CS_BINSORT)
             sql_field->pack_flag|=FIELDFLAG_BINARY;
         sql_field->length=8;   // Unireg field length
+        sql_field->unireg_check=Field::BLOB_FIELD;
+        break;
+    case MYSQL_TYPE_JSON:
+        // JSON fields are stored as BLOBs.
+        sql_field->pack_flag=FIELDFLAG_JSON |
+        pack_length_to_packflag(pack_length - portable_sizeof_char_ptr);
+        if (charset->state & MY_CS_BINSORT)
+            sql_field->pack_flag|=FIELDFLAG_BINARY;
+        sql_field->length=8;                        // Unireg field length
         sql_field->unireg_check=Field::BLOB_FIELD;
         break;
     case MYSQL_TYPE_VARCHAR:
@@ -16439,7 +17551,7 @@ FIELDFLAG_ZEROFILL : 0) |
     DBUG_RETURN(0);
 }
 
-int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
+int mysql_alloc_record(THD* thd, table_info_t* table_info, MYSQL *mysql)
 {
     char   set_format[256];
     MYSQL_RES *  source_res;
@@ -16480,6 +17592,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
     if (LIST_GET_LEN(table_info->field_lst) != source_res->field_count)
     {
         table_info->doignore = INCEPTION_DO_IGNORE;
+        mysql_free_result(source_res);//出错释放资源
         DBUG_RETURN(true);
     }
 
@@ -16492,10 +17605,20 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
             field_info->real_type = MYSQL_TYPE_NEWDATE;
         field_info->flags = field->flags;
         field_info->decimals = field->decimals;
-
+        field_info->field_length =field->length;
+        if (field->length > MAX_DATETIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_DATETIME)
+            field_info->real_type = MYSQL_TYPE_DATETIME2;
+        if (field->length > MAX_DATETIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_TIMESTAMP)
+            field_info->real_type = MYSQL_TYPE_TIMESTAMP2;
+        if (field->length > MAX_TIME_WIDTH &&
+            field_info->real_type == MYSQL_TYPE_TIME)
+            field_info->real_type = MYSQL_TYPE_TIME2;
+        
         field_info->charsetnr = field->charsetnr;
-        field_info->max_length = calc_pack_length(field->type,field->length);
-
+        field_info->max_length = calc_pack_length(field_info->real_type,field->length);
+        
         //调整最大长度，根据表定义的字符集来调整
         if (field_info->charset)
         {
@@ -16506,12 +17629,12 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
             field_info->charsetnr = field_info->charset->number;
         }
 
-        max_length += calc_pack_length(field->type,field_info->max_length);
+        max_length += calc_pack_length(field_info->real_type,field_info->max_length);
         mysql_prepare_field(field_info);
 
         field_info = LIST_GET_NEXT(link, field_info);
     }
-
+    
     table_info->record = (uchar*)my_malloc(ALIGN_SIZE(max_length), MY_ZEROFILL);
     table_info->null_arr = (char*)my_malloc(mysql_num_fields(source_res) + 1, MY_ZEROFILL);
 
@@ -16521,7 +17644,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
     {
         field = &source_res->fields[i];
         field_info->field_ptr = table_info->record + max_length;
-        max_length += calc_pack_length(field->type,field_info->max_length);
+        max_length += calc_pack_length(field_info->real_type,field_info->max_length);
         field_info = LIST_GET_NEXT(link, field_info);
     }
 
@@ -16534,7 +17657,7 @@ int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql)
         field_def = make_field(NULL, field_info->field_ptr, field_info->max_length,
             (uchar *)"Hello world", false, field_info->pack_flag,
             field_info->real_type, get_charset(field_info->charsetnr, MYF(0)),
-            geom_type, Field::NONE, NULL, field_info->field_name, NULL);
+            geom_type, Field::NONE, NULL, field_info->field_name, thd->mem_root);
 
         if (field_def != NULL)
         {
@@ -16689,7 +17812,7 @@ int mysql_backup_single_statement(
     {
         ulong event_len;
 
-        event_len = mysql_read_event(mysql);
+        event_len = mysql_read_event(thd, mysql);
         event_buf= (char*)mysql->net.read_pos + 1;
 
         if (event_len == 0)//end of packet
@@ -16702,9 +17825,15 @@ int mysql_backup_single_statement(
                 mysql_errno(mysql) == ER_OUT_OF_RESOURCES)
                 goto error;
 
-            if (retrycount++ <= 3)
+            if (++retrycount <= 3)
             {
                 //从当前语句BINLOG位置开始重试3次，如果3次都失败则退出
+                sql_print_warning("Dump binlog error: '%s', retry: %d",
+                    thd->get_stmt_da()->message(), retrycount);
+                thd->clear_error();
+                thd->close_all_connections();
+                mysql = thd->get_audit_connection();
+                mysql_get_master_version(mysql, mi);
                 if (mysql_request_binlog_dump(mysql, sql_cache_node->start_binlog_file,
                       sql_cache_node->start_binlog_pos, 0))
                     goto error;
@@ -16724,8 +17853,9 @@ int mysql_backup_single_statement(
         delete evlog;
 
         if (log_pos != 0 &&
-            strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) == 0 &&
-            log_pos >= (my_off_t)sql_cache_node->end_binlog_pos)
+            ((strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) == 0 &&
+            log_pos >= (my_off_t)sql_cache_node->end_binlog_pos) ||
+            strcasecmp(sql_cache_node->end_binlog_file, mi->get_master_log_name()) < 0))
         {
             break;
         }
@@ -17052,6 +18182,17 @@ int mysql_execute_alter_table_osc(
     sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_time);
     oscargv[count++] = strdup(cmd_line);
 
+    if (thd->variables.inception_osc_chunk_size)
+    {
+        oscargv[count++] = strdup("--chunk-size");
+        sprintf(cmd_line, "%lu", thd->variables.inception_osc_chunk_size);
+        oscargv[count++] = strdup(cmd_line);
+    }
+
+    oscargv[count++] = strdup("--chunk-size-limit");
+    sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_size_limit);
+    oscargv[count++] = strdup(cmd_line);
+
     oscargv[count++] = strdup("--critical-load");
     sprintf(cmd_line, "Threads_connected:%lu,Threads_running:%lu", 
         thd->variables.inception_osc_critical_connected, 
@@ -17081,6 +18222,9 @@ int mysql_execute_alter_table_osc(
 
     if (!thd->variables.inception_osc_check_alter)
         oscargv[count++] = strdup("--no-check-alter");
+
+    if (!thd->variables.inception_osc_check_unique_key_change)
+        oscargv[count++] = strdup("--no-check-unique-key-change");
 
     sprintf(cmd_line, "--alter-foreign-keys-method=%s", 
         osc_alter_foreign_keys_method[thd->variables.inception_alter_foreign_keys_method]);
@@ -17149,6 +18293,7 @@ int mysql_execute_alter_table_osc(
         DBUG_RETURN(true);
     }
         
+    proc.wait();
     if(mysql_osc_execute_abort_check(thd, sql_cache_node))
         DBUG_RETURN(true);
 
@@ -17234,11 +18379,23 @@ int mysql_execute_statement(
 
     if (sql_cache_node->use_osc)
     {
-        if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+        if (sql_cache_node->alter_table_method == osc_method_build_in_osc)
         {
-            sprintf(sql_cache_node->execute_time, "%.3f",
-                (double)(start_timer() - timer) / CLOCKS_PER_SEC);
-            DBUG_RETURN(true);
+            if (mysql_execute_alter_table_biosc(thd, mysql, statement, sql_cache_node))
+            {
+                sprintf(sql_cache_node->execute_time, "%.3f",
+                    (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+                DBUG_RETURN(true);
+            }
+        }
+        else if (sql_cache_node->alter_table_method == osc_method_pt_osc)
+        {
+            if (mysql_execute_alter_table_osc(thd, mysql, statement, sql_cache_node))
+            {
+                sprintf(sql_cache_node->execute_time, "%.3f",
+                    (double)(start_timer() - timer) / CLOCKS_PER_SEC);
+                DBUG_RETURN(true);
+            }
         }
     }
     else
@@ -17250,6 +18407,7 @@ int mysql_execute_statement(
             my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
             DBUG_RETURN(true);
         }
+        sql_cache_node->exe_complete = TRUE;
     }
 
     sprintf(sql_cache_node->execute_time, "%.3f",  
@@ -17264,7 +18422,6 @@ int mysql_execute_statement(
             DBUG_RETURN(true);
     }
 
-    sql_cache_node->exe_complete = TRUE;
     time(&sql_cache_node->exec_time);
 
     DBUG_RETURN(false);
@@ -17372,7 +18529,7 @@ mysql_execute_progress_update(
             "on duplicate key update sequence=values(sequence), status=values(status),"
             "errcode = values(errcode), message=values(message), dbname=values(dbname)", 
             REMOTE_INCPEITON_DB, inception_get_task_sequence(thd), 
-            seqno, stage, errrno, errmsg, env_dbname);
+            seqno, stage, errrno, env_dbname);
     }
 
     mysql_execute_remote_backup_sql(thd, sql);
@@ -17496,7 +18653,8 @@ int mysql_execute_all_statement(THD* thd)
     while (!thd->killed && sql_cache_node != NULL)
     {
         if (sql_cache_node->optype != SQLCOM_INCEPTION &&
-            (exe_err = mysql_remote_execute_command(thd, mysql, sql_cache_node)) == TRUE)
+            (exe_err = mysql_remote_execute_command(thd, 
+                  thd->get_audit_connection(), sql_cache_node)) == TRUE)
             break;
 
         mysql_sleep(thd);
@@ -17563,7 +18721,7 @@ int mysql_alloc_cache_table_record_low(THD *thd, sql_cache_node_t* sql_cache_nod
     {
         table_info = table_rt->table_info; 
         if (table_info && mysql_sql_cache_is_valid(sql_cache_node))
-            if(mysql_alloc_record(table_info, thd->get_audit_connection()))
+            if(mysql_alloc_record(thd, table_info, thd->get_audit_connection()))
                 return TRUE;
 
         table_rt = LIST_GET_NEXT(link, table_rt);
@@ -17669,10 +18827,18 @@ int mysql_execute_commit(THD *thd)
                     if ((mysql = thd->get_audit_connection()) == NULL)
                         goto error;
 
+                    /* set the current_execute to current backup sqlnode */
+                    thd->current_execute = sql_cache_node;
                     //如果一条语句备份失败了，则要重新请求一次，对下一条语句做备份
                     if(mysql_backup_sql(thd, mi, mysql, sql_cache_node) && next_sql_cache_node)
-                        mysql_request_binlog_dump(mysql, next_sql_cache_node->start_binlog_file,
-                          next_sql_cache_node->start_binlog_pos, 0);
+                    {
+                        //清理第一次dump binlog留下的资源
+                        thd->close_audit_connections();
+                        mysql_get_master_version(thd->get_audit_connection(), mi);
+                        mysql_request_binlog_dump(thd->get_audit_connection(),
+                                                  next_sql_cache_node->start_binlog_file,
+                                                  next_sql_cache_node->start_binlog_pos, 0);
+                    }
 
                     sql_cache_node = next_sql_cache_node;
                 }
@@ -17772,6 +18938,7 @@ int get_sql_mode(THD*  thd, char* sqlmode)
     if (!strlen(sqlmode))
         return false; 
 
+    mysql_mutex_lock(&isql_option_mutex);
     sql_mode = (char*)my_malloc(strlen(sqlmode)+1, MY_ZEROFILL);
     strcpy(sql_mode, sqlmode);
     if ((strToken = strtok(sql_mode, ",")) == NULL)
@@ -17787,9 +18954,11 @@ int get_sql_mode(THD*  thd, char* sqlmode)
     }
 
 err:
+    mysql_mutex_unlock(&isql_option_mutex);
     my_free(sql_mode);
     return false;
 }
+
 int mysql_get_remote_variables(THD* thd)
 {
     char set_format[1024];
@@ -17804,7 +18973,7 @@ int mysql_get_remote_variables(THD* thd)
         DBUG_RETURN(ER_NO);
 
     sprintf(set_format, "show variables where \
-        Variable_name in ('explicit_defaults_for_timestamp', 'sql_mode');");
+        Variable_name in ('explicit_defaults_for_timestamp', 'sql_mode', 'wsrep_on');");
     if (mysql_real_query(mysql, set_format, strlen(set_format)))
     {
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
@@ -17817,6 +18986,7 @@ int mysql_get_remote_variables(THD* thd)
         DBUG_RETURN(ER_NO);
     }
 
+    thd->galera_node = false;
     source_row = mysql_fetch_row(source_res);
     while(source_row)
     {
@@ -17824,6 +18994,8 @@ int mysql_get_remote_variables(THD* thd)
             thd->variables.explicit_defaults_for_timestamp=strcmp("OFF", source_row[1]) ? 1 : 0;
         else if (strcasecmp(source_row[0], "sql_mode") == 0)
             get_sql_mode(thd, source_row[1]);
+        else if (strcasecmp(source_row[0], "wsrep_on") == 0)
+            thd->galera_node = strcmp("OFF", source_row[1]) ? true : false;
 
         source_row = mysql_fetch_row(source_res);
     }
@@ -17929,11 +19101,11 @@ int mysql_need_source_info(THD *thd)
 int mysql_cache_deinit_task(THD* thd)
 {
     task_progress_t* task_node;
-
-    if (!inception_get_task_sequence(thd))
-        return false;
-
     DBUG_ENTER("mysql_cache_deinit_task");
+
+    if (!inception_get_task_sequence(thd) || !thd->add_task)
+        DBUG_RETURN(false);
+
     mysql_mutex_lock(&task_mutex);
     task_node = LIST_GET_FIRST(global_task_cache.task_lst);
     while (task_node)
@@ -17951,7 +19123,7 @@ int mysql_cache_deinit_task(THD* thd)
     }
 
     mysql_mutex_unlock(&task_mutex);
-    return false;
+    DBUG_RETURN(false);
 }
 
 int mysql_cache_new_task(THD* thd)
@@ -17977,6 +19149,7 @@ int mysql_cache_new_task(THD* thd)
         task_node = LIST_GET_NEXT(link, task_node);
     }
 
+    thd->add_task =  true;
     task_node = (task_progress_t*)my_malloc(sizeof(task_progress_t), MY_ZEROFILL);
     strcpy(task_node->sequence, inception_get_task_sequence(thd));
     LIST_ADD_LAST(link, global_task_cache.task_lst, task_node);
@@ -18104,6 +19277,7 @@ int handle_fatal_signal_low(THD* thd)
     sql_cache_node = thd->current_execute;
     my_safe_printf_stderr("Query (%p): ", thd->query());
     my_safe_printf_stderr(thd->query(), MY_MIN(2048U, thd->query_length()));
+    my_safe_printf_stderr("\n ");
 
     if (sql_cache_node)
         my_safe_printf_stderr("Current DB Name: %s\n", sql_cache_node->env_dbname); 
@@ -18134,14 +19308,8 @@ int handle_fatal_signal_low(THD* thd)
     return false;
 }
 
-int mysql_deinit_sql_cache(THD* thd)
+int mysql_deinit_query_print_cache(THD* thd)
 {
-    sql_cache_node_t*  sql_cache_node;
-    sql_cache_node_t*  sql_cache_node_next;
-    split_cache_node_t* split_cache_node;
-    split_cache_node_t* split_cache_node_next;
-    split_table_t*      split_table;
-    split_table_t*      split_table_next;
     check_rt_t*   query_rt;
     check_rt_t*   query_rt_next;
     query_print_cache_node_t * query_print_cache_node;
@@ -18151,7 +19319,57 @@ int mysql_deinit_sql_cache(THD* thd)
     table_rt_t*                 table_rt;
     table_rt_t*                 table_rt_next;
 
-    DBUG_ENTER("mysql_deinit_sql_cache");
+    if (inception_get_type(thd) != INCEPTION_TYPE_PRINT ||
+        thd->query_print_cache == NULL)
+        return false;
+
+    query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
+    while (query_print_cache_node != NULL)
+    {
+        query_print_cache_node_next = LIST_GET_NEXT(link, query_print_cache_node);
+        str_deinit(query_print_cache_node->sql_statements);
+        str_deinit(query_print_cache_node->query_tree);
+        str_deinit(query_print_cache_node->errmsg);
+
+        query_rt = LIST_GET_FIRST(query_print_cache_node->rt_lst);
+        while(query_rt)
+        {
+            query_rt_next = LIST_GET_NEXT(link, query_rt);
+            LIST_REMOVE(link, query_print_cache_node->rt_lst, query_rt);
+
+            table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
+            while(table_rt)
+            {
+                table_rt_next = LIST_GET_NEXT(link, table_rt);
+                LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+                if (table_rt->derived)
+                    mysql_table_info_free(table_rt->table_info);
+                my_free(table_rt);
+                table_rt = table_rt_next;
+            }
+
+            my_free(query_rt);
+            query_rt = query_rt_next;
+        }
+
+        my_free(query_print_cache_node);
+        query_print_cache_node = query_print_cache_node_next;
+    }
+
+    my_free(thd->query_print_cache);
+    thd->query_print_cache= NULL;
+
+    return false;
+}
+
+int mysql_deinit_split_cache(THD* thd)
+{
+    split_cache_node_t* split_cache_node;
+    split_cache_node_t* split_cache_node_next;
+    split_table_t*      split_table;
+    split_table_t*      split_table_next;
+
+    DBUG_ENTER("mysql_deinit_split_cache");
 
     if (thd->split_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_SPLIT) {
         split_cache_node = LIST_GET_FIRST(thd->split_cache->field_lst);
@@ -18183,15 +19401,27 @@ int mysql_deinit_sql_cache(THD* thd)
         str_deinit(&thd->setnames);
     }
 
-    mysql_cache_deinit_task(thd);
-    thd->current_execute = NULL;
-    str_deinit(thd->errmsg);
-    my_free(thd->errmsg);
-    thd->errmsg = NULL;
-    if (thd->sql_cache == NULL)
-    {
-        DBUG_RETURN(FALSE);
-    }
+    DBUG_RETURN(FALSE);
+}
+
+
+int mysql_deinit_sql_cache_low(THD* thd)
+{
+    sql_cache_node_t*  sql_cache_node;
+    sql_cache_node_t*  sql_cache_node_next;
+    check_rt_t*   query_rt;
+    check_rt_t*   query_rt_next;
+    table_rt_t*                 table_rt;
+    table_rt_t*                 table_rt_next;
+    sql_table_t*                tables;
+    int j;
+
+    DBUG_ENTER("mysql_deinit_sql_cache_low");
+
+    if ((inception_get_type(thd) != INCEPTION_TYPE_CHECK && 
+        inception_get_type(thd) != INCEPTION_TYPE_EXECUTE) ||
+        thd->sql_cache == NULL)
+        DBUG_RETURN(false);
 
     sql_cache_node = LIST_GET_FIRST(thd->sql_cache->field_lst);
     while (sql_cache_node != NULL)
@@ -18236,6 +19466,52 @@ int mysql_deinit_sql_cache(THD* thd)
             query_rt = query_rt_next;
         }
 
+        tables = &sql_cache_node->tables;
+        str_deinit(&tables->db_names);
+        str_deinit(&tables->full_table_names);
+        str_deinit(&tables->backup_dbnames);
+        str_deinit(&tables->table_names);
+
+        table_rt = LIST_GET_FIRST(tables->table_lst);
+        while (table_rt)
+        {
+            table_rt_next = LIST_GET_NEXT(link, table_rt);
+            LIST_REMOVE(link, tables->table_lst, table_rt);
+            if (table_rt->drop_table_rollback)
+            {
+                str_deinit(table_rt->drop_table_rollback);
+                my_free(table_rt->drop_table_rollback);
+                table_rt->drop_table_rollback = NULL;
+            }
+
+            my_free(table_rt);
+            table_rt = table_rt_next;
+        }
+
+        str_deinit(sql_cache_node->osc_select_columns);
+        str_deinit(sql_cache_node->osc_insert_columns);
+        j = 0;
+        while (sql_cache_node->primary_keys && 
+            sql_cache_node->primary_keys[j])
+        {
+            my_free(sql_cache_node->primary_keys[j]);
+            j++;
+        }
+
+        j = 0;
+        while (sql_cache_node->new_primary_keys && 
+            sql_cache_node->new_primary_keys[j])
+        {
+            my_free(sql_cache_node->new_primary_keys[j]);
+            j++;
+        }
+        if (sql_cache_node->primary_keys)
+            my_free(sql_cache_node->new_primary_keys);
+        if (sql_cache_node->new_primary_keys)
+            my_free(sql_cache_node->primary_keys);
+        str_deinit(sql_cache_node->pk_string);
+        my_free(sql_cache_node->pk_string);
+
         my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
         sql_cache_node = sql_cache_node_next;
@@ -18243,88 +19519,29 @@ int mysql_deinit_sql_cache(THD* thd)
 
     my_free(thd->sql_cache);
     thd->sql_cache = NULL;
+    DBUG_RETURN(false);
+}
+
+int mysql_deinit_sql_cache(THD* thd)
+{
+    DBUG_ENTER("mysql_deinit_sql_cache");
+
+    mysql_deinit_split_cache(thd);
+    mysql_deinit_query_print_cache(thd);
+    mysql_deinit_sql_cache_low(thd);
+    mysql_cache_deinit_task(thd);
+
+    thd->current_execute = NULL;
+    if (thd->errmsg)
+    {
+        str_deinit(thd->errmsg);
+        my_free(thd->errmsg);
+        thd->errmsg = NULL;
+    }
 
     str_deinit(thd->show_result);
     my_free(thd->show_result);
     thd->show_result = NULL;
-
-    if (thd->query_print_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_PRINT)
-    {
-        query_print_cache_node = LIST_GET_FIRST(thd->query_print_cache->field_lst);
-        while (query_print_cache_node != NULL)
-        {
-            query_print_cache_node_next = LIST_GET_NEXT(link, query_print_cache_node);
-            str_deinit(query_print_cache_node->sql_statements);
-            str_deinit(query_print_cache_node->query_tree);
-            str_deinit(query_print_cache_node->errmsg);
-
-            query_rt = LIST_GET_FIRST(query_print_cache_node->rt_lst);
-            while(query_rt)
-            {
-                query_rt_next = LIST_GET_NEXT(link, query_rt);
-                LIST_REMOVE(link, query_print_cache_node->rt_lst, query_rt);
-
-                table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
-                while(table_rt)
-                {
-                    table_rt_next = LIST_GET_NEXT(link, table_rt);
-                    LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
-                    if (table_rt->derived)
-                        mysql_table_info_free(table_rt->table_info);
-                    my_free(table_rt);
-                    table_rt = table_rt_next;
-                }
-
-                my_free(query_rt);
-                query_rt = query_rt_next;
-            }
-
-            my_free(query_print_cache_node);
-            query_print_cache_node = query_print_cache_node_next;
-        }
-        my_free(thd->query_print_cache);
-        thd->query_print_cache= NULL;
-    }
-    
-    if (thd->format_cache != NULL && inception_get_type(thd) == INCEPTION_TYPE_FORMAT)
-    {
-        format_cache_node = LIST_GET_FIRST(thd->format_cache->field_lst);
-        while (format_cache_node != NULL)
-        {
-            format_cache_node_next = LIST_GET_NEXT(link, format_cache_node);
-            str_deinit(format_cache_node->sql_statements);
-            str_deinit(format_cache_node->format_sql);
-            str_deinit(format_cache_node->errmsg);
-            
-            query_rt = LIST_GET_FIRST(format_cache_node->rt_lst);
-            while (query_rt)
-            {
-                query_rt_next = LIST_GET_NEXT(link, query_rt);
-                LIST_REMOVE(link, format_cache_node->rt_lst, query_rt);
-                
-                table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
-                while(table_rt)
-                {
-                    table_rt_next = LIST_GET_NEXT(link, table_rt);
-                    LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
-                    if (table_rt->derived)
-                        mysql_table_info_free(table_rt->table_info);
-                    my_free(table_rt);
-                    table_rt = table_rt_next;
-                }
-                
-                my_free(query_rt);
-                query_rt = query_rt_next;
-            }
-            
-            my_free(format_cache_node);
-            format_cache_node = format_cache_node_next;
-        }
-        my_free(thd->format_cache);
-        thd->format_cache= NULL;
-    }
-
-    mysql_free_db_object(thd);
 
     DBUG_RETURN(FALSE);
 }

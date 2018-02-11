@@ -20,6 +20,16 @@
 #include "sql_acl.h"                            /* GLOBAL_ACLS */
 #include "rpl_mi.h"
 
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
+
 class Comp_creator;
 class Item;
 class Object_creation_ctx;
@@ -49,6 +59,8 @@ enum enum_mysql_completiontype {
 #define INCEPTION_STATE_BACKUP          4
 #define INCEPTION_STATE_DEINIT          5
 #define INCEPTION_STATE_SEND            6
+
+
 
 extern "C" int test_if_data_home_dir(const char *dir);
 
@@ -193,7 +205,7 @@ int mysql_check_item( THD* thd, Item* item, st_select_lex *select_lex);
 int print_item(THD* thd, query_print_cache_node_t*   query_node, str_t* print_str, Item* item, st_select_lex *select_lex);
 int mysql_execute_commit(THD *thd);
 void mysql_free_all_table_definition(THD*  thd);
-int mysql_alloc_record(table_info_t* table_info, MYSQL *mysql);
+int mysql_alloc_record(THD* thd, table_info_t* table_info, MYSQL *mysql);
 int mysql_check_binlog_format(THD* thd, char* binlogformat);
 int mysql_get_master_version(MYSQL* mysql, Master_info* mi);
 int mysql_request_binlog_dump( MYSQL*  mysql, char*  file_name, int   binlog_pos, int server_id_in);
@@ -212,6 +224,18 @@ int mysql_unpack_row(
     uchar const **const row_end,
     uchar const *const row_end_ptr, 
     int update_after);
+str_t* str_init(str_t* str);
+str_t* str_truncate_0(str_t* str);
+void str_deinit(str_t* str);
+str_t* str_append_1( str_t*  str, const char* new_string);
+str_t* str_append( str_t*  str, const char* new_string);
+char* str_get(str_t* str);
+int str_get_len(str_t* str);
+str_t* str_append_with_length( str_t*  str, const char* new_string, int len);
+int register_slave_on_master(MYSQL* mysql, bool *suppress_warnings, int server_id_in);
+char* mysql_get_alter_table_post_part( THD*  thd, char* statement, int ignore);
+bool setup_connection_thread_globals(THD *thd);
+int inception_init_slave_thread(THD* thd);
 bool parse_sql(THD *thd, Parser_state *parser_state, Object_creation_ctx *creation_ctx);
 ulong mysql_read_event_for_transfer(Master_info* mi, MYSQL* mysql);
 void free_tables_to_lock(Master_info*	mi);
@@ -239,5 +263,16 @@ int mysql_check_dml_query_tables(THD* thd);
 uint mysql_get_explain_info(THD* thd, MYSQL*  mysql, char*  select_sql, explain_info_t** explain_ret, int report_err, char* dbname);
 int mysql_anlyze_explain(THD* thd, explain_info_t* explain);
 int mysql_dup_char( char* src, char* dest, char chr);
+void mysql_data_seek2(MYSQL_RES *result, my_ulonglong row);
+int mysql_execute_alter_table_biosc( THD* thd, MYSQL* mysql, char* statement, sql_cache_node_t* sql_cache_node);
+int inception_execute_sql_with_retry( THD* thd, char* tmp, char* var_sql);
+int mysql_binlog_position_compare( char* binlog_file_1, int   binlog_pos_1, char* binlog_file_2, int   binlog_pos_2);
+MYSQL* inception_init_binlog_connection( char* hostname, int port, char* username, char* password);
+int mysql_execute_sql_with_retry( THD* thd, MYSQL* mysql, char* tmp, my_ulonglong* affected_rows);
+ulong start_timer(void);
+void mysql_errmsg_append_sql_cache( THD * thd, sql_cache_node_t* sql_cache);
+void mysql_sqlcachenode_errmsg_append(THD* thd, sql_cache_node_t* node, int type) ;
+int inception_transfer_write_table_map( Master_info* mi, transfer_cache_t* datacenter, table_info_t*     table_info);
+int mysql_osc_execute_abort_check(THD* thd, sql_cache_node_t* sql_cache_node);
 
 #endif /* SQL_PARSE_INCLUDED */

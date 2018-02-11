@@ -48,11 +48,19 @@
 #include "mysql.h"
 #include <functional>
 
-// Added by michael.li
 #include <string>
 
-
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
+
+#if defined(__WIN__)
+#include <time.h>
+#else
+#include <sys/times.h>
+#ifdef _SC_CLK_TCK        // For mit-pthreads
+#undef CLOCKS_PER_SEC
+#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
+#endif
+#endif
 
 #define OPTION_CPY(OPTION_TO,OPTION_FROM)\
 do{\
@@ -292,6 +300,17 @@ extern "C" char *thd_query_with_length(MYSQL_THD thd);
 //     char    datacenter_name[FN_LEN+1];
 // };
 //
+typedef struct inception_conn_struct inception_conn_t;
+struct inception_conn_struct{
+  MYSQL mysql;
+  char  user[USERNAME_CHAR_LENGTH + 1];
+  char  passwd[MAX_PASSWORD_LENGTH + 1];
+  char  host[HOSTNAME_LENGTH + 1];
+  uint port;
+  ulong wait_timeout;
+  ulong start_timer;
+};
+
 typedef struct check_rt_struct check_rt_t;
 typedef LIST_BASE_NODE_T(check_rt_t) rt_lst_t;
 
@@ -320,11 +339,14 @@ typedef struct field_info_struct field_info_t;
 struct field_info_struct
 {
     char    field_name[NAME_CHAR_LEN + 1];
+    char    keyname[NAME_CHAR_LEN + 1];
+    uint    key_seq;
     uint    primary_key;
     uint    nullable;
     uint    auto_increment;
     char    data_type[FN_LEN + 1];
     uint    max_length;
+    uint    field_length;
     enum enum_field_types real_type;
     uint    pack_flag;
     uint    flags;
@@ -335,15 +357,18 @@ struct field_info_struct
     uint    unireg_check;
     uint    length;
     uint    decimals;      /* Number of decimals in field */
-
+    uint    unsigned_flag;
+    
     uchar*    field_ptr;
     CHARSET_INFO *charset;
 
     int     cache_new;
-    uint    fixed;        
 
     // for optimize
     longlong cardinality;
+    int     is_deleted;
+    //œ¬√Ê «ƒ⁄¥Ê÷–µƒ÷µ
+    uint    fixed;        //±Ì æ «∑Ò“—æ≠¥¶¿Ìπ˝¡À
 
     LIST_NODE_T(field_info_t) link;
 };
@@ -430,6 +455,46 @@ struct source_info_space_struct
     enum enum_inception_optype optype;
 };
 
+typedef struct mts_thread_queue_struct mts_thread_queue_t;
+struct mts_thread_queue_struct
+{
+    mysql_mutex_t       element_lock;
+    str_t               sql_buffer;
+    volatile int        valid;
+    int                 commit_event;
+    str_t               commit_sql_buffer;
+    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
+    volatile longlong   eid;
+    volatile longlong   tid;
+    time_t              timestamp;
+};
+
+typedef struct mts_thread_struct mts_thread_t;
+struct mts_thread_struct
+{
+    mts_thread_queue_t* thread_queue;
+    volatile int        enqueue_index;
+    volatile int        dequeue_index;
+    volatile longlong   last_eid;
+    volatile longlong   last_tid;
+    void*               datacenter;
+    volatile int        thread_stage;
+    volatile longlong   event_count;
+    volatile longlong   delete_rows;
+    volatile longlong   insert_rows;
+    volatile longlong   update_rows;
+};
+
+typedef struct mts_struct mts_t;
+struct mts_struct
+{
+    //只要有一个线程有问题，就需要其它线程也退出
+    int                 mts_running;
+    mts_thread_t*       mts_thread;
+    mysql_cond_t        mts_cond;
+    mysql_mutex_t       mts_lock;
+};
+
 typedef struct table_rt_struct table_rt_t;
 struct table_rt_struct 
 {
@@ -450,6 +515,13 @@ struct check_rt_struct
     LIST_NODE_T(check_rt_t)                 link;
 };
 
+typedef struct slave_addr_struct slave_addr_t;
+struct slave_addr_struct
+{
+    int         port;
+    char        hostname[FN_REFLEN];
+    LIST_NODE_T(slave_addr_t)                 link;
+};
 
 typedef struct sql_table_struct sql_table_t;
 struct sql_table_struct
@@ -464,6 +536,7 @@ struct sql_table_struct
 typedef struct sql_cache_node_struct sql_cache_node_t;
 struct sql_cache_node_struct
 {
+    THD*        thd;
     char*       sql_statement;
     str_t*      ddl_rollback;
     char        start_binlog_file[FN_REFLEN];
@@ -482,6 +555,7 @@ struct sql_cache_node_struct
     int         stage;//±Ì æµΩƒƒ∏ˆΩ◊∂Œ¡À
     int         errlevel;
     int         use_osc;
+    int         alter_table_method;
     str_t*      stagereport;
     my_ulonglong   affected_rows;
     char        execute_time[NAME_CHAR_LEN]; //执行所用时间 
@@ -492,6 +566,38 @@ struct sql_cache_node_struct
     rt_lst_t*   rt_lst;
 
     sql_table_t tables;
+
+    /* FOR ALTER TABLE SQL START... */
+    char        biosc_new_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
+    char        biosc_old_tablename[NAME_CHAR_LEN]; //内置OSC新旧表名 
+    char**      primary_keys;
+    char**      new_primary_keys;
+    str_t*      pk_string;
+    /* 0表示没有完成，1表示已经完成，2表示出错中止了 */
+    volatile    int         biosc_copy_complete;
+    char        current_binlog_file[FN_REFLEN];
+    int         current_binlog_pos;
+    mysql_mutex_t       osc_lock;
+    volatile bool osc_complete;
+    volatile bool osc_abort;
+    volatile bool rename_timeout;
+    volatile int  dump_on;
+    mysql_cond_t stop_cond;
+    volatile int rename_connectionid;
+    mysql_cond_t rename_ready_cond;
+    mysql_cond_t alter_status;
+    mts_thread_t* mts_queue;
+    mts_thread_queue_t* current_element;
+    ulonglong start_lock_time ;
+    pthread_t binlog_catch_threadid;
+    THD*        binlog_catch_thread;
+    ulonglong   total_rows;
+    char        rename_table[NAME_CHAR_LEN]; //执行所用时间 
+    char        rename_db[NAME_CHAR_LEN]; //执行所用时间 
+    str_t*        osc_select_columns;
+    str_t*        osc_insert_columns;
+    LIST_BASE_NODE_T(slave_addr_t)  slave_lst;
+    /* FOR ALTER TABLE SQL END... */
 
     LIST_NODE_T(sql_cache_node_t) link;
 };
@@ -517,42 +623,6 @@ public:
     FILE* pipe () { return io_;  }
     int   error() { return err_; }
     int   wait ();
-};
-
-typedef struct mts_thread_queue_struct mts_thread_queue_t;
-struct mts_thread_queue_struct
-{
-    mysql_mutex_t       element_lock;
-    str_t               sql_buffer;
-    volatile int        valid;
-    int                 commit_event;
-    str_t               commit_sql_buffer;
-    char binlog_hash[CRYPT_MAX_PASSWORD_SIZE + 1];
-    volatile longlong   eid;
-    volatile longlong   tid;
-};
-
-typedef struct mts_thread_struct mts_thread_t;
-struct mts_thread_struct
-{
-    mts_thread_queue_t* thread_queue;
-    volatile int        enqueue_index;
-    volatile int        dequeue_index;
-    volatile longlong   last_eid;
-    volatile longlong   last_tid;
-    void*               datacenter;
-    volatile int        thread_stage;
-    volatile longlong   event_count;
-};
-
-typedef struct mts_struct mts_t;
-struct mts_struct
-{
-    //只要有一个线程有问题，就需要其它线程也退出
-    int                 mts_running;
-    mts_thread_t*       mts_thread;
-    mysql_cond_t        mts_cond;
-    mysql_mutex_t       mts_lock;
 };
 
 enum transfer_option_enum{
@@ -731,6 +801,8 @@ struct transfer_cache_struct
     struct tm     stop_time_space;
     volatile int  thread_stage;
 
+    mysql_cond_t sleep_cond;
+    mysql_mutex_t sleep_lock;
     long          time_diff;
     volatile int           transfer_on;
     volatile int           abort_slave;
@@ -758,6 +830,8 @@ struct transfer_cache_struct
 //    int queue_length;
     //for qps stat
     time_t start_time;
+    longlong table_memsize;
+    longlong sqlbuffer_memsize;
     longlong events_count;
     longlong trx_count;
     longlong eps;
@@ -787,6 +861,7 @@ struct transfer_cache_struct
     char    current_time[FN_LEN+1];
     //use to record the slaves's binlog positions, to wirte the ha info
     LIST_BASE_NODE_T(transfer_cache_t) slave_lst;
+    int slave_first_set; // if false, then set not consider the option_list, only once
     
     //for row event primary key columns
     ddl_cache_t* ddl_cache;
@@ -1035,6 +1110,7 @@ class thread_info
     int dest_port;
     int state;
     char progress[64];
+    char current_db[64];
     CSET_STRING query_string;
     CSET_STRING query_string_e;
 };
@@ -1430,8 +1506,11 @@ typedef struct system_variables
   double inception_osc_chunk_time;
   bool inception_osc_drop_old_table;
   bool inception_osc_drop_new_table;
+  bool inception_biosc_drop_old_table;
+  bool inception_biosc_drop_new_table;
   bool inception_osc_check_replication_filters;
   bool inception_osc_check_alter;
+  bool inception_osc_check_unique_key_change;
   ulong inception_alter_foreign_keys_method;
   ulong inception_osc_chunk_size;
   ulong inception_osc_max_running;
@@ -1440,6 +1519,12 @@ typedef struct system_variables
   ulong inception_osc_critical_connected;
   ulong inception_osc_min_table_size;
   bool inception_format_sql_full_path;
+  int inception_biosc_lock_table_max_time;
+  int inception_biosc_lock_wait_timeout;
+  ulong inception_alter_table_method;
+  int inception_biosc_retry_wait_time;
+  int inception_biosc_min_delay_time;
+  int inception_biosc_check_delay_period;
 
 } SV;
 
@@ -3740,6 +3825,7 @@ public:
   longlong last_update_event_id;
   THD* query_thd;
   sinfo_space_t* thd_sinfo;
+  int galera_node;/* galera cluster node */
   int timestamp_count;//timestamp column count in one table
   uint have_error_before;
   uint check_error_before;//÷¥–– ±£¨ºÏ≤ÈΩ◊∂Œ «≤ª «”–¥ÌŒÛ
@@ -3748,6 +3834,7 @@ public:
 
   char* sql_statement;//±Ì æ¡Ÿ ±¥Ê¥¢’Ê’˝µƒsql”Ôæ‰£¨“≤æÕ «»•µÙ‘¥–≈œ¢µƒ≤ø∑÷
   int have_begin;
+  int add_task;
   
   sql_statistic_t sql_statistic;
   sql_cache_t* sql_cache;
@@ -3773,10 +3860,14 @@ public:
   int             useflag;//use temporary where set names utf8, when analyze next statement, reset it
   int          setnamesflag;//the same to above;
   str_t*        show_result;
+
+  str_t*        osc_select_columns;
+  str_t*        osc_insert_columns;
   rt_lst_t      *rt_lst;
   str_t*        query_print_tree;
   volatile      int thread_state;
   sql_cache_node_t*  current_execute;
+  sql_cache_node_t*  current_sql_cache_node;
   mysql_mutex_t   sleep_lock;
   mysql_cond_t    sleep_cond;
 
@@ -4829,31 +4920,27 @@ private:
 
 public:
   MYSQL* get_audit_connection();
+  int set_timer();
   MYSQL* get_backup_connection();
-  MYSQL* get_transfer_connection();
   MYSQL* get_collector_connection();
+  MYSQL* get_transfer_connection(char* datacenter_name);
   void close_all_connections();
+  void close_audit_connections();
 
 private:
   bool init_audit_connection();
   bool audit_conn_inited;
-  struct {
-    MYSQL mysql;
-    char  user[USERNAME_CHAR_LENGTH + 1];
-    char  passwd[MAX_PASSWORD_LENGTH + 1];
-    char  host[HOSTNAME_LENGTH + 1];
-    uint port;
-  } audit_conn;
 
+  inception_conn_t audit_conn;
   bool init_backup_connection();
   bool backup_conn_inited;
   bool init_transfer_connection();
   bool transfer_conn_inited;
   bool init_collector_connection();
   bool collector_conn_inited;
-  MYSQL backup_conn;
-  MYSQL transfer_conn;
   MYSQL collector_conn;
+  inception_conn_t backup_conn;
+  inception_conn_t transfer_conn;
 };
 
 
@@ -6096,8 +6183,8 @@ int mysql_format_set(THD* thd);
 int mysql_format_not_support(THD* thd);
 double my_rnd(struct rand_struct *rand_st);
 int handle_fatal_signal_low(THD* thd);
-
 int inception_collector_execute(THD* thd);
+ulong start_timer(void);
 #endif /* MYSQL_SERVER */
 
 #endif /* SQL_CLASS_INCLUDED */

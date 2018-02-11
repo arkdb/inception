@@ -200,7 +200,7 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_BLOB_KEY_WITHOUT_LENGTH, "BLOB/TEXT column \'%-.192s\' used in key specification without a key length");
     SERVER_SETMSG(ER_PRIMARY_CANT_HAVE_NULL, "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead");
     SERVER_SETMSG(ER_TOO_MANY_ROWS, "Result consisted of more than one row");
-    SERVER_SETMSG(ER_REQUIRES_PRIMARY_KEY, "This table type requires a primary key");
+    SERVER_SETMSG(ER_REQUIRES_PRIMARY_KEY, "Table \'%-.192s\'.\'%-.192s\' requires a primary key");
     SERVER_SETMSG(ER_NO_RAID_COMPILED, "This version of MySQL is not compiled with RAID support");
     SERVER_SETMSG(ER_UPDATE_WITHOUT_KEY_IN_SAFE_MODE, "You are using safe update mode and you tried to update a table without a WHERE that uses a KEY column");
     SERVER_SETMSG(ER_KEY_DOES_NOT_EXITS, "Key \'%-.192s\' doesn\'t exist in table \'%-.192s\'");
@@ -1021,6 +1021,48 @@ bool init_errmessage(void)
     SERVER_SETMSG(ER_COLLECTOR_INSTANCE_ON, "inception collector instance: \'%s\' is on, you should set off before.");
     SERVER_SETMSG(ER_INDEX_USED_TRUNCATE, "Only %d columns can been used in Index: \'%s\'.\'%s\'.");
 
+    SERVER_SETMSG(ER_TOO_MANY_STATEMENTS, "There is too many statements in one task, max %d allowed.");
+    SERVER_SETMSG(ER_INVALID_JSON_CHARSET, "Invalid json charset. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_TEXT_IN_PARAM, "Invalid json text in parm. %d, %d, \'%s\' , %d, \'%s\'");
+    SERVER_SETMSG(ER_INVALID_TYPE_FOR_JSON, "Invalid type for json. %d, \'%s\'");
+    SERVER_SETMSG(ER_JSON_VALUE_TOO_BIG, "Json value is too big.");
+    SERVER_SETMSG(ER_JSON_DOCUMENT_TOO_DEEP, "Json document is too deep.");
+    SERVER_SETMSG(ER_JSON_KEY_TOO_BIG, "Json key is too big.");
+    SERVER_SETMSG(ER_INVALID_JSON_BINARY_DATA, "Invalid json binary data.");
+    SERVER_SETMSG(ER_NUMERIC_JSON_VALUE_OUT_OF_RANGE, "Numeric json value out of range. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_VALUE_FOR_CAST, "Invalid json value for cast. \'%s\'");
+    SERVER_SETMSG(ER_STD_BAD_ALLOC_ERROR, "STD bad alloc error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_DOMAIN_ERROR, "STD domain error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_LENGTH_ERROR, "STD length error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_INVALID_ARGUMENT, "STD invalid argument. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_OUT_OF_RANGE_ERROR, "STD out of range error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_OVERFLOW_ERROR, "STD overflow error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_RANGE_ERROR, "STD range error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_UNDERFLOW_ERROR, "STD underflow error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_LOGIC_ERROR, "STD logic error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_RUNTIME_ERROR, "STD runtime error. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_STD_UNKNOWN_EXCEPTION, "STD unknown exception. \'%s\'， \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH, "Invalid json path. %d， \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH_WILDCARD, "Invalid json path wildcard. ");
+    SERVER_SETMSG(ER_JSON_BAD_ONE_OR_ALL_ARG, "Json bad one or all arg. \'%s\'");
+    SERVER_SETMSG(ER_INVALID_JSON_TEXT, "Invalid json text. \'%s\', %d, \'%s\'");
+    SERVER_SETMSG(ER_INVALID_CAST_TO_JSON, "Invalid cast tp json. ");
+    SERVER_SETMSG(ER_INVALID_JSON_PATH_ARRAY_CELL, "Invalid json path array cell. ");
+    SERVER_SETMSG(ER_JSON_DOCUMENT_NULL_KEY, "Json document null key. ");
+    SERVER_SETMSG(ER_JSON_VACUOUS_PATH, "Json vacuous path. ");
+    SERVER_SETMSG(ER_INCORRECT_TYPE, "Incorrect type. \'%s\', \'%s\'");
+    SERVER_SETMSG(ER_CREATE_THREAD_ERROR, "Create thread error: \'%s\'.");
+    SERVER_SETMSG(ER_BUILD_IN_OSC_NOT_SUPPORT, "Include not supported alter table type "
+        "using build-in-osc, please switch to other method.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_MODIFY, "Primary keys changed in table \'%s\'.\'%s\', "
+        "the data will been lost possibly after altered.");
+    SERVER_SETMSG(ER_PRIMARY_KEY_LOST, "After the table \'%s\'.\'%s\' altered, "
+        "there is no primary keys, it can not been altered.");
+    SERVER_SETMSG(ER_OSC_RENAME_TABLE, "Alter table Rename to can not use "
+        "osc(build-in-osc, pt-osc), please use rename table statement directly");
+    SERVER_SETMSG(ER_OSC_ABORT, "Alter table abort: %s");
+    SERVER_SETMSG(ER_QUERY_EVENT_FOUND, "Found the query event (binlog_format == STATEMENT ?) when alter table: \'%s\', \'%s\'");
+    
 	/* Register messages for use with my_error(). */
     if (my_error_register(get_server_errmsgs, ER_ERROR_FIRST, ER_ERROR_LAST))
     {

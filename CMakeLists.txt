@@ -189,7 +189,9 @@ INCLUDE(configure.cmake)
 
 # Common defines and includes
 ADD_DEFINITIONS(-DHAVE_CONFIG_H)
-INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/include)
+INCLUDE_DIRECTORIES(
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+    ${CMAKE_SOURCE_DIR}/extra/rapidjson/include)
 
 
 # Add bundled or system zlib.

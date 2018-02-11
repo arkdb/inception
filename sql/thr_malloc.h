@@ -20,6 +20,7 @@
 
 typedef struct charset_info_st CHARSET_INFO;
 typedef struct st_mem_root MEM_ROOT;
+typedef unsigned int PSI_memory_key;
 
 void init_sql_alloc(MEM_ROOT *root, uint block_size, uint pre_alloc_size);
 void *sql_alloc(size_t);

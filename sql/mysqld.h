@@ -36,6 +36,8 @@ struct scheduler_functions;
 typedef struct st_mysql_const_lex_string LEX_CSTRING;
 typedef struct st_mysql_show_var SHOW_VAR;
 
+extern PSI_memory_key key_memory_JSON;
+
 /*
   This forward declaration is used from C files where the real
   definition is included before.  Since C does not allow repeated
@@ -165,6 +167,7 @@ extern ulong inception_max_update_rows;
 extern ulong inception_max_keys;
 extern bool inception_enable_not_innodb;
 extern char* inception_support_charset;
+extern char* inception_slave_ports_range;
 extern bool inception_check_table_comment;
 extern bool inception_check_column_comment;
 extern bool inception_check_primary_key;
@@ -213,6 +216,7 @@ extern ulong inception_transfer_parallel_workers;
 // extern double inception_osc_chunk_size_limit;
 // extern bool inception_osc_drop_new_table;
 // extern bool inception_osc_drop_old_table;
+extern ulong inception_max_allowed_statements;
 
 extern char *inception_collector_host;
 extern char *inception_collector_user;

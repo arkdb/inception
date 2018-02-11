@@ -1829,6 +1829,13 @@ public:
 };
 
 
+enum enum_osc_method{
+  osc_method_build_in_osc = 0,
+  osc_method_pt_osc = 1, 
+  osc_method_direct_alter = 2,
+  osc_method_unspec=3  
+};
+
 enum enum_osc_recursion_method{
   recursion_method_processlist= 0,
   recursion_method_hosts=  1, 

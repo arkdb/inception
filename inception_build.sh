@@ -20,7 +20,7 @@ if [ $platform == "Xcode" ]
 then
     Gplatform="-G Xcode"
 else
-    makerule="make install"
+    makerule="make -j 24 install"
 fi
 
 if [ -d $debug_dir ]
@@ -31,8 +31,8 @@ else
   cd $debug_dir
 
   # cmake && make && make install
-  cmake -DWITH_DEBUG=yes -DWITH_ZLIB=system -DCMAKE_INSTALL_PREFIX=./mysql  -DMYSQL_DATADIR=./mysql/data \
-    -DWITH_SSL=bundled -DCMAKE_BUILD_TYPE=DEBUG -DWITH_ZLIB=bundled\
+  cmake -DWITH_DEBUG=off -DWITH_ZLIB=system -DCMAKE_INSTALL_PREFIX=./mysql  -DMYSQL_DATADIR=./mysql/data \
+    -DWITH_SSL=bundled -DCMAKE_BUILD_TYPE=RELEASE -DWITH_ZLIB=bundled\
     -DMY_MAINTAINER_CXX_WARNINGS="-Wall -Wextra -Wunused -Wwrite-strings -Wno-strict-aliasing  -Wno-unused-parameter -Woverloaded-virtual" \
     -DMY_MAINTAINER_C_WARNINGS="-Wall -Wextra -Wunused -Wwrite-strings -Wno-strict-aliasing -Wdeclaration-after-statement" \
     $Gplatform\

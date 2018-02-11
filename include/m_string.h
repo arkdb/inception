@@ -161,6 +161,15 @@ extern char *int10_to_str(long val,char *dst,int radix);
 extern char *str2int(const char *src,int radix,long lower,long upper,
 			 long *val);
 longlong my_strtoll10(const char *nptr, char **endptr, int *error);
+    
+static inline longlong my_strtoll(const char *nptr, char **endptr, int base)
+{
+#if defined _WIN32
+return _strtoi64(nptr, endptr, base);
+#else
+return strtoll(nptr, endptr, base);
+#endif
+}
 #if SIZEOF_LONG == SIZEOF_LONG_LONG
 #define ll2str(A,B,C,D) int2str((A),(B),(C),(D))
 #define longlong10_to_str(A,B,C) int10_to_str((A),(B),(C))

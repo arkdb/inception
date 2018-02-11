@@ -22,6 +22,7 @@
 #include "thr_malloc.h"                         /* sql_calloc */
 #include "item_func.h"             /* Item_int_func, Item_bool_func */
 #include "my_regex.h"
+#include "item_strfunc.h"
 
 extern Item_result item_cmp_type(Item_result a,Item_result b);
 class Item_bool_func2;
@@ -52,6 +53,15 @@ class Arg_comparator: public Sql_alloc
   bool try_year_cmp_func(Item_result type);
   static bool get_date_from_const(Item *date_arg, Item *str_arg,
                                   ulonglong *value);
+    
+    /**
+     Only used by compare_json() in the case where a JSON value is
+     compared to an SQL value. This member points to pre-allocated
+     memory that can be used instead of the heap when converting the
+     SQL value to a JSON value.
+     */
+    Json_scalar_holder *json_scalar;
+    
 public:
   DTCollation cmp_collation;
   /* Allow owner function to use string buffers. */
@@ -104,7 +114,8 @@ public:
   int compare_real_fixed();
   int compare_e_real_fixed();
   int compare_datetime();        // compare args[0] & args[1] as DATETIMEs
-
+  int compare_json();
+    
   static bool can_compare_as_dates(Item *a, Item *b, ulonglong *const_val_arg);
 
   Item** cache_converted_constant(THD *thd, Item **value, Item **cache,

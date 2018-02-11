@@ -58,6 +58,7 @@ Inception目前所支持的变量参数如下表所示：
 |inception_read_only|ON/OFF|OFF|设置当前Inception服务器是不是只读的，这是为了防止一些人具有修改权限的帐号时，通过Inception误修改一些数据，如果inception_read_only设置为ON，则即使开了enable-execute，同时又有执行权限，也不会去执行，审核完成即返回|
 |inception_check_identifier|ON/OFF|ON|打开与关闭Inception对SQL语句中各种名字的检查，如果设置为ON，则如果发现名字中存在除数字、字母、下划线之外的字符时，会报Identifier "invalidname" is invalid, valid options: [a-z,A-Z,0-9,_].|
 |inception_format_Sql_full_path|ON/OFF|OFF|这个参数是配合sql format功能使用。如果设置为ON，则打印出来的sql语句中的字段名是db.table.column_name形式;如果设置为OFF，则正常打印字段名。注意，如果use的db不存在或者mysql实例没开启，这个参数无效.|
+|inception_max_allowed_statements |1-204800|100000|用来设置Inception允许的在一个任务中最多的审核语句数，如果在分析过程中，发现数目比这个大，就会在"Global environment"信息中，报出" There is too many statements in one task, max 10 allowed"这样的错误，这里的设置是10条语句。如果实际审核的数目比设置的大，分析到设置值之后，其它的语句就不会再分析了，直接报错了，所以从结果中可以看到，结果集中加上最后一条"Global environment"，总共会包括inception_max_allowed_statements+1条。|
 
 -------
 

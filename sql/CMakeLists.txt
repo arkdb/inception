@@ -61,6 +61,9 @@ SET(SQL_SHARED_SOURCES
   item_timefunc.cc 
   item_xmlfunc.cc 
   item_inetfunc.cc
+  json_dom.cc
+  json_binary.cc
+  json_path.cc
   key.cc
   lock.cc
   log.cc
@@ -115,6 +118,7 @@ SET(SQL_SHARED_SOURCES
   optimize.cc
   sql_format.cc
   sql_collector.cc
+  sql_biosc.cc
   sql_plugin.cc
   sql_prepare.cc
   sql_rename.cc

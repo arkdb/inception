@@ -781,6 +781,34 @@ static Sys_var_charptr Sys_inception_support_charset(
     NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(check_charset));
 
+static bool check_port_range(sys_var *self, THD *thd, set_var *var)
+{
+    int     min_port;
+    int     max_port;
+
+    if (!var->value)
+        return false; 
+
+    if (var->save_result.string_value.length > 256)
+        return true;
+
+    sscanf(var->save_result.string_value.str, "%d:%d", &min_port, &max_port);
+    if (min_port > 0 && min_port > 0)
+        return false;
+    if (min_port > 32768 && min_port > 32768)
+        return true;
+
+    return true;
+}
+
+static Sys_var_charptr Sys_inception_slave_ports_range(
+    "inception_slave_ports_range",
+    "osc check slaves ports",
+    GLOBAL_VAR(inception_slave_ports_range),
+    CMD_LINE(REQUIRED_ARG), IN_FS_CHARSET, DEFAULT("3306:3321"),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(check_port_range));
+
 static Sys_var_mybool Sys_inception_check_table_comment(
     "inception_check_table_comment",
     "check comment when create table",
@@ -865,11 +893,11 @@ static Sys_var_mybool Sys_inception_check_autoincrement_name(
     GLOBAL_VAR(inception_check_autoincrement_name),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
-static Sys_var_mybool Sys_inception_merge_alter_table(
-    "inception_merge_alter_table",
-    "merge multi alter table statement for same table to only one",
-    GLOBAL_VAR(inception_merge_alter_table),
-    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+// static Sys_var_mybool Sys_inception_merge_alter_table(
+//     "inception_merge_alter_table",
+//     "merge multi alter table statement for same table to only one",
+//     GLOBAL_VAR(inception_merge_alter_table),
+//     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_enable_subselect(
     "inception_enable_subselect",
@@ -984,7 +1012,7 @@ static Sys_var_ulong Sys_inception_osc_chunk_size(
     "explicitly, however, then it disables the dynamic adjustment behavior and tries "
     "to make all chunks exactly the specified number of rows.",
     SESSION_VAR(inception_osc_chunk_size), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(1, 1024*1024), DEFAULT(1000), BLOCK_SIZE(1));
+    VALID_RANGE(0, 1024*1024), DEFAULT(1000), BLOCK_SIZE(1));
 
 static Sys_var_double Sys_inception_osc_chunk_size_limit(
     "inception_osc_chunk_size_limit",
@@ -1002,6 +1030,11 @@ static Sys_var_mybool Sys_inception_osc_drop_new_table(
     "Drop the new table if copying the original table fails.",
     SESSION_VAR(inception_osc_drop_new_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+static Sys_var_mybool Sys_inception_biosc_drop_new_table(
+    "inception_biosc_drop_new_table",
+    "Drop the new table if copying the original table fails.",
+    SESSION_VAR(inception_biosc_drop_new_table),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_format_sql_full_path(
     "inception_format_sql_full_path",
@@ -1014,6 +1047,15 @@ static Sys_var_mybool Sys_inception_osc_print_sql(
     "Print SQL statements to STDOUT. Specifying this option allows you to see "
     "most of the statements that the tool executes",
     GLOBAL_VAR(inception_osc_print_sql),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
+static Sys_var_mybool Sys_inception_biosc_drop_old_table(
+    "inception_biosc_drop_old_table",
+    "Drop the original table after renaming it. After the original table has been "
+    "successfully renamed to let the new table take its place, and if there are no "
+    "errors, the tool drops the original table by default. If there are any errors, "
+    "the tool leaves the original table in place.",
+    SESSION_VAR(inception_biosc_drop_old_table),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
 static Sys_var_mybool Sys_inception_osc_drop_old_table(
@@ -1067,6 +1109,14 @@ static Sys_var_mybool Sys_inception_osc_check_alter(
     SESSION_VAR(inception_osc_check_alter),
     CMD_LINE(OPT_ARG), DEFAULT(TRUE));
 
+static Sys_var_mybool Sys_inception_osc_check_unique_key_change(
+    "inception_osc_check_unique_key_change",
+    "Added the --check-unique-key-change option for pt-online-schema-change to"
+    "abort if the specified statement for --alter is trying to add a unique index. "
+    "This is supposed to avoid adding duplicate keys that might lead to silently losing data.",
+    SESSION_VAR(inception_osc_check_unique_key_change),
+    CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+
 const char *osc_alter_foreign_keys_method[]= 
 {"auto", "none", "rebuild_constraints", "drop_swap", NullS};
 
@@ -1112,3 +1162,49 @@ static Sys_var_ulong Sys_server_id(
     GLOBAL_VAR(server_id), CMD_LINE(REQUIRED_ARG, OPT_SERVER_ID),
     VALID_RANGE(2, UINT_MAX32), DEFAULT(2), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0));
+
+static Sys_var_int32 Sys_inception_biosc_lock_table_max_time(
+    "inception_biosc_lock_table_max_time",
+    "the max lock table period time when alter table ",
+    SESSION_VAR(inception_biosc_lock_table_max_time), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
+
+static Sys_var_int32 Sys_inception_biosc_rename_wait_timeout(
+    "inception_biosc_lock_wait_timeout",
+    "the wait timeout period when rename table, when timeout, then alter table retry ",
+    SESSION_VAR(inception_biosc_lock_wait_timeout), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024), DEFAULT(16), BLOCK_SIZE(1));
+
+const char *osc_method[]= {"build_in_osc", "pt_osc", "direct_alter", NullS};
+static Sys_var_enum Sys_inception_alter_table_method(
+    "inception_alter_table_method",
+    "alter table methods.",
+    SESSION_VAR(inception_alter_table_method), CMD_LINE(REQUIRED_ARG),
+    osc_method, DEFAULT(osc_method_build_in_osc), 
+    NO_MUTEX_GUARD, NOT_IN_BINLOG);
+
+static Sys_var_int32 Sys_inception_biosc_retry_wait_time(
+    "inception_biosc_retry_wait_time",
+    "the wait timeout period when rename table, when timeout, then alter table retry ",
+    SESSION_VAR(inception_biosc_retry_wait_time), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 100000), DEFAULT(100), BLOCK_SIZE(1));
+
+static Sys_var_int32 Sys_inception_biosc_min_delay_time(
+    "inception_biosc_min_delay_time",
+    "the minimun time period of delay time, when delay time is bigger then it, continue "
+    "to consume and wait the delay time less then this param",
+    SESSION_VAR(inception_biosc_min_delay_time), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 65535), DEFAULT(10), BLOCK_SIZE(1));
+
+static Sys_var_int32 Sys_inception_biosc_check_delay_period(
+    "inception_biosc_check_delay_period",
+    "the numbers of events to apply between two checks of delay time",
+    SESSION_VAR(inception_biosc_check_delay_period), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1024*1024), DEFAULT(10000), BLOCK_SIZE(1));
+static Sys_var_ulong Sys_inception_max_allowed_statements(
+    "inception_max_allowed_statements",
+    "the max statements allowed when check",
+    GLOBAL_VAR(inception_max_allowed_statements), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 204800), DEFAULT(100000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0));
+

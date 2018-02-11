@@ -115,16 +115,31 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
 
   case MYSQL_TYPE_DATE:
   case MYSQL_TYPE_TIME:
-  case MYSQL_TYPE_TIME2:
     return 3;
 
+  case MYSQL_TYPE_TIME2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 3;
+
   case MYSQL_TYPE_TIMESTAMP:
-  case MYSQL_TYPE_TIMESTAMP2:
     return 4;
 
+  case MYSQL_TYPE_TIMESTAMP2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 4;
+
   case MYSQL_TYPE_DATETIME:
-  case MYSQL_TYPE_DATETIME2:
     return 8;
+
+  case MYSQL_TYPE_DATETIME2:
+    if (metadata != 0)
+        return UINT_MAX;
+    else
+        return 8;
 
   case MYSQL_TYPE_BIT:
     /*
@@ -162,10 +177,11 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
 
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_GEOMETRY:
+  case MYSQL_TYPE_JSON:
     return uint_max(4 * 8);
 
   default:
-    return ~(uint32) 0;
+    return UINT_MAX;
   }
 }
 
@@ -315,6 +331,7 @@ uint32 table_def::calc_field_size(uint col, uchar *master_data) const
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_BLOB:
   case MYSQL_TYPE_GEOMETRY:
+  case MYSQL_TYPE_JSON:
   {
 #if 1
     /*
@@ -525,6 +542,10 @@ static void show_sql_type(enum_field_types type, uint16 metadata, String *str,
   case MYSQL_TYPE_GEOMETRY:
     str->set_ascii(STRING_WITH_LEN("geometry"));
     break;
+          
+  case MYSQL_TYPE_JSON:
+      str->set_ascii(STRING_WITH_LEN("json"));
+      break;
 
   default:
     str->set_ascii(STRING_WITH_LEN("<unknown type>"));
@@ -793,7 +814,8 @@ table_def::create_conversion_table(
     uint pack_length= 0;
     uint32 max_length=
       max_display_length_for_field(type(col), field_metadata(col));
-
+      if (max_length == UINT_MAX)
+          max_length = field_info->field_length;
     switch(type(col))
     {
       int precision;
@@ -825,6 +847,7 @@ table_def::create_conversion_table(
     case MYSQL_TYPE_MEDIUM_BLOB:
     case MYSQL_TYPE_LONG_BLOB:
     case MYSQL_TYPE_BLOB:
+    case MYSQL_TYPE_JSON:
     case MYSQL_TYPE_GEOMETRY:
       pack_length= field_metadata(col) & 0x00ff;
       break;
@@ -837,7 +860,7 @@ table_def::create_conversion_table(
                                   max_length,
                                   decimals,
                                   TRUE,         // maybe_null
-                                  FALSE,        // unsigned_flag
+                                  field_info->unsigned_flag,        // unsigned_flag
                                   pack_length);
     if (field_info->field)
         field_def->charset= field_info->field->charset();
@@ -893,6 +916,7 @@ table_def::table_def(unsigned char *types, ulong size,
       case MYSQL_TYPE_DOUBLE:
       case MYSQL_TYPE_FLOAT:
       case MYSQL_TYPE_GEOMETRY:
+      case MYSQL_TYPE_JSON:
       {
         /*
           These types store a single byte.

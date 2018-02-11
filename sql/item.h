@@ -25,6 +25,7 @@
 #include "field.h"                              /* Derivation */
 #include "sql_array.h"
 
+class Json_wrapper;
 class Protocol;
 struct TABLE_LIST;
 void item_init(void);			/* Init item functions */
@@ -654,6 +655,17 @@ class Item
   int8 is_expensive_cache;
   virtual bool is_expensive_processor(uchar *arg) { return 0; }
 
+protected:
+    /**
+     Sets the result value of the function an empty string, using the current
+     character set. No memory is allocated.
+     @retval A pointer to the str_value member.
+     */
+    String *make_empty_result() {
+        str_value.set("", 0, collation.collation);
+        return &str_value;
+    }
+    
 public:
   static void *operator new(size_t size) throw ()
   { return sql_alloc(size); }
@@ -1062,6 +1074,19 @@ public:
   */
   virtual bool val_bool();
   virtual String *val_nodeset(String*) { return 0; }
+    
+    bool error_json()
+    {
+        null_value= maybe_null;
+        return true;
+    }
+    
+    virtual bool val_json(Json_wrapper *result)
+    {
+        DBUG_ABORT();
+        my_error(ER_NOT_SUPPORTED_YET, MYF(0), "item type for JSON");
+        return error_json();
+    }
 
 protected:
   /* Helper functions, see item_sum.cc */
@@ -1081,6 +1106,46 @@ protected:
   longlong val_int_from_time();
   longlong val_int_from_datetime();
   double val_real_from_decimal();
+    
+    /**
+     Get the value to return from val_int() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_int() should return.
+     */
+    int error_int()
+    {
+        null_value= maybe_null;
+        return 0;
+    }
+    
+    /**
+     Get the value to return from val_real() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_real() should return.
+     */
+    double error_real()
+    {
+        null_value= maybe_null;
+        return 0.0;
+    }
+    
+    
+    /**
+     Get the value to return from val_str() in case of errors.
+     
+     @see Item::error_bool
+     
+     @return The value val_str() should return.
+     */
+    String *error_str()
+    {
+        null_value= maybe_null;
+        return null_value ? NULL : make_empty_result();
+    }
 
   /**
     Convert val_str() to date in MYSQL_TIME
@@ -2166,6 +2231,7 @@ public:
   longlong val_date_temporal();
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*);
+  bool val_json(Json_wrapper *result);
   double val_result();
   longlong val_int_result();
   longlong val_time_temporal_result();
@@ -3760,6 +3826,25 @@ public:
   type_conversion_status save_in_field(Field *field, bool no_conversions);
 };
 
+class Item_copy_json : public Item_copy
+{
+    Json_wrapper *m_value;
+protected:
+    virtual type_conversion_status save_in_field_inner(Field *field,
+                                                       bool no_conversions);
+public:
+    explicit Item_copy_json(Item *item);
+    virtual ~Item_copy_json();
+    virtual void copy();
+    virtual bool val_json(Json_wrapper *);
+    virtual String *val_str(String*);
+    virtual my_decimal *val_decimal(my_decimal *);
+    virtual double val_real();
+    virtual longlong val_int();
+    virtual bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate);
+    virtual bool get_time(MYSQL_TIME *ltime);
+    type_conversion_status save_in_field(Field *field, bool no_conversions);
+};
 
 class Item_copy_int : public Item_copy
 {
@@ -3888,6 +3973,16 @@ public:
   ~Cached_item_str();                           // Deallocate String:s
 };
 
+/// Cached_item subclass for JSON values.
+class Cached_item_json : public Cached_item
+{
+    Item *m_item;              ///< The item whose value to cache.
+    Json_wrapper *m_value;     ///< The cached JSON value.
+public:
+    explicit Cached_item_json(Item *item);
+    ~Cached_item_json();
+    bool cmp();
+};
 
 class Cached_item_real :public Cached_item
 {
@@ -4436,6 +4531,29 @@ public:
   void clear() { Item_cache::clear(); str_value_cached= FALSE; }
 };
 
+/// An item cache for values of type JSON.
+class Item_cache_json: public Item_cache
+{
+    Json_wrapper *m_value;
+public:
+    Item_cache_json();
+    ~Item_cache_json();
+    bool cache_value();
+    bool val_json(Json_wrapper *wr);
+    longlong val_int();
+    String *val_str(String *str);
+    Item_result result_type() const
+    {
+        if (!example)
+            return STRING_RESULT; // override default int
+        return Field::result_merge_type(example->field_type());
+    }
+    
+    double val_real();
+    my_decimal *val_decimal(my_decimal *val);
+    bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate);
+    bool get_time(MYSQL_TIME *ltime);
+};
 
 /*
   Item_type_holder used to store type. name, length of Item for UNIONS &
