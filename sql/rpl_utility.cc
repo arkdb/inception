@@ -731,7 +731,7 @@ table_def::compatible_with(THD *thd, Relay_log_info *rli,
   {
     Field *const field= field_info->field;
     int order=0;
-    if (field == NULL || can_convert_field_to(field, type(col), 
+    if (field == NULL || can_convert_field_to(field, type(col),
         field_metadata(col), rli, m_flags, &order, update_after))
     {
       DBUG_ASSERT(order >= -1 && order <= 1);
@@ -865,6 +865,7 @@ table_def::create_conversion_table(
     if (field_info->field)
         field_def->charset= field_info->field->charset();
     field_def->interval= interval;
+      field_def->pack_flag = field_info->pack_flag;
     field_info = LIST_GET_NEXT(link, field_info);
     col++;
   }
