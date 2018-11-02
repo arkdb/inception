@@ -1,5 +1,5 @@
-#Inception Gate运维手册
-##背景
+# Inception Gate运维手册
+## 背景
 
 -----------------
 Inception Gate是去哪儿网DBA部门开发的一款专门用来解决MySQL数据库异构数据实时同步问题的工具，目前，Qunar有两种这方面的需求：
@@ -7,7 +7,7 @@ Inception Gate是去哪儿网DBA部门开发的一款专门用来解决MySQL数�
 1. 对数据库表的更新做异构化，也就是将上层数据库表结构及存储方式不能满足应用需求，需要转换、数据清洗及提取等，存储到另一种表结构中，这种存储方式更适合应用程序访问计算等。
 2. 针对一些统计业务，每天都需要对某些表做统计，一般是在hadoop中计算，基于目前的方案，每天都需要大量的对MySQL数据库做全量数据的查询，先存储到hadoop中，然后才能计算，这样既浪费了很多时间，又对业务数据库产生影响，更重要的是，在数据库表日益增长的同时，每天查一次全量已经完全不能满足需求，增量又很难获取到，所以这就需要有一款异构实时数据同步的工具来解决这样的问题，这样统计可以随时进行，同时不会对业务数据库产生影响，完美解决问题。
 
-##架构介绍
+## 架构介绍
 
 -----------------
 ![](inception_images/inception_transfer_arch.png)
@@ -17,24 +17,24 @@ Inception Gate写入DC的方式是远程插入，是做为DC的客户端插入�
 
 在上面复制架构中，每一个复制，都是一个单独并且完全独立的通道，但是不同的通道，可以对应同一个数据库实例，那么在每新建一个通道时，都需要给对应的通道起一个名字，这个名字指的就是这个通道对应的DC名，在这个数据库实例中，其实就是一个数据库名字，那么多个通道时，这个数据库实例中，就会有多个数据库，Incpetion Gate会将所有拿到的Binlog解析后存储到各自对应的DC中。
 
-##使用模式
+## 使用模式
 
 -----------------
 Inception Gate是在Inception的基础上，实现的一个新的用来数据实时异构的工具，在运行模式、使用方式上具有异曲同工之妙的，之前Incpeiton已经支持了很多`inception etc. `之类的命令了，那么Inception Gate更是延序了这个特点，还是通过MySQL客气端，对Inception服务器做相应的操作，来实现数据的复制。
 
 操作方式，实际上和操作MySQL服务器是一模一样的，只是语句有所不同，Inception Gate是通过自己定义的伪SQL语句来访问，操作Inception服务器的，与MySQL服务器唯一的区别是，MySQL服务器本地是存储数据的，而Inception Gate服务器，本地是不存储的，它是轻量级的服务，它的数据是存储在一个与之一一对应的叫做“datacenter(DC)”的，这是一个普通的MySQL实例，在Incpeiton Gate启动之前，就需要通过配置参数配置好的，启动之后，不能修改，在使用时，所有的复制数据集都存储在这里面。
 
-##如何使用
+## 如何使用
 
 -----------------
-###登录Incpetion Gate服务器
+### 登录Incpetion Gate服务器
 Inception（Gate）服务器，和MySQL协议是兼容的，所以完全可以用MySQL客户端来直接连接Inception服务器，指定其host、PORT即可连接，Inception没有权限验证的，所以用户名密码是可以不指定的，或者可以随便指定，而如果想要限制Inception的访问，可以使用bind_address参数来指定。
 登录命令如下：
 ````
 mysql -udontcareme -pdontcareme -h127.0.0.1 -A -P9998
 ````
 
-###创建一个datacenter
+### 创建一个datacenter
 语法：
 ````
 create datacenter {dc_name};
@@ -52,7 +52,7 @@ transfer_sequence
 
 下面分别介绍每一个表的结构及作用：
 
-####instances
+#### instances
 这个表，用来存储这个datacenter中，要复制的主节点与从节点的配置信息，表结构如下：
 ````
 CREATE TABLE `instances` (
@@ -74,7 +74,7 @@ CREATE TABLE `instances` (
 * binlog_file：表示当前节点，在第一次开始复制时的位置，即起始位置，这个需要DBA手动通过相应命令（后面会一一介绍）去设置，如果不设置的话，Inception Gate会从对应的数据库实例上面取当前show master status;位置开始复制，或者如果之前已经复制过，则会从上次结束位置继续复制。
 * binlog_position：上面已经介绍过。
 
-####master_positions
+#### master_positions
 这个表，是用来存储在复制过程中，Binlog以事务为单位的结束位置，或者是一个开始位置，Binlog是以事务为一个组的，这里只存储一个组的开始/结束位置，为了记录复制的合法位置，因为除此之外，其它的位置都是不完整或者不可解析的。并且上面已经提到，如果之前已经复制过数据，则在下次再开始时，会从上次复制结束的位置开始，那么就是从这里来取这个位置的。
 ````
 CREATE TABLE `master_positions` (
@@ -95,7 +95,7 @@ CREATE TABLE `master_positions` (
 * binlog_file：表示当前事件Binlog的位置，这也是在复制中断之后，再次开始时默认的开始位置。
 * binlog_position：同上。
 
-####slave_positions
+#### slave_positions
 这个表，存储的是在instance中所记录的所有slave节点，在Master节点上分析到一个事务的结束位置时，会取一次Slave的unix_timestamp及show master status;位置，这个信息会存储到这个表中，这样是为了HA着想的，如果Master挂了，则会通过挂的时候，Binlog的时间，与这个表中的unix_timestamp值对比，只要取到比Binlog时间小的一个最大位置即可，切换之后，会从这个位置开始继续复制。
 ````
 CREATE TABLE `slave_positions` (
@@ -117,7 +117,7 @@ CREATE TABLE `slave_positions` (
 * binlog_file：通过show master status取回来的位置。
 * binlog_position：同上。
 
-####transfer_data
+#### transfer_data
 这个表，是用来真正的存储将Binlog翻译之后的数据的，直接看表结构：
 ````
 CREATE TABLE `transfer_data` (
@@ -145,7 +145,7 @@ CREATE TABLE `transfer_data` (
 * OPTYPE：这个列存储当前事件的操作类型，目前包括INSERT、UPDATE、DELETE、TRUNCATE、ALTERTABLE、RENAME、CREATETABLE。应用程序需要哪一种变更，就处理哪一种，否则可以直接忽略或者不查即可。
 * DATA，这个列，就是这个表的主角了，这里面存储的就是某一个Binlog事件，在翻译之后的信息，它的类型为大字段，内容格式为Json的。
 
-####transfer_checkpoint
+#### transfer_checkpoint
 ````
 CREATE TABLE `transfer_checkpoint` (
   `id` bigint(20) unsigned NOT NULL COMMENT 'eid',
@@ -161,7 +161,7 @@ CREATE TABLE `transfer_checkpoint` (
 
 简单而言，在应用程序使用过程中，只要把这个表中的id值记录为当前可以读取的最大位置即可。
 
-####transfer_filter
+#### transfer_filter
 这个表，是实现了Inception Gate的另一个功能，复制过滤功能，这里管理了复制白名单及黑名单信息，和MySQL复制的replicate_do_db及replicate_ignore_db类似，在这个表中，只要存储了do db的信息（白名单），那么黑名单信息失去了作用，因为只要有白名单，那么将会只复制白名单中的表，而如果不存在白名单信息的话，则在复制过程中，会忽略掉黑名单中的表信息，也就是遇到对这些表操作时，直接跳过即可。
 
 ````
@@ -176,7 +176,7 @@ CREATE TABLE `transfer_filter` (
 * table_name：同上。
 * type：这个列只有两个值，分别是"Do"和"Ignore"，表是的是白名单及黑名单。
 
-####transfer_sequence
+#### transfer_sequence
 这个表就是上面提到的Inception Gate维护的自增ID的表，意义都已经清楚，下面看表结构：
 ````
 CREATE TABLE `transfer_sequence` (
@@ -187,7 +187,7 @@ CREATE TABLE `transfer_sequence` (
 * idname：存储的只有两个值，分别是："ID"和"TID"，分别表示是事件id还是事务id。
 * sequence：表示的是，在Incepiton Gate中的当前datacenter中，当ID或者TID达到当前表中的值后，会自动更新为当前值加上一个参数配置的值，也就是为当前操作分配了一段空间，减少冲突。但也有可能会有空洞，但没关系。
 
-####transfer_option
+#### transfer_option
 这个表是用来存储复制涉及到的一些参数，下面是表结构：
 ````
 CREATE TABLE `transfer_option` (
@@ -199,7 +199,7 @@ PRIMARY KEY (`option_variable`)
 * option_variable：存储的是参数的名字。
 * option_value：存储的是参数的值。
 
-###增加复制节点信息
+### 增加复制节点信息
 语法：
 ````
 inception add {master|slave} instance {instance_name} 
@@ -209,7 +209,7 @@ for datacenter {dc_name};
 这个语句可以实现的功能是，在上面创建好的datacenter上面，增加一个复制节点，但第一次，只能增加master节点，并且在一个DC库中，只能有一个master节点，否则会报错。
 
 还有一点需要注意，加节点，不能在线动态加，需要在复制停止的状态下加，否则会报错。
-###设置复制位置信息
+### 设置复制位置信息
 语法：
 ````
 inception set transfer position('{binlog_file}',{binlog_position}) 
@@ -220,7 +220,7 @@ for  datacenter {dc_name};
 而在设置了之后，再次开始复制，或者首次开始复制，Inception Gate都会使用这个位置来做复制，而不会考虑其它位置信息。
 
 还有一点需要注意，设置位置信息，不能在线动态设置，需要在复制停止的状态下，否则会报错。
-###启动复制
+### 启动复制
 语法：
 ````
 inception start transfer for datacenter {dc_name} [with master_user '{replicate_user}' 
@@ -236,7 +236,7 @@ master_password '{replicate_password}'];
 * 之前已经复制到的位置，这个要依赖于在Inception Gate中对当前DC的信息缓存，也就是通过查看状态信息中看到的位置，如果有就从这个位置开始，如果没有，就走下面的方式。
 * 通过执行show master status;命令，来查看当前Master节点的最新位置，然后从这个位置开始复制。
 
-###停止复制
+### 停止复制
 语法：
 ````
 inception stop transfer for datacenter {dc_name}
@@ -245,7 +245,7 @@ inception stop transfer for datacenter {dc_name}
 
 在STOP之后，之前的复制信息都会缓存在Inception Gate中，包括位置信息，用户名密码等，所以再开始的时候，就可以使用上面提到的简单语句来执行了。
 
-###重置复制
+### 重置复制
 语法：
 ````
 inception {start|reset|stop|flush} transfer for datacenter {dc_name}
@@ -254,7 +254,7 @@ inception {start|reset|stop|flush} transfer for datacenter {dc_name}
 但是，如果是想彻底将DC信息清空，并且要从一个新的位置（自动从当前位置）开始复制时，可能需要手动去DC库中truncate一下master_positions表的数据，不然再次开始时，还会从这个表中找到相应的位置。
 如果想完全清空原来的复制信息，那还可以进一步手动将transfer_data表、slave_positions数据truncate掉。
 
-###查看主节点复制状态
+### 查看主节点复制状态
 在复制过程中，复制的状态对于DBA来说，是至关重要的，或者中断了，是因为什么错误导致的，都是需要通过这个状态信息来查看的，那么Inception Gate提供了这样的命令：
 
 语法：
@@ -270,7 +270,7 @@ inception get master status for datacenter {dc_name}
 * Sql_Buffer_Size：这个列是用来统计的，因为在Inception Gate内部是需要拼接SQL语句的，为了提高效率，这个拼接区是公用的，只会增大不会缩小，那么这里表示的是这个拼接区当前的大小，单位是字节。
 * Table_Cache_Elements：Incepiton内部在处理表的问题上面，是有缓存的，在复制时，都会在首次使用到这个表时，才去服务器上面获取表信息，那么这个列表示的是，当前已经缓存了多少个表了，目前这个缓存区只会增长不会缩小，并且也没有大小设置。
 
-###查看从节点复制状态
+### 查看从节点复制状态
 在查看主节时，显示了部分简单的从节点信息，但如果从节点真有总理了，则需要看看从节点的状态信息，此时可以通过下面的语句来查看：
 
 语法：
@@ -280,7 +280,7 @@ inception get slave status for datacenter {dc_name}
 ![](inception_images/gate_slave_status.png)
 上图显示的就是从节点状态信息，如果有多个从，则就显示是多行，但具体列信息的意义，这里就不做介绍了，一目了然。
 
-###启动/关闭从节点
+### 启动/关闭从节点
 有时候，就想将某一个从节点做采集了（可能比较少），那么可以主动关闭，这个是可以在线操作的。
 而如果，开始复制之后，发现从节点信息的获取是失败的（No），那在知道原因并且处理之后，需要主动去开启，此时就需要用到这个开启命令了。
 
@@ -290,7 +290,7 @@ inception get slave status for datacenter {dc_name}
 ````
 inception {stop|start} slave {instance_name} for datacenter {dc_name}
 ````
-###查看所有datacenter
+### 查看所有datacenter
 DBA肯定想在一上去某一个Inception Gate实例上面之后，看看当前实例承载着几个数据库的复制工作，就像是上去之后，首先来一个show databases;一样，那么Inception Gate也提供了这样的功能：
 
 语法：
@@ -301,7 +301,7 @@ inception get datacenter list;
 ![](inception_images/gatedclist.png)
 上图中所示的信息是一目了然的，不需要做过多介绍。
 
-###设置白/黑名单
+### 设置白/黑名单
 上面已经介绍过，Inception Gate支持复制过滤功能，而这些功能的运维是可以通过相应的命令来实现的，但前提是，这些设置需要在复制停止的过程中来设置的。
 
 语法：
@@ -317,7 +317,7 @@ incepiton add ignore table ('%', '\_%\_new') for datacenter dc_name;
 
 这里如果设置的是通配符的话，直接使用MySQL中Like操作的通配规则即可。这样比较适合DBA的思维。
 
-###查看白/黑名单
+### 查看白/黑名单
 在设置之后，要想知道当前有哪些黑名单或者白名单信息，除了去DC上面`select * from transfer_filter;`之外，还可以通过下面命令来实现：
 ````
 inception get {do|ignore} list for datacenter {dc_name} 
@@ -326,7 +326,7 @@ inception get {do|ignore} list for datacenter {dc_name}
 
 ![](inception_images/doignore.png)
 
-###参数设置
+### 参数设置
 这里可以设置一些复制相关的参数，比如复制的线程数，binlog过期时间和checkpoint时间周期等等。
 语法：
 ````
@@ -336,7 +336,7 @@ inception set variable_name=variable_value for datacenter {dc_name};
 设置失败的时候会返回具体错误原因，如：不是系统参数，参数值不在值范围内（同时会提示最大值和最小值）。
 
 
-##过期数据的清除
+## 过期数据的清除
 
 -----------------
 Inception Gate的模式是，从Master Dump Binlog过来分析组装之后，源源不断的向DC库中写入数据，那么时间长了，相当于是将所有Binlog又存储一份，这个数据库实例的大小那可是相当可观啊。
@@ -345,7 +345,7 @@ Incpetion Gate提供了一种自己删除数据的机制，只要复制在运行
 
 参数inception_transfer_binlog_expire_days是可以设置的，默认值是7天。
 
-##支持参数
+## 支持参数
 
 全局参数：
 
@@ -376,7 +376,7 @@ Datacenter专属参数：
 
 -----------------
 
-##Failover切换
+## Failover切换
 如果DC上面配置了Master之外，还配置了Slave节点，Inception Gate会自动不断的取Slave的时间及复制位置信息，当Master失败之后，Incpetion Gate会根据最后一次成功的Master Binlog时间，去slave_positions中取出比这个时间值小的信息中，位置信息最大的位置，然后Incpetion Gate会从这个位置开始继续复制Binlog，插入到远程的DC中。
 
 在切换过程中，instance表中的信息会被重构，会将原来的Master节点删掉，将新的Slave节点更新为Master，切换之后，老的信息就看不到了，只会在log_error指定的日志中，记录下切换的过程，一个例子如下面所示：
@@ -393,9 +393,9 @@ Datacenter专属参数：
 
 -----------------
 
-##技术细节
+## 技术细节
 
-###表对象缓存
+### 表对象缓存
 
 -----------------
 * 问：Inception Gate这种工作模式，很容易出现这种半路复制的状态，比如我把某一张表删了，但开始复制的位置是在删表之前，那么Inception Gate去取这个表的信息时，发现这个表不在了，但Binlog在，这如何继续下去？
@@ -414,7 +414,7 @@ Datacenter专属参数：
 
 好问题：答案是肯定的，但实现方式有点不同，当Incpetion Gate遇到在Binlog中的ALTER、RENAME语句时，会直接将缓存对象删掉，那么再次用到这个表时，直接从线上获取最新的即可，这样就保证了表结构与Binlog保持高度一致性，假设一开始有上面提到的删表，增删表，改列类型等情况，但最终，都是一致的，同时也不会再出现不一致的情况。这就是使用了缓存策略中的淘汰机制。
 
-###白/黑名单匹配
+### 白/黑名单匹配
 Inception Gate支持设置白名单及黑名单，并且支持通配符的匹配，那么Inception Gate是如何去分析通配符并且匹配呢？
 
 模式匹配是一个复杂的过程，有很多算法，并且性能也有好有坏，我自己再实现一个，可能很费劲，也可能会有错误，苦思之后，找到一个极其简单并且行之有效的方式来实现。
@@ -426,7 +426,7 @@ transfer_filter.table_name and new_cache_db_name like transfer_filter.db_name;
 ````
 将这个复杂的问题交给了MySQL去做，白/黑名单成为了一个LIKE表达式中的模式，太简单了，准确高效。
 
-##注意
+## 注意
 
 * 对于一个表，如果在第一次加入到缓存时判断是Do或者Ignore，那么在STOP TRANSFER之前，这个表的这个属性是不会再改变的。
 * 对于一个新表，如果在其加入之前，手动去修改transfer_filter表中的信息时，可以绕过Inception Gate，来实现增删白/黑名单的目的。

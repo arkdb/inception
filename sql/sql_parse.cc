@@ -173,7 +173,7 @@ const char *xa_state_names[]={
 #define INC_VARCHAR_MAX_TO_TEXT     8000
 #define INC_CHAR_MAX_TO_VARCHAR     16
 
-#define TRANSFER_SLAVE_NET_TIMEOUT 3600
+#define TRANSFER_SLAVE_NET_TIMEOUT 60
 
 #define STR_EXTEND_LENGTH		1024
 #define INCEPTION_MTS_THREADS       1
@@ -2311,6 +2311,7 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_INVALID_IDENT:
     case ER_PRIMARY_KEY_MODIFY:
     case ER_SUBSELECT_IN_DML:
+    case ER_PRIMARY_KEY_LOST:
         return INCEPTION_RULES;
 
     case ER_DB_EXISTS:
@@ -2362,7 +2363,6 @@ int mysql_get_err_level_by_errno(THD *   thd)
     case ER_NOT_SUPPORTED_ITEM_TYPE:
     case ER_BUILD_IN_OSC_NOT_SUPPORT:
     case ER_ALTER_TABLE_ONCE:
-    case ER_PRIMARY_KEY_LOST:
     case ER_REQUIRES_PRIMARY_KEY:
         return INCEPTION_PARSE;
 
@@ -9891,6 +9891,7 @@ int mysql_check_dml_query_tables(THD* thd)
     Item* item;
 
     int new_cache = false;
+    int subselect = false;
 
     for (table=thd->lex->query_tables; table; table=table->next_global)
     {
@@ -9898,6 +9899,7 @@ int mysql_check_dml_query_tables(THD* thd)
         {
             my_error(ER_SUBSELECT_IN_DML, MYF(0));
             mysql_errmsg_append(thd);
+            subselect = true;
             continue;
         }
         table_info = mysql_get_table_object(thd, table->db, table->table_name, TRUE);
