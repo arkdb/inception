@@ -6003,6 +6003,7 @@ int inception_transfer_instance_table_create(
     create_sql = str_append(create_sql, "CREATE TABLE ");
     sprintf (tmp, "`%s`.`%s`(", datacenter, "transfer_checkpoint");
     create_sql = str_append(create_sql, tmp);
+    create_sql = str_append(create_sql, "flag int primary key comment 'pk', ");
     create_sql = str_append(create_sql, "id bigint unsigned not null comment 'eid', ");
     create_sql = str_append(create_sql, "tid bigint unsigned not null comment 'tid') ");
     create_sql = str_append(create_sql, "engine innodb charset utf8 "
@@ -6010,21 +6011,6 @@ int inception_transfer_instance_table_create(
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
-        {
-            my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
-            str_deinit(create_sql);
-            thd->close_all_connections();
-            return true;
-        }
-    }
-    else
-    {
-        //insert the init data when create the table first
-        str_truncate(create_sql, str_get_len(create_sql));
-        create_sql = str_append(create_sql, "INSERT INTO ");
-        sprintf (tmp, "`%s`.`%s` values(0, 0)", datacenter, "transfer_checkpoint");
-        create_sql = str_append(create_sql, tmp);
-        if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
         {
             my_error(ER_ADD_INSTANCE_ERROR, MYF(0), mysql_error(mysql));
             str_deinit(create_sql);
@@ -6119,6 +6105,19 @@ int inception_transfer_additional_tables_init(THD* thd,char* datacenter,MYSQL* m
     if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
     {
         if (mysql_errno(mysql) != 1050/*ER_TABLE_EXISTS_ERROR*/)
+        {
+            str_deinit(create_sql);
+            return true;
+        }
+    }
+
+    str_truncate(create_sql, str_get_len(create_sql));
+    create_sql = str_append(create_sql, "alter table ");
+    sprintf (tmp, "`%s`.`%s` add flag int primary key first", datacenter, "transfer_checkpoint");
+    create_sql = str_append(create_sql, tmp);
+    if (mysql_real_query(mysql, str_get(create_sql), str_get_len(create_sql)))
+    {
+        if (mysql_errno(mysql) != 1060/*ER_DUP_FIELDNAME*/)
         {
             str_deinit(create_sql);
             return true;
@@ -8234,7 +8233,8 @@ inception_transfer_make_checkpoint(
     if (thd->last_update_event_id >= min_eid)
         return false;
 
-    sprintf(sql, "UPDATE `%s`.`transfer_checkpoint` set id= %lld, tid=%lld", 
+    sprintf(sql, "INSERT INTO `%s`.`transfer_checkpoint` values (0, %lld, %lld)"
+        "ON DUPLICATE KEY UPDATE id=values(id), tid=values(tid)",
         datacenter->datacenter_name, min_eid, min_tid);
     if (inception_transfer_execute_sql_with_retry(thd_thread, datacenter, sql))
         return true;
@@ -8856,7 +8856,7 @@ int inception_flush_transfer_data(THD* thd, char* datacenter_name)
         return true;
     }
 
-    sprintf(tmp, "update `%s`.`transfer_checkpoint` set id=0, tid=0", datacenter_name);
+    sprintf(tmp, "truncate table `%s`.`transfer_checkpoint`", datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)))
     {
         my_error(ER_INVALID_DATACENTER_INFO, MYF(0), mysql_error(mysql));
@@ -9476,7 +9476,7 @@ int inception_transfer_start_replicate(
     //复制数据存在不一致的问题，那此时就强制选择最小ID位置开始复制
     //即拿datacenter->binlog_file信息不为空。
     sprintf(tmp, "select id,tid from `%s`.transfer_data where id > "
-        "(select id from `%s`.transfer_checkpoint limit 1) limit 1;", datacenter_name,
+        "(select id from `%s`.transfer_checkpoint where flag = 0) limit 1;", datacenter_name,
         datacenter_name);
     mysql = thd->get_transfer_connection(datacenter_name);
     if (mysql_real_query(mysql, tmp, strlen(tmp)) ||
