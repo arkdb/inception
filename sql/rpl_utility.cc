@@ -865,7 +865,7 @@ table_def::create_conversion_table(
     if (field_info->field)
         field_def->charset= field_info->field->charset();
     field_def->interval= interval;
-      field_def->pack_flag = field_info->pack_flag;
+      //field_def->pack_flag = field_info->pack_flag;
     field_info = LIST_GET_NEXT(link, field_info);
     col++;
   }
