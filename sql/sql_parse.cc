@@ -4400,8 +4400,10 @@ int mysql_anlyze_explain(
 
     while (select_node != NULL)
     {
-        if ((thd->lex->sql_command == SQLCOM_DELETE ||
-              thd->lex->sql_command == SQLCOM_UPDATE) && 
+        if (( thd->lex->sql_command == SQLCOM_DELETE ||
+              thd->lex->sql_command == SQLCOM_DELETE_MULTI ||
+              thd->lex->sql_command == SQLCOM_UPDATE ||
+              thd->lex->sql_command == SQLCOM_UPDATE_MULTI) && 
               select_node->rows >= (int)inception_max_update_rows)
         {
             my_error(ER_UDPATE_TOO_MUCH_ROWS, MYF(0), inception_max_update_rows);
