@@ -1112,6 +1112,20 @@ ulong mysql_fetch_wait_timeout(
     MYSQL_ROW source_row;
     int wait_timeout = 0;
 
+    sprintf(set_format, "set session wait_timeout = 86400;");
+    if (mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+
+    sprintf(set_format, "set session interactive_timeout = 86400;");
+    if (mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        DBUG_RETURN(ER_NO);
+    }
+
     DBUG_ENTER("mysql_fetch_wait_timeout");
 
     sprintf(set_format, "show variables like 'wait_timeout';");
