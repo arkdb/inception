@@ -14429,6 +14429,8 @@ int mysql_extract_update_tables(
     char            namedup[1024];
     char            dbname[1024];
     char            dbnamebuf[1024];
+    char            hostbuf[30];
+    char*           new_hostname;
 
     tables = &sql_cache_node->tables;
     LIST_INIT(tables->table_lst);
@@ -14457,7 +14459,18 @@ int mysql_extract_update_tables(
                     str_append(&tables->backup_dbnames, "{");
                     sprintf(namebuf, "\"dbname\":");
                     str_append(&tables->backup_dbnames, namebuf);
-                    sprintf(dbnamebuf, "%s_%d_%s", thd->thd_sinfo->host, thd->thd_sinfo->port,table->db);
+                    sprintf(hostbuf, "%s", thd->thd_sinfo->host);
+                    new_hostname = hostbuf;
+                    while (*new_hostname)
+                    {
+                        if (*new_hostname == '.' || *new_hostname == '-')
+                        {
+                            *new_hostname = '_';
+                        }
+
+                        new_hostname++;
+                    }
+                    sprintf(dbnamebuf, "%s_%d_%s", hostbuf, thd->thd_sinfo->port,table->db);
                     mysql_dup_char(dbnamebuf, namedup, '"');
                     sprintf(namebuf, "\"%s\"", namedup);
                     str_append(&tables->backup_dbnames, namebuf);
