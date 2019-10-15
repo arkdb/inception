@@ -14428,6 +14428,9 @@ int mysql_extract_update_tables(
     char            namebuf[1024];
     char            namedup[1024];
     char            dbname[1024];
+    char            dbnamebuf[1024];
+    char            hostbuf[30];
+    char*           new_hostname;
 
     tables = &sql_cache_node->tables;
     LIST_INIT(tables->table_lst);
@@ -14446,8 +14449,45 @@ int mysql_extract_update_tables(
         if (table->updating)
         {
             table_info = mysql_get_table_object(thd, table->db, table->table_name, false);
-            if (table_info == NULL) 
+           
+            if (table_info == NULL)
+            {   
+                //when create table add rollback_tables info, in order to 
+                //make test department know create table in which database
+                if (thd->lex->sql_command == SQLCOM_CREATE_TABLE)
+                {   
+                    str_append(&tables->backup_dbnames, "{");
+                    sprintf(namebuf, "\"dbname\":");
+                    str_append(&tables->backup_dbnames, namebuf);
+                    sprintf(hostbuf, "%s", thd->thd_sinfo->host);
+                    new_hostname = hostbuf;
+                    while (*new_hostname)
+                    {
+                        if (*new_hostname == '.' || *new_hostname == '-')
+                        {
+                            *new_hostname = '_';
+                        }
+
+                        new_hostname++;
+                    }
+                    sprintf(dbnamebuf, "%s_%d_%s", hostbuf, thd->thd_sinfo->port,table->db);
+                    mysql_dup_char(dbnamebuf, namedup, '"');
+                    sprintf(namebuf, "\"%s\"", namedup);
+                    str_append(&tables->backup_dbnames, namebuf);
+                    
+                    str_append(&tables->backup_dbnames, ",");
+                    
+                    sprintf(namebuf, "\"tablename\":"); 
+                    str_append(&tables->backup_dbnames, namebuf);
+                    mysql_dup_char(table->table_name, namedup, '"');
+                    sprintf(namebuf, "\"%s\"", namedup);
+                    str_append(&tables->backup_dbnames, namebuf);
+                    
+                    str_append(&tables->backup_dbnames, "}");
+                    first = false;
+                }
                 continue;
+            }
 
             if (!first)
             {
