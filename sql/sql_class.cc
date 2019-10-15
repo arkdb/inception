@@ -1103,6 +1103,57 @@ THD::THD(bool enable_plugins)
 #endif
 }
 
+int arkit_reset_sql_mode_with_no_backslash_escapes(
+    MYSQL*  mysql
+)
+{
+    char set_format[1024];
+    MYSQL_RES * source_res;
+    MYSQL_ROW source_row;
+    sprintf(set_format, "show variables where Variable_name in ('sql_mode')");
+    if (mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        return true;
+    }
+
+    if ((source_res = mysql_store_result(mysql)) == NULL)
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        return true;
+    }
+
+    source_row = mysql_fetch_row(source_res);
+    while(source_row)
+    {
+        if (strcasecmp(source_row[0], "sql_mode") == 0 && strlen(source_row[1]) > 0)
+            sprintf(set_format, "set session sql_mode = '%s,NO_BACKSLASH_ESCAPES'", source_row[1]);
+        else if (strcasecmp(source_row[0], "sql_mode") == 0 && strlen(source_row[1]) == 0)
+            sprintf(set_format, "set session sql_mode = 'NO_BACKSLASH_ESCAPES'");
+        else
+            set_format[0] = '\0';
+
+        source_row = mysql_fetch_row(source_res);
+    }
+
+    mysql_free_result(source_res);
+
+    if (set_format[0] != '\0' && mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        return true;
+    }
+
+    sprintf(set_format, "set session transaction isolation level read committed");
+    if (mysql_real_query(mysql, set_format, strlen(set_format)))
+    {
+        my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
+        return true;
+    }
+
+    return false;
+}
+
 ulong mysql_fetch_wait_timeout(
     MYSQL* mysql
 )
@@ -1111,6 +1162,7 @@ ulong mysql_fetch_wait_timeout(
     MYSQL_RES * source_res;
     MYSQL_ROW source_row;
     int wait_timeout = 0;
+    DBUG_ENTER("mysql_fetch_wait_timeout");
 
     sprintf(set_format, "set session wait_timeout = 86400;");
     if (mysql_real_query(mysql, set_format, strlen(set_format)))
@@ -1125,8 +1177,6 @@ ulong mysql_fetch_wait_timeout(
         my_message(mysql_errno(mysql), mysql_error(mysql), MYF(0));
         DBUG_RETURN(ER_NO);
     }
-
-    DBUG_ENTER("mysql_fetch_wait_timeout");
 
     sprintf(set_format, "show variables like 'wait_timeout';");
     if (mysql_real_query(mysql, set_format, strlen(set_format)))
@@ -1273,6 +1323,7 @@ bool THD::init_backup_connection()
   backup_conn_inited= TRUE;
   backup_conn.wait_timeout  = mysql_fetch_wait_timeout(mysql);
   backup_conn.start_timer = start_timer();
+  arkit_reset_sql_mode_with_no_backslash_escapes(mysql);
   return TRUE;
 }
 

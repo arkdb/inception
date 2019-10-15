@@ -16353,6 +16353,60 @@ mysql_unpack_row(
     DBUG_RETURN(error);
 }
 
+void
+mysql_dup_char_with_escape_length(
+    char* src,
+    str_t* dest,
+    char* chr,
+    char* escape_char,
+    int length
+)
+{
+    while (length-- > 0)
+    {
+        //if the curr is \n or \r\n, then replace
+        if (*src == '\n')
+        {
+            str_append(dest, "\\");
+            str_append(dest, "n");
+        }
+        else if (*src == '\r')
+        {
+            str_append(dest, "\\");
+            str_append(dest, "r");
+        }
+        else if (escape_char && *src == escape_char[0])
+        {
+            /* JSON的转义 */
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
+        }
+        else if (*src == chr[0])
+        {
+            str_append_1(dest, src);
+            str_append_1(dest, src);
+        }
+        else if (*src == '\\')
+        {
+            /* JSON的转义 */
+            str_append_1(dest, "\\");
+            str_append_1(dest, src);
+        }
+        else if ((unsigned char)src[0] > 0 && (unsigned char)src[0] < 32)
+        {
+            char tmp[10];
+            sprintf(tmp, "\\u%04d", src[0]);
+            str_append(dest, tmp);
+        }
+        else
+        {
+            str_append_1(dest, src);
+        }
+
+        src++;
+    }
+}
+
 int
 mysql_dup_char(
     char* src,
@@ -16707,18 +16761,12 @@ int mysql_get_field_string(
                 if (qutor_flag)
                     backupsql->append("\'");
                 res=field->val_str(&buffer);
-                dupcharfield = (char*)my_malloc(res->length() * 4 + 1, MY_ZEROFILL);
-
-                if(mysql_dup_char(res->c_ptr(), dupcharfield, '\''))
-                {
-                    dupcharfieldforbackslash = (char*)my_malloc((res->length() * 4 + 1) * 2, MY_ZEROFILL);
-                    mysql_dup_char(dupcharfield, dupcharfieldforbackslash, '\\');
-                    backupsql->append(dupcharfieldforbackslash);
-                    my_free(dupcharfieldforbackslash);
-                }
-                else
-                    backupsql->append(dupcharfield);
-                my_free(dupcharfield);
+                str_t backup_sql;
+                str_init(&backup_sql);
+                mysql_dup_char_with_escape_length(res->c_ptr(),
+                    &backup_sql, (char*)"\'", (char*)"\"", res->length());
+                backupsql->append(str_get(&backup_sql), str_get_len(&backup_sql));
+                str_deinit(&backup_sql);
                 qutor_end =1;
                 append_flag = FALSE;
                 break;
