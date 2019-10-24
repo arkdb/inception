@@ -19658,6 +19658,7 @@ int mysql_deinit_sql_cache(THD* thd)
     my_free(thd->show_result);
     thd->show_result = NULL;
 
+    mysql_free_db_object(thd);
     DBUG_RETURN(FALSE);
 }
 
