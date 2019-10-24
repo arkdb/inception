@@ -2969,6 +2969,10 @@ mysql_table_info_free(
 {
     field_info_t*  field_info;
     field_info_t*  next_field_info;
+    index_info_t*  index_info;
+    index_info_t*  index_info_next;
+    index_field_t* index_field;
+    index_field_t* index_field_next;
 
     DBUG_ENTER("mysql_table_info_free");
 
@@ -2991,6 +2995,25 @@ mysql_table_info_free(
         field_info = next_field_info;
     }
 
+    index_info = LIST_GET_FIRST(table_info->index_lst);
+    while (index_info)
+    {
+        index_info_next = LIST_GET_NEXT(link, index_info);
+        LIST_REMOVE(link, table_info->index_lst, index_info);
+
+        index_field = LIST_GET_FIRST(index_info->field_lst);
+        while (index_field)
+        {
+            index_field_next = LIST_GET_NEXT(link, index_field);
+            LIST_REMOVE(link, index_info->field_lst, index_field);
+            my_free(index_field);
+            index_field = index_field_next;
+        }
+
+        my_free(index_info);
+        index_info = index_info_next;
+    }
+      
     my_free(table_info->record);
     my_free(table_info->null_arr);
     my_free(table_info);
