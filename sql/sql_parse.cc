@@ -19621,9 +19621,9 @@ int mysql_deinit_sql_cache_low(THD* thd)
             j++;
         }
         if (sql_cache_node->primary_keys)
-            my_free(sql_cache_node->new_primary_keys);
-        if (sql_cache_node->new_primary_keys)
             my_free(sql_cache_node->primary_keys);
+        if (sql_cache_node->new_primary_keys)
+            my_free(sql_cache_node->new_primary_keys);
         str_deinit(sql_cache_node->pk_string);
         my_free(sql_cache_node->pk_string);
 
