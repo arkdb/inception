@@ -14617,6 +14617,7 @@ int mysql_check_command(THD *thd)
     DBUG_ENTER("mysql_check_command");
 
     sql_cache_node = (sql_cache_node_t*)my_malloc(sizeof(sql_cache_node_t), MY_ZEROFILL);
+    sql_print_information("sql_cache_node malloc, query_id: %lld", thd->query_id);
     if (sql_cache_node == NULL)
     {
         my_error(ER_OUTOFMEMORY, MYF(0));
@@ -19629,6 +19630,7 @@ int mysql_deinit_sql_cache_low(THD* thd)
 
         my_free(sql_cache_node->rt_lst);
         my_free(sql_cache_node);
+        sql_print_information("sql_cache_node free, query_id: %lld", thd->query_id);
         sql_cache_node = sql_cache_node_next;
     }
 
