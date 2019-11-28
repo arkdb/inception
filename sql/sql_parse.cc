@@ -19873,6 +19873,12 @@ void mysql_parse(THD *thd, uint length, Parser_state *parser_state)
             mysql_cache_format_sql(thd);
     }
 
+    if (thd->current_sql_cache_node)
+    {
+        my_free(thd->current_sql_cache_node);
+        thd->current_sql_cache_node = NULL;
+    }
+
     thd->end_statement();
     thd->cleanup_after_query();
 
