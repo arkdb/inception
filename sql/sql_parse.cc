@@ -19520,6 +19520,106 @@ int mysql_deinit_split_cache(THD* thd)
     DBUG_RETURN(FALSE);
 }
 
+int mysql_delete_one_sql_cache(
+    sql_cache_node_t*  sql_cache_node
+) 
+{
+    int j;
+    sql_table_t*                tables;
+    check_rt_t*   query_rt;
+    check_rt_t*   query_rt_next;
+    table_rt_t*                 table_rt;
+    table_rt_t*                 table_rt_next;
+
+    if (sql_cache_node->sql_statement != NULL)
+    {
+        my_free(sql_cache_node->sql_statement);
+        sql_cache_node->sql_statement = NULL;
+    }
+
+    str_deinit(sql_cache_node->errmsg);
+    str_deinit(sql_cache_node->stagereport);
+    my_free(sql_cache_node->stagereport);
+    str_deinit(sql_cache_node->ddl_rollback);
+
+    if (sql_cache_node->sqlsha1[0] != '\0')
+    {
+        mysql_free_osc_cache_node(sql_cache_node->sqlsha1);
+        str_deinit(sql_cache_node->oscoutput);
+        my_free(sql_cache_node->oscoutput);
+    }
+
+    query_rt = sql_cache_node->rt_lst ? LIST_GET_FIRST(*sql_cache_node->rt_lst) : NULL;
+    while(query_rt)
+    {
+        query_rt_next = LIST_GET_NEXT(link, query_rt);
+        LIST_REMOVE(link, *sql_cache_node->rt_lst, query_rt);
+
+        table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
+        while(table_rt)
+        {
+            table_rt_next = LIST_GET_NEXT(link, table_rt);
+            LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
+            if (table_rt->derived)
+                mysql_table_info_free(table_rt->table_info);
+            my_free(table_rt);
+            table_rt = table_rt_next;
+        }
+
+        my_free(query_rt);
+        query_rt = query_rt_next;
+    }
+
+    tables = &sql_cache_node->tables;
+    str_deinit(&tables->db_names);
+    str_deinit(&tables->full_table_names);
+    str_deinit(&tables->backup_dbnames);
+    str_deinit(&tables->table_names);
+
+    table_rt = LIST_GET_FIRST(tables->table_lst);
+    while (table_rt)
+    {
+        table_rt_next = LIST_GET_NEXT(link, table_rt);
+        LIST_REMOVE(link, tables->table_lst, table_rt);
+        if (table_rt->drop_table_rollback)
+        {
+            str_deinit(table_rt->drop_table_rollback);
+            my_free(table_rt->drop_table_rollback);
+            table_rt->drop_table_rollback = NULL;
+        }
+
+        my_free(table_rt);
+        table_rt = table_rt_next;
+    }
+
+    str_deinit(sql_cache_node->osc_select_columns);
+    str_deinit(sql_cache_node->osc_insert_columns);
+    j = 0;
+    while (sql_cache_node->primary_keys && 
+        sql_cache_node->primary_keys[j])
+    {
+        my_free(sql_cache_node->primary_keys[j]);
+        j++;
+    }
+
+    j = 0;
+    while (sql_cache_node->new_primary_keys && 
+        sql_cache_node->new_primary_keys[j])
+    {
+        my_free(sql_cache_node->new_primary_keys[j]);
+        j++;
+    }
+    if (sql_cache_node->primary_keys)
+        my_free(sql_cache_node->primary_keys);
+    if (sql_cache_node->new_primary_keys)
+        my_free(sql_cache_node->new_primary_keys);
+    str_deinit(sql_cache_node->pk_string);
+    my_free(sql_cache_node->pk_string);
+
+    my_free(sql_cache_node->rt_lst);
+    my_free(sql_cache_node);
+    return false;
+}
 
 int mysql_deinit_sql_cache_low(THD* thd)
 {
@@ -19543,93 +19643,7 @@ int mysql_deinit_sql_cache_low(THD* thd)
     while (sql_cache_node != NULL)
     {
         sql_cache_node_next = LIST_GET_NEXT(link, sql_cache_node);
-        if (sql_cache_node->sql_statement != NULL)
-        {
-            my_free(sql_cache_node->sql_statement);
-            sql_cache_node->sql_statement = NULL;
-        }
-
-        str_deinit(sql_cache_node->errmsg);
-        str_deinit(sql_cache_node->stagereport);
-        my_free(sql_cache_node->stagereport);
-        str_deinit(sql_cache_node->ddl_rollback);
-
-        if (sql_cache_node->sqlsha1[0] != '\0')
-        {
-            mysql_free_osc_cache_node(sql_cache_node->sqlsha1);
-            str_deinit(sql_cache_node->oscoutput);
-            my_free(sql_cache_node->oscoutput);
-        }
-
-        query_rt = sql_cache_node->rt_lst ? LIST_GET_FIRST(*sql_cache_node->rt_lst) : NULL;
-        while(query_rt)
-        {
-            query_rt_next = LIST_GET_NEXT(link, query_rt);
-            LIST_REMOVE(link, *sql_cache_node->rt_lst, query_rt);
-
-            table_rt = LIST_GET_FIRST(query_rt->table_rt_lst);
-            while(table_rt)
-            {
-                table_rt_next = LIST_GET_NEXT(link, table_rt);
-                LIST_REMOVE(link, query_rt->table_rt_lst, table_rt);
-                if (table_rt->derived)
-                    mysql_table_info_free(table_rt->table_info);
-                my_free(table_rt);
-                table_rt = table_rt_next;
-            }
-
-            my_free(query_rt);
-            query_rt = query_rt_next;
-        }
-
-        tables = &sql_cache_node->tables;
-        str_deinit(&tables->db_names);
-        str_deinit(&tables->full_table_names);
-        str_deinit(&tables->backup_dbnames);
-        str_deinit(&tables->table_names);
-
-        table_rt = LIST_GET_FIRST(tables->table_lst);
-        while (table_rt)
-        {
-            table_rt_next = LIST_GET_NEXT(link, table_rt);
-            LIST_REMOVE(link, tables->table_lst, table_rt);
-            if (table_rt->drop_table_rollback)
-            {
-                str_deinit(table_rt->drop_table_rollback);
-                my_free(table_rt->drop_table_rollback);
-                table_rt->drop_table_rollback = NULL;
-            }
-
-            my_free(table_rt);
-            table_rt = table_rt_next;
-        }
-
-        str_deinit(sql_cache_node->osc_select_columns);
-        str_deinit(sql_cache_node->osc_insert_columns);
-        j = 0;
-        while (sql_cache_node->primary_keys && 
-            sql_cache_node->primary_keys[j])
-        {
-            my_free(sql_cache_node->primary_keys[j]);
-            j++;
-        }
-
-        j = 0;
-        while (sql_cache_node->new_primary_keys && 
-            sql_cache_node->new_primary_keys[j])
-        {
-            my_free(sql_cache_node->new_primary_keys[j]);
-            j++;
-        }
-        if (sql_cache_node->primary_keys)
-            my_free(sql_cache_node->primary_keys);
-        if (sql_cache_node->new_primary_keys)
-            my_free(sql_cache_node->new_primary_keys);
-        str_deinit(sql_cache_node->pk_string);
-        my_free(sql_cache_node->pk_string);
-
-        my_free(sql_cache_node->rt_lst);
-        my_free(sql_cache_node);
+        mysql_delete_one_sql_cache(sql_cache_node);
         // sql_print_information("sql_cache_node free, query_id: %lld", thd->query_id);
         sql_cache_node = sql_cache_node_next;
     }
@@ -19875,7 +19889,7 @@ void mysql_parse(THD *thd, uint length, Parser_state *parser_state)
 
     if (thd->current_sql_cache_node)
     {
-        my_free(thd->current_sql_cache_node);
+        mysql_delete_one_sql_cache(thd->current_sql_cache_node);
         thd->current_sql_cache_node = NULL;
     }
 
