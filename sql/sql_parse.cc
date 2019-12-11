@@ -19538,9 +19538,11 @@ int mysql_delete_one_sql_cache(
     }
 
     str_deinit(sql_cache_node->errmsg);
+    my_free(sql_cache_node->errmsg);
     str_deinit(sql_cache_node->stagereport);
     my_free(sql_cache_node->stagereport);
     str_deinit(sql_cache_node->ddl_rollback);
+    my_free(sql_cache_node->ddl_rollback);
 
     if (sql_cache_node->sqlsha1[0] != '\0')
     {
