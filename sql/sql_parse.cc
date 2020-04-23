@@ -18306,7 +18306,10 @@ int mysql_execute_alter_table_osc(
     }
 
     oscargv[count++] = strdup("--chunk-size-limit");
-    sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_size_limit);
+    if (thd->variables.inception_osc_chunk_size_limit == 0) 
+        sprintf(cmd_line, "0");
+    else
+        sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_size_limit);
     oscargv[count++] = strdup(cmd_line);
 
     oscargv[count++] = strdup("--critical-load");
