@@ -18275,6 +18275,7 @@ int mysql_execute_alter_table_osc(
  //   str_t       osc_cmd;
  //   str_t*      osc_cmd_ptr;
     char        cmd_line[100];
+    char        cmd_line2[100];
     int         ret;
     char*       oscargv[100];
     int         count=0;
@@ -18306,11 +18307,9 @@ int mysql_execute_alter_table_osc(
     }
 
     oscargv[count++] = strdup("--chunk-size-limit");
-    if (thd->variables.inception_osc_chunk_size_limit == 0) 
-        sprintf(cmd_line, "0");
-    else
-        sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_size_limit);
-    oscargv[count++] = strdup(cmd_line);
+    sprintf(cmd_line, "%f", thd->variables.inception_osc_chunk_size_limit);
+    sprintf(cmd_line2, "%g", cmd_line);
+    oscargv[count++] = strdup(cmd_line2);
 
     oscargv[count++] = strdup("--critical-load");
     sprintf(cmd_line, "Threads_connected:%lu,Threads_running:%lu", 
