@@ -8548,7 +8548,7 @@ int inception_mts_execute_retry(
             datacenter->datacenter_name, retry_count, mysql_error(mysql));
         sql_print_information("[%s] MTS thread ERROR SQL: %s",
             datacenter->datacenter_name, query);
-	sleep(50*retry_count);
+	sleep(5*retry_count);
     }
         
     if (retry_count == 3)
