@@ -3190,7 +3190,7 @@ mysql_add_index_to_table_info(
         strcpy(index_field->field_name, source_row[4]);
         index_field->seqno = my_strtoll10(source_row[3], NULL, &error);
         index_field->contain_nulls = strcmp(source_row[9], "YES") ? 0 : 1;
-        index_field->cardinality = my_strtoll10(source_row[6], NULL, &error);
+	index_field->cardinality = source_row[6]==0x0 ? 0 : my_strtoll10(source_row[6], NULL, &error);
         LIST_ADD_LAST(link, index_info->field_lst, index_field);
 
         source_row = mysql_fetch_row(source_res);
@@ -8548,6 +8548,7 @@ int inception_mts_execute_retry(
             datacenter->datacenter_name, retry_count, mysql_error(mysql));
         sql_print_information("[%s] MTS thread ERROR SQL: %s",
             datacenter->datacenter_name, query);
+	sleep(50*retry_count);
     }
         
     if (retry_count == 3)
