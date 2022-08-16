@@ -11,6 +11,7 @@ Inception是一个开源系统，每个人或者每个公司都可以自由使�
 
 ## 新版本新增功能
 Inception Gate：用来实时异构地从MySQL从步到其它数据库，可以解决从OP到TP的数据传输问题。
+Inception Gate文档路径：document/docs/inception_gate_dba.md, document/docs/inception_gate_rd.md，分别是DBA侧的手册和开发者侧的手册。
 
 ## 联系方式
 王竹峰@极数云舟
