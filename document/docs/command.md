@@ -22,7 +22,7 @@ inception_magic_commit;
 ````
 返回结果如下：  
 ````
-qunar show variables like "read%":
+inception show variables like "read%":
 		
 read_buffer_size | 33554432
 		

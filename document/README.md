@@ -1,5 +1,5 @@
 # Inception简介
-**Inception** 是一个集审核、执行、备份及生成回滚语句于一身的MySQL自动化运维工具。由[去哪儿网 http://www.qunar.com](http://www.qunar.com)共享、开源而来。
+**Inception** 是一个集审核、执行、备份及生成回滚语句于一身的MySQL自动化运维工具。
 
 本项目是 **Inception** 的手册部分。
 
